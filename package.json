@@ -9,8 +9,7 @@
     "typecheck": "bun run --bun tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@types/pdf-parse": "^1.1.5"
+    "@types/bun": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
@@ -21,7 +20,6 @@
     "@modelcontextprotocol/sdk": "^1.25.1",
     "grammy": "^1.38.4",
     "openai": "^6.15.0",
-    "pdf-parse": "^2.4.5",
     "zod": "^4.2.1"
   }
 }

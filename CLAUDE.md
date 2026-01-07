@@ -38,7 +38,7 @@ Each message type has a dedicated async handler:
 - **`text.ts`** - Text messages with intent filtering
 - **`voice.ts`** - Voice→text via OpenAI, then same flow as text
 - **`photo.ts`** - Image analysis with media group buffering (1s timeout for albums)
-- **`document.ts`** - PDF extraction (pdf-parse) and text file processing
+- **`document.ts`** - PDF extraction (pdftotext CLI) and text file processing
 - **`callback.ts`** - Inline keyboard button handling for ask_user MCP
 - **`streaming.ts`** - Shared `StreamingState` and status callback factory
 
@@ -78,6 +78,26 @@ MCP servers defined in `mcp-config.ts`.
 **Type checking**: Run `bun run typecheck` periodically while editing TypeScript files. Fix any type errors before committing.
 
 **After code changes**: Restart the bot so changes can be tested. Use `launchctl kickstart -k gui/$(id -u)/com.claude-telegram-ts` if running as a service, or `bun run start` for manual runs.
+
+## Standalone Build
+
+The bot can be compiled to a standalone binary with `bun build --compile`. This is used by the ClaudeBot macOS app wrapper.
+
+### External Dependencies
+
+PDF extraction uses `pdftotext` CLI instead of an npm package (to avoid bundling issues):
+
+```bash
+brew install poppler  # Provides pdftotext
+```
+
+### PATH Requirements
+
+When running as a standalone binary (especially from a macOS app), the PATH may not include Homebrew. The launcher must ensure PATH includes:
+- `/opt/homebrew/bin` (Apple Silicon Homebrew)
+- `/usr/local/bin` (Intel Homebrew)
+
+Without this, `pdftotext` won't be found and PDF parsing will fail silently with an error message.
 
 ## Commit Style
 
