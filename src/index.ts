@@ -24,6 +24,8 @@ import {
   handleCallback,
 } from "./handlers";
 import { initScheduler, startScheduler, stopScheduler } from "./scheduler";
+import { session } from "./session";
+import { escapeHtml } from "./formatting";
 
 // Create bot instance
 const bot = new Bot(TELEGRAM_TOKEN);
@@ -124,6 +126,31 @@ if (existsSync(RESTART_FILE)) {
 
 // Start with concurrent runner (commands work immediately)
 const runner = run(bot);
+
+// Send startup notification to Claude and user
+if (ALLOWED_USERS.length > 0) {
+  const userId = ALLOWED_USERS[0]!;
+  setTimeout(async () => {
+    try {
+      const statusCallback = async () => {};
+      const startupPrompt = `봇이 방금 재시작되었습니다. 현재 시간과 함께 간단한 인사말을 써주세요. 재시작 완료 알림으로 사용됩니다.`;
+
+      const response = await session.sendMessageStreaming(
+        startupPrompt,
+        "startup",
+        userId,
+        statusCallback
+      );
+
+      if (response && response !== "[Waiting for user selection]") {
+        await bot.api.sendMessage(userId, escapeHtml(response), { parse_mode: "HTML" });
+      }
+    } catch (e) {
+      console.error("Startup notification failed:", e);
+      await bot.api.sendMessage(userId, "✅ Bot restarted").catch(() => {});
+    }
+  }, 2000);
+}
 
 // Graceful shutdown
 const stopRunner = () => {
