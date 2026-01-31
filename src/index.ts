@@ -99,6 +99,14 @@ console.log("Starting bot...");
 const botInfo = await bot.api.getMe();
 console.log(`Bot started: @${botInfo.username}`);
 
+// Auto-resume previous session if available
+const [resumed, resumeMsg] = session.resumeLast();
+if (resumed) {
+  console.log(`Auto-resumed: ${resumeMsg}`);
+} else {
+  console.log("No previous session to resume");
+}
+
 // Initialize and start cron scheduler
 initScheduler(bot.api);
 startScheduler();
@@ -133,7 +141,9 @@ if (ALLOWED_USERS.length > 0) {
   setTimeout(async () => {
     try {
       const statusCallback = async () => {};
-      const startupPrompt = `봇이 방금 재시작되었습니다. 현재 시간과 함께 간단한 인사말을 써주세요. 재시작 완료 알림으로 사용됩니다.`;
+      const startupPrompt = resumed
+        ? `봇이 재시작되었고 이전 세션이 복원되었습니다. 현재 시간과 함께 간단히 알려주세요. (세션 ID: ${session.sessionId?.slice(0, 8)}...)`
+        : `봇이 방금 재시작되었습니다. 새 세션이 시작됩니다. 현재 시간과 함께 간단한 인사말을 써주세요.`;
 
       const response = await session.sendMessageStreaming(
         startupPrompt,
