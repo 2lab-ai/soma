@@ -171,7 +171,20 @@ export function createStatusCallback(
           state.lastEditTimes.set(segmentId, now);
         }
       } else if (statusType === "segment_end" && segmentId !== undefined) {
-        if (state.textMessages.has(segmentId) && content) {
+        if (!content) return;
+
+        // If no message exists yet (short response), create one
+        if (!state.textMessages.has(segmentId)) {
+          const formatted = convertMarkdownToHtml(content);
+          try {
+            await ctx.reply(formatted, { parse_mode: "HTML" });
+          } catch {
+            await ctx.reply(content);
+          }
+          return;
+        }
+
+        if (state.textMessages.has(segmentId)) {
           const msg = state.textMessages.get(segmentId)!;
           const formatted = convertMarkdownToHtml(content);
 
