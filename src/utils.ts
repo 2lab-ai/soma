@@ -199,6 +199,22 @@ export function startTypingIndicator(ctx: Context): TypingController {
   };
 }
 
+// ============== Timestamp ==============
+
+export function addTimestamp(message: string): string {
+  const now = new Date();
+  const timestamp = now.toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  });
+  return `${message}\n\n<timestamp>${timestamp}</timestamp>`;
+}
+
 // ============== Message Interrupt ==============
 
 // Import session lazily to avoid circular dependency

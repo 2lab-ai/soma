@@ -7,6 +7,7 @@ import { session } from "../session";
 import { ALLOWED_USERS } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import {
+  addTimestamp,
   auditLog,
   auditLogRateLimit,
   checkInterrupt,
@@ -52,6 +53,9 @@ export async function handleText(ctx: Context): Promise<void> {
   // 4. Store message for retry
   session.lastMessage = message;
 
+  // 4.5. Add timestamp to message
+  const messageWithTimestamp = addTimestamp(message);
+
   // 5. Mark processing started
   const stopProcessing = session.startProcessing();
 
@@ -68,7 +72,7 @@ export async function handleText(ctx: Context): Promise<void> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await session.sendMessageStreaming(
-        message,
+        messageWithTimestamp,
         username,
         userId,
         statusCallback,

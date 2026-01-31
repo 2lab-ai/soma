@@ -8,7 +8,7 @@ import type { Context } from "grammy";
 import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
+import { addTimestamp, auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 
@@ -81,7 +81,7 @@ async function processPhotos(
 
   try {
     const response = await session.sendMessageStreaming(
-      prompt,
+      addTimestamp(prompt),
       username,
       userId,
       statusCallback,

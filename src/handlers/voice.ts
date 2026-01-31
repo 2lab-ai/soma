@@ -8,6 +8,7 @@ import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR, TRANSCRIPTION_AVAILABLE } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
 import {
+  addTimestamp,
   auditLog,
   auditLogRateLimit,
   transcribeVoice,
@@ -98,9 +99,9 @@ export async function handleVoice(ctx: Context): Promise<void> {
     const state = new StreamingState();
     const statusCallback = createStatusCallback(ctx, state);
 
-    // 10. Send to Claude
+    // 10. Send to Claude (with timestamp)
     const claudeResponse = await session.sendMessageStreaming(
-      transcript,
+      addTimestamp(transcript),
       username,
       userId,
       statusCallback,
