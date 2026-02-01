@@ -90,6 +90,24 @@ export class StreamingState {
   toolMessages: Message[] = []; // tool status messages
   lastEditTimes = new Map<number, number>(); // segment_id -> last edit time
   lastContent = new Map<number, string>(); // segment_id -> last sent content
+  progressMessage: Message | null = null; // progress spinner message
+  progressTimer: Timer | null = null; // timer for updating progress
+  startTime: Date | null = null; // work start time
+}
+
+/**
+ * Spinner frames for progress indicator.
+ */
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/**
+ * Format elapsed time as MM:SS.
+ */
+function formatElapsed(startTime: Date): string {
+  const elapsed = Math.floor((Date.now() - startTime.getTime()) / 1000);
+  const minutes = Math.floor(elapsed / 60);
+  const seconds = elapsed % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
 /**
@@ -99,6 +117,40 @@ export function createStatusCallback(
   ctx: Context,
   state: StreamingState
 ): StatusCallback {
+  // Initialize progress tracking
+  if (!state.startTime) {
+    state.startTime = new Date();
+
+    // Create initial progress message
+    ctx.reply('⏳ Working...').then((msg) => {
+      state.progressMessage = msg;
+
+      // Start update timer (1 second interval)
+      let frameIndex = 0;
+      state.progressTimer = setInterval(async () => {
+        if (!state.progressMessage || !state.startTime) return;
+
+        const spinner = SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length];
+        const elapsed = formatElapsed(state.startTime);
+        const text = `${spinner} Working... (${elapsed})`;
+
+        try {
+          await ctx.api.editMessageText(
+            state.progressMessage.chat.id,
+            state.progressMessage.message_id,
+            text
+          );
+        } catch (error) {
+          console.debug('Failed to update progress message:', error);
+        }
+
+        frameIndex++;
+      }, 1000);
+    }).catch((error) => {
+      console.debug('Failed to create progress message:', error);
+    });
+  }
+
   return async (statusType: string, content: string, segmentId?: number) => {
     try {
       if (statusType === "thinking") {
@@ -212,6 +264,40 @@ export function createStatusCallback(
           }
         }
       } else if (statusType === "done") {
+        // Stop progress timer
+        if (state.progressTimer) {
+          clearInterval(state.progressTimer);
+          state.progressTimer = null;
+        }
+
+        // Update progress message with completion info
+        if (state.progressMessage && state.startTime) {
+          const endTime = new Date();
+          const duration = formatElapsed(state.startTime);
+          const startStr = state.startTime.toLocaleTimeString('ko-KR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+          const endStr = endTime.toLocaleTimeString('ko-KR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+
+          const completionText = `✅ Completed\n⏰ ${startStr} → ${endStr} (${duration})`;
+
+          try {
+            await ctx.api.editMessageText(
+              state.progressMessage.chat.id,
+              state.progressMessage.message_id,
+              completionText
+            );
+          } catch (error) {
+            console.debug("Failed to update completion message:", error);
+          }
+        }
+
         // Delete thinking messages if configured
         if (DELETE_THINKING_MESSAGES) {
           for (const thinkingMsg of state.thinkingMessages) {
