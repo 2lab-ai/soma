@@ -5,10 +5,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
+# Development
 bun run start      # Run the bot
 bun run dev        # Run with auto-reload (--watch)
-bun run typecheck  # Run TypeScript type checking
+bun run typecheck  # Type check
 bun install        # Install dependencies
+
+# Build & Quality
+make up            # Deploy: install → build → stop → start
+make lint          # Lint code
+make fmt           # Format code
+make test          # Run tests
+
+# Service Management (macOS)
+make start         # Start service
+make stop          # Stop service
+make restart       # Restart service
+make logs          # View logs
+make status        # Check status
 ```
 
 ## Architecture
@@ -25,17 +39,17 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 
 - **`src/index.ts`** - Entry point, registers handlers, starts polling
 - **`src/config.ts`** - Environment parsing, MCP loading, safety prompts
-- **`src/session.ts`** - `ClaudeSession` class wrapping Agent SDK V2 with streaming, session persistence (`/tmp/claude-telegram-session.json`), and defense-in-depth safety checks
+- **`src/session.ts`** - `ClaudeSession` class wrapping Agent SDK V1 with streaming, session persistence, cumulative token tracking (input/output/cache), and defense-in-depth safety checks
 - **`src/security.ts`** - `RateLimiter` (token bucket), path validation, command safety checks
 - **`src/formatting.ts`** - Markdown→HTML conversion for Telegram, tool status emoji formatting
 - **`src/utils.ts`** - Audit logging, voice transcription (OpenAI), typing indicators
 - **`src/types.ts`** - Shared TypeScript types
-- **`src/scheduler.ts`** - Cron scheduler for scheduled prompts (loads `cron.yaml`)
+- **`src/scheduler.ts`** - Cron scheduler for scheduled prompts (loads `cron.yaml`, auto-reloads on file changes)
 
 ### Handlers (`src/handlers/`)
 
 Each message type has a dedicated async handler:
-- **`commands.ts`** - `/start`, `/new`, `/stop`, `/status`, `/resume`, `/cron`, `/restart`, `/retry`
+- **`commands.ts`** - `/start`, `/help`, `/new`, `/stop`, `/status`, `/stats`, `/resume`, `/cron`, `/restart`, `/retry`
 - **`text.ts`** - Text messages with intent filtering
 - **`voice.ts`** - Voice→text via OpenAI, then same flow as text
 - **`photo.ts`** - Image analysis with media group buffering (1s timeout for albums)
@@ -101,9 +115,58 @@ When running as a standalone binary (especially from a macOS app), the PATH may 
 
 Without this, `pdftotext` won't be found and PDF parsing will fail silently with an error message.
 
+## Development Workflow
+
+**After modifying code**, follow this workflow to ensure quality:
+
+```bash
+# 1. Run PR review (checks code quality, errors, types)
+/pr-review-toolkit:review-pr
+
+# 2. Fix any critical/important issues found
+# (Edit files to address review findings)
+
+# 3. Simplify code for clarity
+# (Uses code-simplifier agent)
+
+# 4. Lint and format
+make lint
+make fmt
+
+# 5. Commit and push
+git add -A
+git commit -m "feat: description
+
+- Detailed changes
+- Bug fixes
+- Improvements
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+git push
+```
+
+### Make Targets
+
+```bash
+make up          # Full deployment: install → build → stop → start
+make install     # Install dependencies (bun install)
+make build       # Type check (bun run typecheck)
+make lint        # Run ESLint
+make fmt         # Format with Prettier
+make test        # Run tests
+make stop        # Stop launchd service
+make start       # Start launchd service
+make restart     # Restart service
+make logs        # Tail service logs
+make errors      # Tail error logs
+make status      # Check service status
+```
+
 ## Commit Style
 
-Do not add "Generated with Claude Code" footers or "Co-Authored-By" trailers to commit messages.
+Commits should include Claude Code footer and Co-Authored-By trailer as shown in the workflow above.
 
 ## Running as Service (macOS)
 
