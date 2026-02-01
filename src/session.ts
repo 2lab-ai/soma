@@ -22,6 +22,7 @@ import {
 } from "./config";
 import { formatToolStatus } from "./formatting";
 import { checkPendingAskUserRequests } from "./handlers/streaming";
+import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import type { SessionData, StatusCallback, TokenUsage } from "./types";
 
@@ -421,6 +422,11 @@ class ClaudeSession {
     }
 
     await statusCallback("done", "");
+
+    // Process any queued cron jobs now that session is complete
+    processQueuedJobs().catch((err) => {
+      console.error("[CRON] Failed to process queued jobs:", err);
+    });
 
     return responseParts.join("") || "No response from Claude.";
   }

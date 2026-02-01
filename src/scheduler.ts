@@ -23,6 +23,7 @@ const activeJobs: Map<string, Cron> = new Map();
 let botApi: Api | null = null;
 let cronExecutionLock = false;
 const jobExecutions: number[] = [];
+const pendingCronJobs: Array<{ schedule: CronSchedule; timestamp: number }> = [];
 
 // File watcher state
 let fileWatcher: Timer | null = null;
@@ -100,7 +101,8 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
   console.log(`[CRON] Executing scheduled job: ${name}`);
 
   if (cronExecutionLock || session.isRunning) {
-    console.log(`[CRON] Skipping ${name} - session is busy`);
+    console.log(`[CRON] Session busy - queuing job: ${name}`);
+    pendingCronJobs.push({ schedule, timestamp: Date.now() });
     return;
   }
 
@@ -308,5 +310,34 @@ export function getSchedulerStatus(): string {
     lines.push(`• ${name}: next at ${nextStr}`);
   }
 
+  if (pendingCronJobs.length > 0) {
+    lines.push(`\n⏳ <b>Queued Jobs (${pendingCronJobs.length})</b>`);
+    for (const { schedule } of pendingCronJobs) {
+      lines.push(`• ${schedule.name}`);
+    }
+  }
+
   return lines.join("\n");
+}
+
+export async function processQueuedJobs(): Promise<void> {
+  if (pendingCronJobs.length === 0) {
+    return;
+  }
+
+  if (session.isRunning || cronExecutionLock) {
+    return;
+  }
+
+  const job = pendingCronJobs.shift();
+  if (!job) {
+    return;
+  }
+
+  console.log(`[CRON] Processing queued job: ${job.schedule.name}`);
+  await executeScheduledPrompt(job.schedule);
+
+  if (pendingCronJobs.length > 0) {
+    console.log(`[CRON] ${pendingCronJobs.length} jobs remaining in queue`);
+  }
 }
