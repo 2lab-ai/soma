@@ -7,7 +7,7 @@
 import { Bot } from "grammy";
 import { run, sequentialize } from "@grammyjs/runner";
 import { TELEGRAM_TOKEN, WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "./config";
-import { unlinkSync, readFileSync, existsSync } from "fs";
+import { unlinkSync, readFileSync, existsSync, readdirSync, statSync } from "fs";
 import {
   handleStart,
   handleNew,
@@ -141,9 +141,34 @@ if (ALLOWED_USERS.length > 0) {
   setTimeout(async () => {
     try {
       const statusCallback = async () => {};
+
+      // Check for saved restart context
+      let contextMessage = "";
+      const saveDir = `${WORKING_DIR}/docs/tasks/save`;
+      if (existsSync(saveDir)) {
+        try {
+          const files = readdirSync(saveDir)
+            .filter((f) => f.startsWith("restart-context-") && f.endsWith(".md"))
+            .map((f) => ({
+              name: f,
+              path: `${saveDir}/${f}`,
+              mtime: statSync(`${saveDir}/${f}`).mtimeMs,
+            }))
+            .sort((a, b) => b.mtime - a.mtime);
+
+          if (files.length > 0) {
+            const latestFile = files[0]!;
+            const content = readFileSync(latestFile.path, "utf-8");
+            contextMessage = `\n\n📋 **Saved Context Found:**\n${latestFile.name}\n\n${content}`;
+          }
+        } catch (err) {
+          console.warn("Failed to read restart context:", err);
+        }
+      }
+
       const startupPrompt = resumed
-        ? `봇이 재시작되었고 이전 세션이 복원되었습니다. 현재 시간과 함께 간단히 알려주세요. (세션 ID: ${session.sessionId?.slice(0, 8)}...)`
-        : `봇이 방금 재시작되었습니다. 새 세션이 시작됩니다. 현재 시간과 함께 간단한 인사말을 써주세요.`;
+        ? `봇이 재시작되었고 이전 세션이 복원되었습니다. 현재 시간과 함께 간단히 알려주세요. (세션 ID: ${session.sessionId?.slice(0, 8)}...)${contextMessage}`
+        : `봇이 방금 재시작되었습니다. 새 세션이 시작됩니다. 현재 시간과 함께 간단한 인사말을 써주세요.${contextMessage}`;
 
       const response = await session.sendMessageStreaming(
         startupPrompt,
