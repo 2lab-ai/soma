@@ -117,38 +117,52 @@ export function createStatusCallback(
   ctx: Context,
   state: StreamingState
 ): StatusCallback {
+  let frameIndex = 0;
+
+  // Helper to recreate progress message at bottom
+  const recreateProgressMessage = async () => {
+    // Delete old progress message
+    if (state.progressMessage) {
+      try {
+        await ctx.api.deleteMessage(
+          state.progressMessage.chat.id,
+          state.progressMessage.message_id
+        );
+      } catch (error) {
+        console.debug('Failed to delete old progress message:', error);
+      }
+    }
+
+    // Create new progress message at bottom
+    if (state.startTime) {
+      const spinner = SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length];
+      const elapsed = formatElapsed(state.startTime);
+      const text = `${spinner} Working... (${elapsed})`;
+
+      try {
+        state.progressMessage = await ctx.reply(text);
+      } catch (error) {
+        console.debug('Failed to create progress message:', error);
+      }
+    }
+  };
+
   // Initialize progress tracking
   if (!state.startTime) {
     state.startTime = new Date();
 
     // Create initial progress message
-    ctx.reply('⏳ Working...').then((msg) => {
-      state.progressMessage = msg;
+    recreateProgressMessage();
 
-      // Start update timer (1 second interval)
-      let frameIndex = 0;
-      state.progressTimer = setInterval(async () => {
-        if (!state.progressMessage || !state.startTime) return;
+    // Start update timer (1 second interval)
+    state.progressTimer = setInterval(async () => {
+      if (!state.startTime) return;
 
-        const spinner = SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length];
-        const elapsed = formatElapsed(state.startTime);
-        const text = `${spinner} Working... (${elapsed})`;
+      frameIndex++;
 
-        try {
-          await ctx.api.editMessageText(
-            state.progressMessage.chat.id,
-            state.progressMessage.message_id,
-            text
-          );
-        } catch (error) {
-          console.debug('Failed to update progress message:', error);
-        }
-
-        frameIndex++;
-      }, 1000);
-    }).catch((error) => {
-      console.debug('Failed to create progress message:', error);
-    });
+      // Recreate at bottom on each tick
+      await recreateProgressMessage();
+    }, 1000);
   }
 
   return async (statusType: string, content: string, segmentId?: number) => {
@@ -161,9 +175,15 @@ export function createStatusCallback(
           parse_mode: "HTML",
         });
         state.thinkingMessages.push(thinkingMsg);
+
+        // Recreate progress at bottom after new message
+        await recreateProgressMessage();
       } else if (statusType === "tool") {
         const toolMsg = await ctx.reply(content, { parse_mode: "HTML" });
         state.toolMessages.push(toolMsg);
+
+        // Recreate progress at bottom after new message
+        await recreateProgressMessage();
       } else if (statusType === "text" && segmentId !== undefined) {
         const now = Date.now();
         const lastEdit = state.lastEditTimes.get(segmentId) || 0;
@@ -187,6 +207,9 @@ export function createStatusCallback(
             state.lastContent.set(segmentId, formatted);
           }
           state.lastEditTimes.set(segmentId, now);
+
+          // Recreate progress at bottom after new segment
+          await recreateProgressMessage();
         } else if (now - lastEdit > STREAMING_THROTTLE_MS) {
           // Update existing segment message (throttled)
           const msg = state.textMessages.get(segmentId)!;
@@ -227,6 +250,9 @@ export function createStatusCallback(
           } catch {
             await ctx.reply(content);
           }
+
+          // Recreate progress at bottom after new message
+          await recreateProgressMessage();
           return;
         }
 
@@ -262,6 +288,9 @@ export function createStatusCallback(
               await ctx.reply(chunk);
             }
           }
+
+          // Recreate progress at bottom after split messages
+          await recreateProgressMessage();
         }
       } else if (statusType === "done") {
         // Stop progress timer
