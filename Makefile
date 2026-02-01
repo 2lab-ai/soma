@@ -1,4 +1,4 @@
-.PHONY: up install build lint fmt test stop start restart logs errors status install-service
+.PHONY: up install build lint fmt test stop start restart logs errors status install-service check-service
 
 # Detect OS
 UNAME_S := $(shell uname -s)
@@ -9,9 +9,19 @@ SERVICE_NAME = claude-telegram-bot
 MACOS_PLIST = ~/Library/LaunchAgents/com.claude-telegram-ts.plist
 SYSTEMD_SERVICE = ~/.config/systemd/user/$(SERVICE_NAME).service
 
-# make up: Full deployment pipeline
-up: install build
-	@echo "✅ Deployment complete (service management disabled - use 'bun run start')"
+# Full deployment pipeline
+up: check-service install build restart
+	@echo "✅ Deployment complete - service restarted"
+
+# Check if service is installed
+check-service:
+	@if [ "$(UNAME_S)" = "Darwin" ] && [ ! -f $(MACOS_PLIST) ]; then \
+		echo "❌ Service not installed. Run 'make install-service' first"; \
+		exit 1; \
+	elif [ "$(IS_WSL)" = "1" ] && ! systemctl --user is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
+		echo "❌ Service not installed. Run 'make install-service' first"; \
+		exit 1; \
+	fi
 
 # Install dependencies
 install:
@@ -54,19 +64,13 @@ test:
 stop:
 	@echo "🛑 Stopping service..."
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		if [ -f $(MACOS_PLIST) ]; then \
-			launchctl unload $(MACOS_PLIST) 2>/dev/null || true; \
-			echo "   macOS service stopped"; \
-		else \
+		[ -f $(MACOS_PLIST) ] && \
+			(launchctl unload $(MACOS_PLIST) 2>/dev/null || true; echo "   macOS service stopped") || \
 			echo "   Service not installed"; \
-		fi \
 	elif [ "$(IS_WSL)" = "1" ]; then \
-		if systemctl --user is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
-			systemctl --user stop $(SERVICE_NAME); \
-			echo "   WSL systemd service stopped"; \
-		else \
+		systemctl --user is-enabled $(SERVICE_NAME) >/dev/null 2>&1 && \
+			(systemctl --user stop $(SERVICE_NAME); echo "   WSL systemd service stopped") || \
 			echo "   Service not installed"; \
-		fi \
 	else \
 		echo "⚠️  Unsupported platform (use macOS or WSL)"; \
 	fi
@@ -76,16 +80,14 @@ start:
 	@echo "🚀 Starting service..."
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
 		if [ -f $(MACOS_PLIST) ]; then \
-			launchctl load $(MACOS_PLIST); \
-			sleep 1; \
+			launchctl load $(MACOS_PLIST); sleep 1; \
 			launchctl list | grep com.claude-telegram-ts && echo "   macOS service running" || echo "   ⚠️  Service failed to start"; \
 		else \
 			echo "   ⚠️  Service not installed. Run 'make install-service' first"; \
 		fi \
 	elif [ "$(IS_WSL)" = "1" ]; then \
 		if systemctl --user is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
-			systemctl --user start $(SERVICE_NAME); \
-			sleep 1; \
+			systemctl --user start $(SERVICE_NAME); sleep 1; \
 			systemctl --user is-active $(SERVICE_NAME) && echo "   WSL systemd service running" || echo "   ⚠️  Service failed to start"; \
 		else \
 			echo "   ⚠️  Service not installed. Run 'make install-service' first"; \
@@ -94,8 +96,9 @@ start:
 		echo "⚠️  Unsupported platform (use macOS or WSL)"; \
 	fi
 
-# Restart service
-restart: stop start
+# Restart service (includes graceful shutdown delay)
+restart: stop
+	@sleep 2 && $(MAKE) start
 
 # Install service (one-time setup)
 install-service:
@@ -142,9 +145,9 @@ errors:
 status:
 	@echo "📊 Service status:"
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		launchctl list | grep com.claude-telegram-ts || echo "Service not running"; \
+		launchctl list | grep com.claude-telegram-ts || echo "   Service not running"; \
 	elif [ "$(IS_WSL)" = "1" ]; then \
-		systemctl --user status $(SERVICE_NAME) --no-pager || echo "Service not running"; \
+		systemctl --user status $(SERVICE_NAME) --no-pager || echo "   Service not running"; \
 	else \
 		echo "⚠️  Unsupported platform"; \
 	fi
