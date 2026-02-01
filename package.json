@@ -6,10 +6,17 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch run src/index.ts",
-    "typecheck": "bun run --bun tsc --noEmit"
+    "typecheck": "bun run --bun tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "fmt": "prettier --write \"src/**/*.ts\"",
+    "test": "bun test"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0"
   },
   "peerDependencies": {
     "typescript": "^5"

@@ -13,6 +13,7 @@ import {
   handleNew,
   handleStop,
   handleStatus,
+  handleStats,
   handleResume,
   handleRestart,
   handleRetry,
@@ -57,6 +58,7 @@ bot.command("start", handleStart);
 bot.command("new", handleNew);
 bot.command("stop", handleStop);
 bot.command("status", handleStatus);
+bot.command("stats", handleStats);
 bot.command("resume", handleResume);
 bot.command("restart", handleRestart);
 bot.command("retry", handleRetry);
@@ -119,16 +121,14 @@ if (existsSync(RESTART_FILE)) {
 
     // Only update if restart was recent (within 30 seconds)
     if (age < 30000 && data.chat_id && data.message_id) {
-      await bot.api.editMessageText(
-        data.chat_id,
-        data.message_id,
-        "✅ Bot restarted"
-      );
+      await bot.api.editMessageText(data.chat_id, data.message_id, "✅ Bot restarted");
     }
     unlinkSync(RESTART_FILE);
   } catch (e) {
     console.warn("Failed to update restart message:", e);
-    try { unlinkSync(RESTART_FILE); } catch {}
+    try {
+      unlinkSync(RESTART_FILE);
+    } catch {}
   }
 }
 

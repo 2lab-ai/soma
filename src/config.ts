@@ -34,9 +34,7 @@ process.env.PATH = pathParts.join(":");
 // ============== Core Configuration ==============
 
 export const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-export const ALLOWED_USERS: number[] = (
-  process.env.TELEGRAM_ALLOWED_USERS || ""
-)
+export const ALLOWED_USERS: number[] = (process.env.TELEGRAM_ALLOWED_USERS || "")
   .split(",")
   .filter((x) => x.trim())
   .map((x) => parseInt(x.trim(), 10))
@@ -171,8 +169,7 @@ export const DEFAULT_THINKING_TOKENS = Math.min(
   128000
 );
 
-const thinkingKeywordsStr =
-  process.env.THINKING_KEYWORDS || "think,pensa,ragiona";
+const thinkingKeywordsStr = process.env.THINKING_KEYWORDS || "think,pensa,ragiona";
 const thinkingDeepKeywordsStr =
   process.env.THINKING_DEEP_KEYWORDS || "ultrathink,think hard,pensa bene";
 
@@ -209,10 +206,7 @@ export const RATE_LIMIT_REQUESTS = parseInt(
   process.env.RATE_LIMIT_REQUESTS || "20",
   10
 );
-export const RATE_LIMIT_WINDOW = parseInt(
-  process.env.RATE_LIMIT_WINDOW || "60",
-  10
-);
+export const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW || "60", 10);
 
 // ============== File Paths ==============
 
@@ -234,9 +228,7 @@ if (!TELEGRAM_TOKEN) {
 }
 
 if (ALLOWED_USERS.length === 0) {
-  console.error(
-    "ERROR: TELEGRAM_ALLOWED_USERS environment variable is required"
-  );
+  console.error("ERROR: TELEGRAM_ALLOWED_USERS environment variable is required");
   process.exit(1);
 }
 

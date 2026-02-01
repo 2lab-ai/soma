@@ -5,11 +5,7 @@
  * V1 supports full options (cwd, mcpServers, settingSources, etc.)
  */
 
-import {
-  query,
-  type Options,
-  type SDKMessage,
-} from "@anthropic-ai/claude-agent-sdk";
+import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync } from "fs";
 import type { Context } from "grammy";
 import {
@@ -51,21 +47,6 @@ function getThinkingLevel(message: string): number {
 }
 
 /**
- * Extract text content from SDK message.
- */
-function getTextFromMessage(msg: SDKMessage): string | null {
-  if (msg.type !== "assistant") return null;
-
-  const textParts: string[] = [];
-  for (const block of msg.message.content) {
-    if (block.type === "text") {
-      textParts.push(block.text);
-    }
-  }
-  return textParts.length > 0 ? textParts.join("") : null;
-}
-
-/**
  * Manages Claude Code sessions using the Agent SDK V1.
  */
 class ClaudeSession {
@@ -78,6 +59,14 @@ class ClaudeSession {
   lastErrorTime: Date | null = null;
   lastUsage: TokenUsage | null = null;
   lastMessage: string | null = null;
+
+  // Cumulative token tracking
+  sessionStartTime: Date | null = null;
+  totalInputTokens = 0;
+  totalOutputTokens = 0;
+  totalCacheReadTokens = 0;
+  totalCacheCreateTokens = 0;
+  totalQueries = 0;
 
   private abortController: AbortController | null = null;
   private isQueryRunning = false;
@@ -183,18 +172,15 @@ class ClaudeSession {
     let messageToSend = message;
     if (isNewSession) {
       const now = new Date();
-      const datePrefix = `[Current date/time: ${now.toLocaleDateString(
-        "en-US",
-        {
-          weekday: "long",
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZoneName: "short",
-        }
-      )}]\n\n`;
+      const datePrefix = `[Current date/time: ${now.toLocaleDateString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZoneName: "short",
+      })}]\n\n`;
       messageToSend = datePrefix + message;
     }
 
@@ -219,10 +205,7 @@ class ClaudeSession {
 
     if (this.sessionId && !isNewSession) {
       console.log(
-        `RESUMING session ${this.sessionId.slice(
-          0,
-          8
-        )}... (thinking=${thinkingLabel})`
+        `RESUMING session ${this.sessionId.slice(0, 8)}... (thinking=${thinkingLabel})`
       );
     } else {
       console.log(`STARTING new Claude session (thinking=${thinkingLabel})`);
@@ -355,10 +338,7 @@ class ClaudeSession {
 
                 // Retry a few times in case of timing issues
                 for (let attempt = 0; attempt < 3; attempt++) {
-                  const buttonsSent = await checkPendingAskUserRequests(
-                    ctx,
-                    chatId
-                  );
+                  const buttonsSent = await checkPendingAskUserRequests(ctx, chatId);
                   if (buttonsSent) {
                     askUserTriggered = true;
                     break;
@@ -381,11 +361,7 @@ class ClaudeSession {
                 now - lastTextUpdate > STREAMING_THROTTLE_MS &&
                 currentSegmentText.length > 20
               ) {
-                await statusCallback(
-                  "text",
-                  currentSegmentText,
-                  currentSegmentId
-                );
+                await statusCallback("text", currentSegmentText, currentSegmentId);
                 lastTextUpdate = now;
               }
             }
@@ -402,29 +378,18 @@ class ClaudeSession {
           console.log("Response complete");
           queryCompleted = true;
 
-          // Capture usage if available
           if ("usage" in event && event.usage) {
             this.lastUsage = event.usage as TokenUsage;
-            const u = this.lastUsage;
-            console.log(
-              `Usage: in=${u.input_tokens} out=${u.output_tokens} cache_read=${
-                u.cache_read_input_tokens || 0
-              } cache_create=${u.cache_creation_input_tokens || 0}`
-            );
+            this.accumulateUsage(this.lastUsage);
           }
         }
       }
-
-      // V1 query completes automatically when the generator ends
     } catch (error) {
       const errorStr = String(error).toLowerCase();
-      const isCleanupError =
-        errorStr.includes("cancel") || errorStr.includes("abort");
+      const isCleanupError = errorStr.includes("cancel") || errorStr.includes("abort");
+      const shouldSuppress = isCleanupError && (queryCompleted || askUserTriggered || this.stopRequested);
 
-      if (
-        isCleanupError &&
-        (queryCompleted || askUserTriggered || this.stopRequested)
-      ) {
+      if (shouldSuppress) {
         console.warn(`Suppressed post-completion error: ${error}`);
       } else {
         console.error(`Error in query: ${error}`);
@@ -465,12 +430,33 @@ class ClaudeSession {
   async kill(): Promise<void> {
     this.sessionId = null;
     this.lastActivity = null;
+
+    // Reset cumulative stats
+    this.sessionStartTime = null;
+    this.totalInputTokens = 0;
+    this.totalOutputTokens = 0;
+    this.totalCacheReadTokens = 0;
+    this.totalCacheCreateTokens = 0;
+    this.totalQueries = 0;
+
     console.log("Session cleared");
   }
 
-  /**
-   * Save session to disk for resume after restart.
-   */
+  private accumulateUsage(u: TokenUsage): void {
+    if (!this.sessionStartTime) this.sessionStartTime = new Date();
+
+    this.totalInputTokens += u.input_tokens || 0;
+    this.totalOutputTokens += u.output_tokens || 0;
+    this.totalCacheReadTokens += u.cache_read_input_tokens || 0;
+    this.totalCacheCreateTokens += u.cache_creation_input_tokens || 0;
+    this.totalQueries++;
+
+    console.log(
+      `Usage: in=${u.input_tokens} out=${u.output_tokens} ` +
+        `cache_read=${u.cache_read_input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0}`
+    );
+  }
+
   private saveSession(): void {
     if (!this.sessionId) return;
 
@@ -505,18 +491,13 @@ class ClaudeSession {
       }
 
       if (data.working_dir && data.working_dir !== WORKING_DIR) {
-        return [
-          false,
-          `Session was for different directory: ${data.working_dir}`,
-        ];
+        return [false, `Session was for different directory: ${data.working_dir}`];
       }
 
       this.sessionId = data.session_id;
       this.lastActivity = new Date();
       console.log(
-        `Resumed session ${data.session_id.slice(0, 8)}... (saved at ${
-          data.saved_at
-        })`
+        `Resumed session ${data.session_id.slice(0, 8)}... (saved at ${data.saved_at})`
       );
       return [
         true,

@@ -9,7 +9,12 @@ import type { Context } from "grammy";
 import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { addTimestamp, auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
+import {
+  addTimestamp,
+  auditLog,
+  auditLogRateLimit,
+  startTypingIndicator,
+} from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 
@@ -80,10 +85,7 @@ async function downloadDocument(ctx: Context): Promise<string> {
 /**
  * Extract text from a document.
  */
-async function extractText(
-  filePath: string,
-  mimeType?: string
-): Promise<string> {
+async function extractText(filePath: string, mimeType?: string): Promise<string> {
   const fileName = filePath.split("/").pop() || "";
   const extension = "." + (fileName.split(".").pop() || "").toLowerCase();
 
@@ -131,10 +133,7 @@ function getArchiveExtension(fileName: string): string {
 /**
  * Extract an archive to a temp directory.
  */
-async function extractArchive(
-  archivePath: string,
-  fileName: string
-): Promise<string> {
+async function extractArchive(archivePath: string, fileName: string): Promise<string> {
   const ext = getArchiveExtension(fileName);
   const extractDir = `${TEMP_DIR}/archive_${Date.now()}`;
   await Bun.$`mkdir -p ${extractDir}`;
@@ -164,9 +163,7 @@ async function buildFileTree(dir: string): Promise<string[]> {
 /**
  * Extract text content from archive files.
  */
-async function extractArchiveContent(
-  extractDir: string
-): Promise<{
+async function extractArchiveContent(extractDir: string): Promise<{
   tree: string[];
   contents: Array<{ name: string; content: string }>;
 }> {
@@ -288,9 +285,7 @@ async function processArchive(
     } catch {
       // Ignore
     }
-    await ctx.reply(
-      `❌ Failed to process archive: ${String(error).slice(0, 100)}`
-    );
+    await ctx.reply(`❌ Failed to process archive: ${String(error).slice(0, 100)}`);
   } finally {
     stopProcessing();
     typing.stop();
@@ -494,9 +489,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
       );
     } catch (error) {
       console.error("Failed to extract document:", error);
-      await ctx.reply(
-        `❌ Failed to process document: ${String(error).slice(0, 100)}`
-      );
+      await ctx.reply(`❌ Failed to process document: ${String(error).slice(0, 100)}`);
     }
     return;
   }

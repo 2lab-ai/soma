@@ -10,12 +10,21 @@ import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
 import { isAuthorized } from "../security";
 import { getSchedulerStatus, reloadScheduler } from "../scheduler";
 
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+
+  if (hours > 0) return `${hours}h ${mins}m ${secs}s`;
+  if (mins > 0) return `${mins}m ${secs}s`;
+  return `${secs}s`;
+}
+
 /**
  * /start - Show welcome message and status.
  */
 export async function handleStart(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
-  const username = ctx.from?.username || "unknown";
 
   if (!isAuthorized(userId, ALLOWED_USERS)) {
     await ctx.reply("Unauthorized. Contact the bot owner for access.");
@@ -29,18 +38,22 @@ export async function handleStart(ctx: Context): Promise<void> {
     `🤖 <b>Claude Telegram Bot</b>\n\n` +
       `Status: ${status}\n` +
       `Working directory: <code>${workDir}</code>\n\n` +
-      `<b>Commands:</b>\n` +
+      `<b>📋 Commands:</b>\n` +
+      `/start - Show this help message\n` +
       `/new - Start fresh session\n` +
-      `/stop - Stop current query\n` +
-      `/status - Show detailed status\n` +
-      `/resume - Resume last session\n` +
+      `/stop - Stop current query (silent)\n` +
+      `/status - Show current session status\n` +
+      `/stats - Show token usage & cost stats\n` +
+      `/resume - Resume last saved session\n` +
       `/retry - Retry last message\n` +
-      `/cron - Scheduled jobs status\n` +
-      `/restart - Restart the bot\n\n` +
-      `<b>Tips:</b>\n` +
+      `/cron [reload] - Scheduled jobs status/reload\n` +
+      `/restart - Restart the bot process\n\n` +
+      `<b>💡 Tips:</b>\n` +
       `• Prefix with <code>!</code> to interrupt current query\n` +
-      `• Use "think" keyword for extended reasoning\n` +
-      `• Send photos, voice, or documents`,
+      `• Use "think" keyword for extended reasoning (10K tokens)\n` +
+      `• Use "ultrathink" for deep analysis (50K tokens)\n` +
+      `• Send photos, voice messages, or documents\n` +
+      `• Multiple photos = album (auto-grouped)`,
     { parse_mode: "HTML" }
   );
 }
@@ -110,6 +123,12 @@ export async function handleStatus(ctx: Context): Promise<void> {
   // Session status
   if (session.isActive) {
     lines.push(`✅ Session: Active (${session.sessionId?.slice(0, 8)}...)`);
+    if (session.sessionStartTime) {
+      const duration = Math.floor(
+        (Date.now() - session.sessionStartTime.getTime()) / 1000
+      );
+      lines.push(`   └─ Duration: ${formatDuration(duration)} | ${session.totalQueries} queries`);
+    }
   } else {
     lines.push("⚪ Session: None");
   }
@@ -132,9 +151,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
 
   // Last activity
   if (session.lastActivity) {
-    const ago = Math.floor(
-      (Date.now() - session.lastActivity.getTime()) / 1000
-    );
+    const ago = Math.floor((Date.now() - session.lastActivity.getTime()) / 1000);
     lines.push(`\n⏱️ Last activity: ${ago}s ago`);
   }
 
@@ -147,9 +164,7 @@ export async function handleStatus(ctx: Context): Promise<void> {
       `   Output: ${usage.output_tokens?.toLocaleString() || "?"} tokens`
     );
     if (usage.cache_read_input_tokens) {
-      lines.push(
-        `   Cache read: ${usage.cache_read_input_tokens.toLocaleString()}`
-      );
+      lines.push(`   Cache read: ${usage.cache_read_input_tokens.toLocaleString()}`);
     }
   }
 
@@ -254,9 +269,98 @@ export async function handleCron(ctx: Context): Promise<void> {
 
   const status = getSchedulerStatus();
   await ctx.reply(
-    `${status}\n\n<i>Use /cron reload to reload cron.yaml</i>`,
+    `${status}\n\n<i>cron.yaml is auto-monitored for changes.\nYou can also use /cron reload to force reload.</i>`,
     { parse_mode: "HTML" }
   );
+}
+
+/**
+ * /stats - Show comprehensive token usage and cost statistics.
+ */
+export async function handleStats(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!isAuthorized(userId, ALLOWED_USERS)) {
+    await ctx.reply("Unauthorized.");
+    return;
+  }
+
+  const lines: string[] = ["📊 <b>Session Statistics</b>\n"];
+
+  // Session info
+  if (session.sessionStartTime) {
+    const duration = Math.floor(
+      (Date.now() - session.sessionStartTime.getTime()) / 1000
+    );
+    lines.push(`⏱️ Session duration: ${formatDuration(duration)}`);
+    lines.push(`🔢 Total queries: ${session.totalQueries}`);
+  } else {
+    lines.push("⚪ No active session");
+  }
+
+  // Token usage
+  if (session.totalQueries > 0) {
+    const totalIn = session.totalInputTokens;
+    const totalOut = session.totalOutputTokens;
+    const totalCache = session.totalCacheReadTokens + session.totalCacheCreateTokens;
+    const totalTokens = totalIn + totalOut;
+
+    lines.push(`\n🧠 <b>Token Usage</b>`);
+    lines.push(`   Input: ${totalIn.toLocaleString()} tokens`);
+    lines.push(`   Output: ${totalOut.toLocaleString()} tokens`);
+    if (totalCache > 0) {
+      lines.push(`   Cache: ${totalCache.toLocaleString()} tokens`);
+      lines.push(`     └─ Read: ${session.totalCacheReadTokens.toLocaleString()}`);
+      lines.push(`     └─ Create: ${session.totalCacheCreateTokens.toLocaleString()}`);
+    }
+    lines.push(`   <b>Total: ${totalTokens.toLocaleString()} tokens</b>`);
+
+    // Cost estimation (Claude Sonnet 4 pricing)
+    // $3 per MTok input, $15 per MTok output
+    // Cache write: $3.75/MTok, Cache read: $0.30/MTok
+    const costIn = (totalIn / 1000000) * 3.0;
+    const costOut = (totalOut / 1000000) * 15.0;
+    const costCacheRead = (session.totalCacheReadTokens / 1000000) * 0.3;
+    const costCacheWrite = (session.totalCacheCreateTokens / 1000000) * 3.75;
+    const totalCost = costIn + costOut + costCacheRead + costCacheWrite;
+
+    lines.push(`\n💰 <b>Estimated Cost</b>`);
+    lines.push(`   Input: $${costIn.toFixed(4)}`);
+    lines.push(`   Output: $${costOut.toFixed(4)}`);
+    if (totalCache > 0) {
+      lines.push(`   Cache: $${(costCacheRead + costCacheWrite).toFixed(4)}`);
+    }
+    lines.push(`   <b>Total: $${totalCost.toFixed(4)}</b>`);
+
+    // Efficiency metrics
+    if (session.totalQueries > 1) {
+      const avgIn = Math.floor(totalIn / session.totalQueries);
+      const avgOut = Math.floor(totalOut / session.totalQueries);
+      const avgCost = totalCost / session.totalQueries;
+
+      lines.push(`\n📈 <b>Per Query Average</b>`);
+      lines.push(`   Input: ${avgIn.toLocaleString()} tokens`);
+      lines.push(`   Output: ${avgOut.toLocaleString()} tokens`);
+      lines.push(`   Cost: $${avgCost.toFixed(4)}`);
+    }
+  } else {
+    lines.push(`\n📭 No queries in this session yet`);
+  }
+
+  // Last query
+  if (session.lastUsage) {
+    const u = session.lastUsage;
+    lines.push(`\n🔍 <b>Last Query</b>`);
+    lines.push(`   Input: ${u.input_tokens.toLocaleString()} tokens`);
+    lines.push(`   Output: ${u.output_tokens.toLocaleString()} tokens`);
+    if (u.cache_read_input_tokens) {
+      lines.push(`   Cache read: ${u.cache_read_input_tokens.toLocaleString()}`);
+    }
+  }
+
+  lines.push(`\n<i>Pricing: Claude Sonnet 4 rates</i>`);
+
+  await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
 }
 
 /**
@@ -283,7 +387,9 @@ export async function handleRetry(ctx: Context): Promise<void> {
   }
 
   const message = session.lastMessage;
-  await ctx.reply(`🔄 Retrying: "${message.slice(0, 50)}${message.length > 50 ? "..." : ""}"`);
+  await ctx.reply(
+    `🔄 Retrying: "${message.slice(0, 50)}${message.length > 50 ? "..." : ""}"`
+  );
 
   // Simulate sending the message again by emitting a fake text message event
   // We do this by directly calling the text handler logic

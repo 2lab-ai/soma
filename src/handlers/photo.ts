@@ -8,7 +8,12 @@ import type { Context } from "grammy";
 import { session } from "../session";
 import { ALLOWED_USERS, TEMP_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
-import { addTimestamp, auditLog, auditLogRateLimit, startTypingIndicator } from "../utils";
+import {
+  addTimestamp,
+  auditLog,
+  auditLogRateLimit,
+  startTypingIndicator,
+} from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 
