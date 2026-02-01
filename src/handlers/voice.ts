@@ -35,6 +35,13 @@ export async function handleVoice(ctx: Context): Promise<void> {
     return;
   }
 
+  // 1.5. React to user message to show it's received
+  try {
+    await ctx.react("👀");
+  } catch (error) {
+    console.debug("Failed to add reaction to user message:", error);
+  }
+
   // 2. Check if transcription is available
   if (!TRANSCRIPTION_AVAILABLE) {
     await ctx.reply(

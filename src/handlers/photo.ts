@@ -122,6 +122,13 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     return;
   }
 
+  // 1.5. React to user message to show it's received
+  try {
+    await ctx.react("👀");
+  } catch (error) {
+    console.debug("Failed to add reaction to user message:", error);
+  }
+
   // 2. For single photos, show status and rate limit early
   let statusMsg: Awaited<ReturnType<typeof ctx.reply>> | null = null;
   if (!mediaGroupId) {
