@@ -100,8 +100,7 @@ export function createStatusCallback(
     try {
       if (statusType === "thinking") {
         // Show thinking inline, compact (first 500 chars)
-        const preview =
-          content.length > 500 ? content.slice(0, 500) + "..." : content;
+        const preview = content.length > 500 ? content.slice(0, 500) + "..." : content;
         const escaped = escapeHtml(preview);
         const thinkingMsg = await ctx.reply(`🧠 <i>${escaped}</i>`, {
           parse_mode: "HTML",
@@ -146,23 +145,14 @@ export function createStatusCallback(
             return;
           }
           try {
-            await ctx.api.editMessageText(
-              msg.chat.id,
-              msg.message_id,
-              formatted,
-              {
-                parse_mode: "HTML",
-              }
-            );
+            await ctx.api.editMessageText(msg.chat.id, msg.message_id, formatted, {
+              parse_mode: "HTML",
+            });
             state.lastContent.set(segmentId, formatted);
           } catch (htmlError) {
             console.debug("HTML edit failed, trying plain text:", htmlError);
             try {
-              await ctx.api.editMessageText(
-                msg.chat.id,
-                msg.message_id,
-                formatted
-              );
+              await ctx.api.editMessageText(msg.chat.id, msg.message_id, formatted);
               state.lastContent.set(segmentId, formatted);
             } catch (editError) {
               console.debug("Edit message failed:", editError);
@@ -195,14 +185,9 @@ export function createStatusCallback(
 
         if (formatted.length <= TELEGRAM_MESSAGE_LIMIT) {
           try {
-            await ctx.api.editMessageText(
-              msg.chat.id,
-              msg.message_id,
-              formatted,
-              {
-                parse_mode: "HTML",
-              }
-            );
+            await ctx.api.editMessageText(msg.chat.id, msg.message_id, formatted, {
+              parse_mode: "HTML",
+            });
           } catch (error) {
             console.debug("Failed to edit final message:", error);
           }
@@ -218,10 +203,7 @@ export function createStatusCallback(
             try {
               await ctx.reply(chunk, { parse_mode: "HTML" });
             } catch (htmlError) {
-              console.debug(
-                "HTML chunk failed, using plain text:",
-                htmlError
-              );
+              console.debug("HTML chunk failed, using plain text:", htmlError);
               await ctx.reply(chunk);
             }
           }

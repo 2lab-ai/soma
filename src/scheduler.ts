@@ -5,7 +5,7 @@
  */
 
 import { Cron } from "croner";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { resolve } from "path";
 import { parse as parseYaml } from "yaml";
 import type { Api } from "grammy";
@@ -23,6 +23,10 @@ const activeJobs: Map<string, Cron> = new Map();
 let botApi: Api | null = null;
 let cronExecutionLock = false;
 const jobExecutions: number[] = [];
+
+// File watcher state
+let fileWatcher: Timer | null = null;
+let lastModifiedTime: number | null = null;
 
 export function initScheduler(api: Api): void {
   botApi = api;
@@ -128,6 +132,12 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
     );
 
     console.log(`[CRON] Job ${name} completed`);
+    console.log(
+      `[CRON:${name}] Prompt: ${prompt.slice(0, 200)}${prompt.length > 200 ? "..." : ""}`
+    );
+    console.log(
+      `[CRON:${name}] Response: ${result.slice(0, 500)}${result.length > 500 ? "..." : ""}`
+    );
 
     if (notify && botApi && ALLOWED_USERS.length > 0) {
       const notifyUserId = ALLOWED_USERS[0]!;
@@ -153,7 +163,11 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
           `❌ <b>Scheduled job failed: ${safeName}</b>\n\n${safeError}`,
           { parse_mode: "HTML" }
         );
-      } catch {}
+      } catch (notifyErr) {
+        console.error(
+          `[CRON] Failed to notify user of job failure for ${name}: ${notifyErr}`
+        );
+      }
     }
   } finally {
     cronExecutionLock = false;
@@ -188,6 +202,45 @@ function scheduleJobs(config: CronConfig, verbose: boolean): number {
   return loaded;
 }
 
+function startFileWatcher(): void {
+  stopFileWatcher();
+
+  fileWatcher = setInterval(() => {
+    if (!existsSync(CRON_CONFIG_PATH)) return;
+
+    try {
+      const modTime = statSync(CRON_CONFIG_PATH).mtimeMs;
+
+      if (lastModifiedTime === null) {
+        lastModifiedTime = modTime;
+        return;
+      }
+
+      if (modTime <= lastModifiedTime) return;
+
+      console.log("[CRON] Detected cron.yaml change, auto-reloading...");
+      lastModifiedTime = modTime;
+
+      setTimeout(() => {
+        const count = reloadScheduler();
+        if (count > 0) console.log(`[CRON] Auto-reloaded ${count} jobs`);
+      }, 100);
+    } catch (error) {
+      console.error(`[CRON] File watcher error: ${error}`);
+      stopFileWatcher();
+    }
+  }, 2000);
+
+  console.log("[CRON] File watcher started");
+}
+
+function stopFileWatcher(): void {
+  if (!fileWatcher) return;
+  clearInterval(fileWatcher);
+  fileWatcher = null;
+  console.log("[CRON] File watcher stopped");
+}
+
 export function startScheduler(): void {
   stopScheduler();
 
@@ -200,6 +253,9 @@ export function startScheduler(): void {
   console.log(`[CRON] Loading ${config.schedules.length} schedules`);
   const loaded = scheduleJobs(config, true);
   console.log(`[CRON] Started ${loaded} jobs`);
+
+  // Start file watcher for auto-reload
+  startFileWatcher();
 }
 
 export function stopScheduler(): void {
@@ -210,6 +266,9 @@ export function stopScheduler(): void {
     job.stop();
   }
   activeJobs.clear();
+
+  // Stop file watcher
+  stopFileWatcher();
 }
 
 export function reloadScheduler(): number {
@@ -223,6 +282,10 @@ export function reloadScheduler(): number {
 
   const loaded = scheduleJobs(config, false);
   console.log(`[CRON] Reloaded ${loaded} jobs`);
+
+  // Restart file watcher after reload
+  startFileWatcher();
+
   return loaded;
 }
 

@@ -77,10 +77,7 @@ export function convertMarkdownToHtml(text: string): string {
   // Restore inline code
   for (let i = 0; i < inlineCodes.length; i++) {
     const escapedCode = escapeHtml(inlineCodes[i]!);
-    text = text.replace(
-      `\x00INLINECODE${i}\x00`,
-      `<code>${escapedCode}</code>`
-    );
+    text = text.replace(`\x00INLINECODE${i}\x00`, `<code>${escapedCode}</code>`);
   }
 
   // Collapse multiple newlines
@@ -110,9 +107,7 @@ function convertBlockquotes(text: string): string {
       inBlockquote = true;
     } else {
       if (inBlockquote) {
-        result.push(
-          "<blockquote>" + blockquoteLines.join("\n") + "</blockquote>"
-        );
+        result.push("<blockquote>" + blockquoteLines.join("\n") + "</blockquote>");
         blockquoteLines.length = 0;
         inBlockquote = false;
       }
@@ -296,9 +291,7 @@ export function formatToolStatus(
         "";
 
       if (summary) {
-        return `🔧 ${server} ${action}: ${escapeHtml(
-          truncate(String(summary), 40)
-        )}`;
+        return `🔧 ${server} ${action}: ${escapeHtml(truncate(String(summary), 40))}`;
       }
       return `🔧 ${server}: ${action}`;
     }

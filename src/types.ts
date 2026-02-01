@@ -49,12 +49,7 @@ export interface McpHttpConfig {
 }
 
 // Audit log event types
-export type AuditEventType =
-  | "message"
-  | "auth"
-  | "tool_use"
-  | "error"
-  | "rate_limit";
+export type AuditEventType = "message" | "auth" | "tool_use" | "error" | "rate_limit";
 
 export interface AuditEvent {
   timestamp: string;

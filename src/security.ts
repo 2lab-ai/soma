@@ -43,10 +43,7 @@ class RateLimiter {
 
     // Refill tokens based on time elapsed
     const elapsed = (now - bucket.lastUpdate) / 1000;
-    bucket.tokens = Math.min(
-      this.maxTokens,
-      bucket.tokens + elapsed * this.refillRate
-    );
+    bucket.tokens = Math.min(this.maxTokens, bucket.tokens + elapsed * this.refillRate);
     bucket.lastUpdate = now;
 
     if (bucket.tokens >= 1) {
@@ -101,10 +98,7 @@ export function isPathAllowed(path: string): boolean {
     // Check against allowed paths using proper containment
     for (const allowed of ALLOWED_PATHS) {
       const allowedResolved = resolve(allowed);
-      if (
-        resolved === allowedResolved ||
-        resolved.startsWith(allowedResolved + "/")
-      ) {
+      if (resolved === allowedResolved || resolved.startsWith(allowedResolved + "/")) {
         return true;
       }
     }
@@ -117,9 +111,7 @@ export function isPathAllowed(path: string): boolean {
 
 // ============== Command Safety ==============
 
-export function checkCommandSafety(
-  command: string
-): [safe: boolean, reason: string] {
+export function checkCommandSafety(command: string): [safe: boolean, reason: string] {
   const lowerCommand = command.toLowerCase();
 
   // Check blocked patterns
