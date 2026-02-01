@@ -14,6 +14,8 @@ import {
   TELEGRAM_SAFE_LIMIT,
   STREAMING_THROTTLE_MS,
   BUTTON_LABEL_MAX_LENGTH,
+  DELETE_THINKING_MESSAGES,
+  DELETE_TOOL_MESSAGES,
 } from "../config";
 
 /**
@@ -84,7 +86,8 @@ export async function checkPendingAskUserRequests(
  */
 export class StreamingState {
   textMessages = new Map<number, Message>(); // segment_id -> telegram message
-  toolMessages: Message[] = []; // ephemeral tool status messages
+  thinkingMessages: Message[] = []; // thinking status messages
+  toolMessages: Message[] = []; // tool status messages
   lastEditTimes = new Map<number, number>(); // segment_id -> last edit time
   lastContent = new Map<number, string>(); // segment_id -> last sent content
 }
@@ -105,7 +108,7 @@ export function createStatusCallback(
         const thinkingMsg = await ctx.reply(`🧠 <i>${escaped}</i>`, {
           parse_mode: "HTML",
         });
-        state.toolMessages.push(thinkingMsg);
+        state.thinkingMessages.push(thinkingMsg);
       } else if (statusType === "tool") {
         const toolMsg = await ctx.reply(content, { parse_mode: "HTML" });
         state.toolMessages.push(toolMsg);
@@ -209,12 +212,25 @@ export function createStatusCallback(
           }
         }
       } else if (statusType === "done") {
-        // Delete tool messages - text messages stay
-        for (const toolMsg of state.toolMessages) {
-          try {
-            await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
-          } catch (error) {
-            console.debug("Failed to delete tool message:", error);
+        // Delete thinking messages if configured
+        if (DELETE_THINKING_MESSAGES) {
+          for (const thinkingMsg of state.thinkingMessages) {
+            try {
+              await ctx.api.deleteMessage(thinkingMsg.chat.id, thinkingMsg.message_id);
+            } catch (error) {
+              console.debug("Failed to delete thinking message:", error);
+            }
+          }
+        }
+
+        // Delete tool messages if configured
+        if (DELETE_TOOL_MESSAGES) {
+          for (const toolMsg of state.toolMessages) {
+            try {
+              await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
+            } catch (error) {
+              console.debug("Failed to delete tool message:", error);
+            }
           }
         }
       }

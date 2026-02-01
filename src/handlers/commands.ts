@@ -127,7 +127,9 @@ export async function handleStatus(ctx: Context): Promise<void> {
       const duration = Math.floor(
         (Date.now() - session.sessionStartTime.getTime()) / 1000
       );
-      lines.push(`   └─ Duration: ${formatDuration(duration)} | ${session.totalQueries} queries`);
+      lines.push(
+        `   └─ Duration: ${formatDuration(duration)} | ${session.totalQueries} queries`
+      );
     }
   } else {
     lines.push("⚪ Session: None");
