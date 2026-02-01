@@ -172,6 +172,7 @@ git commit -m "feat: description
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 
+Co-Authored-By: 임지혁 <z@2lab.ai>
 Co-Authored-By: Elon Musk (AI) <elon@2lab.ai>"
 git push
 ```
