@@ -180,6 +180,14 @@ export const THINKING_DEEP_KEYWORDS = thinkingDeepKeywordsStr
   .split(",")
   .map((k) => k.trim().toLowerCase());
 
+// ============== Message Deletion Configuration ==============
+
+// Control whether to delete thinking/tool messages after response completes
+export const DELETE_THINKING_MESSAGES =
+  (process.env.DEFAULT_DELETE_THINKING_MESSAGES || "false").toLowerCase() === "true";
+export const DELETE_TOOL_MESSAGES =
+  (process.env.DEFAULT_DELETE_TOOL_MESSAGES || "true").toLowerCase() === "true";
+
 // ============== Media Group Settings ==============
 
 export const MEDIA_GROUP_TIMEOUT = 1000; // ms to wait for more photos in a group

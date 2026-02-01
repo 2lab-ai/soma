@@ -387,7 +387,8 @@ class ClaudeSession {
     } catch (error) {
       const errorStr = String(error).toLowerCase();
       const isCleanupError = errorStr.includes("cancel") || errorStr.includes("abort");
-      const shouldSuppress = isCleanupError && (queryCompleted || askUserTriggered || this.stopRequested);
+      const shouldSuppress =
+        isCleanupError && (queryCompleted || askUserTriggered || this.stopRequested);
 
       if (shouldSuppress) {
         console.warn(`Suppressed post-completion error: ${error}`);
