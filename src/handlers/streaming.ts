@@ -233,6 +233,23 @@ export function createStatusCallback(
             }
           }
         }
+
+        // Add reaction to last message to indicate turn complete
+        if (state.textMessages.size > 0) {
+          // Find the last segment (highest segment ID)
+          const lastSegmentId = Math.max(...state.textMessages.keys());
+          const lastMsg = state.textMessages.get(lastSegmentId);
+
+          if (lastMsg) {
+            try {
+              await ctx.api.setMessageReaction(lastMsg.chat.id, lastMsg.message_id, [
+                { type: "emoji", emoji: "👍" },
+              ]);
+            } catch (error) {
+              console.debug("Failed to add completion reaction to bot message:", error);
+            }
+          }
+        }
       }
     } catch (error) {
       console.error("Status callback error:", error);

@@ -34,6 +34,13 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
+  // 1.5. React to user message to show it's received
+  try {
+    await ctx.react("👀");
+  } catch (error) {
+    console.debug("Failed to add reaction to user message:", error);
+  }
+
   // 2. Check for interrupt prefix
   message = await checkInterrupt(message);
   if (!message.trim()) {

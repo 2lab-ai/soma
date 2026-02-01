@@ -406,6 +406,13 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
+  // 1.5. React to user message to show it's received
+  try {
+    await ctx.react("👀");
+  } catch (error) {
+    console.debug("Failed to add reaction to user message:", error);
+  }
+
   // 2. Check file size
   if (doc.file_size && doc.file_size > MAX_FILE_SIZE) {
     await ctx.reply("❌ File too large. Maximum size is 10MB.");
