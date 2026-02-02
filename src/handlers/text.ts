@@ -43,6 +43,7 @@ export async function handleText(ctx: Context): Promise<void> {
   }
 
   // 2. Check for interrupt prefix
+  const wasInterrupt = message.startsWith("!");
   message = await checkInterrupt(message);
   if (!message.trim()) {
     return;
@@ -50,14 +51,23 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 2.5. Real-time steering: buffer message if Claude is currently executing
   if (session.isProcessing) {
-    session.addSteering(message, ctx.message?.message_id);
-    console.log(`[STEERING] Buffered user message during execution`);
-    try {
-      await ctx.react("👌");
-    } catch (error) {
-      console.debug("Failed to add steering reaction:", error);
+    // Interrupt messages should never be buffered as steering, otherwise they can be cleared by
+    // the prior request's stopProcessing() cleanup before being consumed.
+    if (wasInterrupt) {
+      const start = Date.now();
+      while (session.isProcessing && Date.now() - start < 2000) {
+        await Bun.sleep(50);
+      }
+    } else {
+      session.addSteering(message, ctx.message?.message_id);
+      console.log(`[STEERING] Buffered user message during execution`);
+      try {
+        await ctx.react("👌");
+      } catch (error) {
+        console.debug("Failed to add steering reaction:", error);
+      }
+      return;
     }
-    return;
   }
 
   // 3. Rate limit check
@@ -103,7 +113,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
       // 9.5. Check context limit and trigger auto-save
       if (session.needsSave) {
-        const currentTokens = session.lastUsage?.input_tokens || 0;
+        const currentTokens = session.currentContextTokens;
         const percentage = ((currentTokens / 200_000) * 100).toFixed(1);
         await ctx.reply(
           `⚠️ **Context Limit Approaching**\n\n` +
