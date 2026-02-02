@@ -264,9 +264,7 @@ class ClaudeSession {
                   return { continue: true };
                 }
 
-                console.log(
-                  `[STEERING] Injecting user message before tool execution`
-                );
+                console.log(`[STEERING] Injecting user message before tool execution`);
                 return {
                   continue: true,
                   systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
