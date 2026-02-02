@@ -69,6 +69,11 @@ class ClaudeSession {
   totalCacheCreateTokens = 0;
   totalQueries = 0;
 
+  // Context limit tracking
+  contextLimitWarned = false; // Only warn once per session
+  recentlyRestored = false; // Cooldown after /load
+  messagesSinceRestore = 0; // Count messages since /load
+
   private abortController: AbortController | null = null;
   private isQueryRunning = false;
   private stopRequested = false;
@@ -81,6 +86,10 @@ class ClaudeSession {
 
   get isRunning(): boolean {
     return this.isQueryRunning || this._isProcessing;
+  }
+
+  get needsSave(): boolean {
+    return this.contextLimitWarned && !this.recentlyRestored;
   }
 
   /**
@@ -449,6 +458,17 @@ class ClaudeSession {
     console.log("Session cleared");
   }
 
+  /**
+   * Mark that context was just restored (activate cooldown).
+   * Called after /load skill execution.
+   */
+  markRestored(): void {
+    this.recentlyRestored = true;
+    this.messagesSinceRestore = 0;
+    this.contextLimitWarned = false;
+    console.log("Context restored - cooldown activated (50 messages)");
+  }
+
   private accumulateUsage(u: TokenUsage): void {
     if (!this.sessionStartTime) this.sessionStartTime = new Date();
 
@@ -462,6 +482,36 @@ class ClaudeSession {
       `Usage: in=${u.input_tokens} out=${u.output_tokens} ` +
         `cache_read=${u.cache_read_input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0}`
     );
+
+    // Context limit monitoring (Oracle critical)
+    const CONTEXT_LIMIT = 200_000;
+    const SAVE_THRESHOLD = 180_000; // Trigger at 90% (20k buffer)
+    const COOLDOWN_MESSAGES = 50; // Don't re-trigger for 50 messages after /load
+
+    const currentContext = u.input_tokens || 0;
+
+    // Increment message counter
+    if (this.recentlyRestored) {
+      this.messagesSinceRestore++;
+      if (this.messagesSinceRestore >= COOLDOWN_MESSAGES) {
+        console.log("Cooldown period complete, re-enabling context limit monitoring");
+        this.recentlyRestored = false;
+        this.contextLimitWarned = false;
+      }
+    }
+
+    // Check if we should trigger save (180k threshold)
+    if (
+      currentContext >= SAVE_THRESHOLD &&
+      !this.contextLimitWarned &&
+      !this.recentlyRestored
+    ) {
+      this.contextLimitWarned = true;
+      console.warn(
+        `⚠️  CONTEXT LIMIT APPROACHING: ${currentContext}/${CONTEXT_LIMIT} tokens ` +
+          `(${((currentContext / CONTEXT_LIMIT) * 100).toFixed(1)}%) - SAVE REQUIRED`
+      );
+    }
   }
 
   private saveSession(): void {

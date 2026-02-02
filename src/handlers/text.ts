@@ -4,8 +4,9 @@
 
 import type { Context } from "grammy";
 import { session } from "../session";
-import { ALLOWED_USERS } from "../config";
+import { ALLOWED_USERS, WORKING_DIR } from "../config";
 import { isAuthorized, rateLimiter } from "../security";
+import { writeFileSync } from "fs";
 import {
   addTimestamp,
   auditLog,
@@ -69,7 +70,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 7. Create streaming state and callback
   let state = new StreamingState();
-  let statusCallback = createStatusCallback(ctx, state);
+  let statusCallback = await createStatusCallback(ctx, state);
 
   // 8. Send to Claude with retry logic for crashes
   const MAX_RETRIES = 1;
@@ -87,6 +88,54 @@ export async function handleText(ctx: Context): Promise<void> {
 
       // 9. Audit log
       await auditLog(userId, username, "TEXT", message, response);
+
+      // 9.5. Check context limit and trigger auto-save
+      if (session.needsSave) {
+        const currentTokens = session.lastUsage?.input_tokens || 0;
+        const percentage = ((currentTokens / 200_000) * 100).toFixed(1);
+        await ctx.reply(
+          `⚠️ **Context Limit Approaching**\n\n` +
+            `Current: ${currentTokens.toLocaleString()} / 200,000 tokens (${percentage}%)\n\n` +
+            `Initiating automatic save...`,
+          { parse_mode: "Markdown" }
+        );
+
+        // Auto-trigger /save skill
+        try {
+          const saveResponse = await session.sendMessageStreaming(
+            "Context limit reached. Execute: Skill tool with skill='oh-my-claude:save'",
+            username,
+            userId,
+            async () => {}, // No streaming updates for auto-save
+            chatId,
+            ctx
+          );
+
+          // Parse save_id from response
+          const saveIdMatch = saveResponse.match(
+            /Saved to:.*?\/docs\/tasks\/save\/(\d{8}_\d{6})\//
+          );
+          if (saveIdMatch && saveIdMatch[1]) {
+            const saveId = saveIdMatch[1];
+            const saveIdFile = `${WORKING_DIR}/.last-save-id`;
+            writeFileSync(saveIdFile, saveId, "utf-8");
+            console.log(`✅ Save ID captured: ${saveId} → ${saveIdFile}`);
+            await ctx.reply(
+              `✅ **Context Saved**\n\n` +
+                `Save ID: \`${saveId}\`\n\n` +
+                `Please run: \`make up\` to restart with restored context.`,
+              { parse_mode: "Markdown" }
+            );
+          } else {
+            console.warn("Failed to parse save_id from response:", saveResponse.slice(0, 200));
+            await ctx.reply(`⚠️ Save completed but couldn't parse save ID. Response: ${saveResponse.slice(0, 200)}`);
+          }
+        } catch (error) {
+          console.error("Auto-save failed:", error);
+          await ctx.reply(`❌ Auto-save failed: ${String(error).slice(0, 200)}`);
+        }
+      }
+
       break; // Success - exit retry loop
     } catch (error) {
       const errorStr = String(error);
@@ -112,7 +161,7 @@ export async function handleText(ctx: Context): Promise<void> {
         state.cleanup();
         // Reset state for retry
         state = new StreamingState();
-        statusCallback = createStatusCallback(ctx, state);
+        statusCallback = await createStatusCallback(ctx, state);
         continue;
       }
 
