@@ -106,6 +106,21 @@ bot.use(
 
 // ============== Command Handlers ==============
 
+// Register Telegram command autocomplete menu
+await bot.api.setMyCommands([
+  { command: "start", description: "Welcome message and status" },
+  { command: "new", description: "Start fresh Claude session" },
+  { command: "stop", description: "Stop current query" },
+  { command: "status", description: "Show session details" },
+  { command: "stats", description: "Token usage & cost statistics" },
+  { command: "context", description: "Context window usage (200K limit)" },
+  { command: "help", description: "Show all available commands" },
+  { command: "resume", description: "Resume last saved session" },
+  { command: "restart", description: "Restart the bot process" },
+  { command: "retry", description: "Retry last message" },
+  { command: "cron", description: "Scheduled jobs status/reload" },
+]);
+
 bot.command("start", handleStart);
 bot.command("new", handleNew);
 bot.command("stop", handleStop);
