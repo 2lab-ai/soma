@@ -4,8 +4,10 @@
  * Control Claude Code from your phone via Telegram.
  */
 
-import { Bot } from "grammy";
+import { Bot, GrammyError } from "grammy";
 import { run, sequentialize } from "@grammyjs/runner";
+import { apiThrottler } from "@grammyjs/transformer-throttler";
+import Bottleneck from "bottleneck";
 import { TELEGRAM_TOKEN, WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "./config";
 import {
   unlinkSync,
@@ -38,6 +40,46 @@ import { escapeHtml } from "./formatting";
 
 // Create bot instance
 const bot = new Bot(TELEGRAM_TOKEN);
+
+// Configure rate limiting for outbound Telegram API calls
+const throttler = apiThrottler({
+  global: {
+    maxConcurrent: 25,
+    minTime: 40, // ~25/sec (under 30/sec limit)
+  },
+  group: {
+    maxConcurrent: 1,
+    minTime: 3100, // ~19/min (under 20/min limit)
+    reservoir: 19,
+    reservoirRefreshAmount: 19,
+    reservoirRefreshInterval: 60000,
+    highWater: 50,
+    strategy: Bottleneck.strategy.OVERFLOW,
+  },
+  out: {
+    maxConcurrent: 1,
+    minTime: 1050, // ~57/min per chat (under 1/sec limit)
+    highWater: 100,
+    strategy: Bottleneck.strategy.OVERFLOW,
+  },
+});
+
+bot.api.config.use(throttler);
+
+// 429 fallback handler (if throttler fails to prevent rate limit)
+bot.api.config.use(async (prev, method, payload, signal) => {
+  try {
+    return await prev(method, payload, signal);
+  } catch (err) {
+    if (err instanceof GrammyError && err.error_code === 429) {
+      const retry = err.parameters?.retry_after ?? 30;
+      console.warn(`⚠️ 429 rate limit despite throttle. Waiting ${retry}s`);
+      await new Promise((r) => setTimeout(r, retry * 1000));
+      return prev(method, payload, signal);
+    }
+    throw err;
+  }
+});
 
 // Sequentialize non-command messages per user (prevents race conditions)
 // Commands bypass sequentialization so they work immediately
