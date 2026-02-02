@@ -92,6 +92,15 @@ class ClaudeSession {
     return this.isQueryRunning || this._isProcessing;
   }
 
+  /**
+   * Current cumulative context tokens (input + output) for this session.
+   *
+   * This is the same value used by accumulateUsage() to trigger context-limit warnings/auto-save.
+   */
+  get currentContextTokens(): number {
+    return this.totalInputTokens + this.totalOutputTokens;
+  }
+
   get needsSave(): boolean {
     return this.contextLimitWarned && !this.recentlyRestored;
   }

@@ -345,8 +345,11 @@ export async function createStatusCallback(
           try {
             const msg = await ctx.reply(formatted, { parse_mode: "HTML" });
             state.textMessages.set(segmentId, msg);
+            state.lastContent.set(segmentId, formatted);
           } catch {
-            await ctx.reply(content);
+            const msg = await ctx.reply(content);
+            state.textMessages.set(segmentId, msg);
+            state.lastContent.set(segmentId, content);
           }
 
           // Recreate progress at bottom after new message (only if spinner enabled)
@@ -369,8 +372,18 @@ export async function createStatusCallback(
             await ctx.api.editMessageText(msg.chat.id, msg.message_id, formatted, {
               parse_mode: "HTML",
             });
+            state.lastContent.set(segmentId, formatted);
           } catch (error) {
             console.debug("Failed to edit final message:", error);
+            try {
+              await ctx.api.editMessageText(msg.chat.id, msg.message_id, content);
+              state.lastContent.set(segmentId, content);
+            } catch (editError) {
+              console.debug(
+                "Failed to edit final message (plain text fallback):",
+                editError
+              );
+            }
           }
         } else {
           // Too long - delete and split
@@ -379,14 +392,28 @@ export async function createStatusCallback(
           } catch (error) {
             console.debug("Failed to delete message for splitting:", error);
           }
+
+          // Replace the tracked message with the last chunk message so `done` can safely append
+          // the elapsed-time footer without targeting a deleted message.
+          state.textMessages.delete(segmentId);
+          state.lastContent.delete(segmentId);
+
+          let lastChunkMsg: Message | null = null;
+          let lastChunkContent: string | null = null;
           for (let i = 0; i < formatted.length; i += TELEGRAM_SAFE_LIMIT) {
             const chunk = formatted.slice(i, i + TELEGRAM_SAFE_LIMIT);
             try {
-              await ctx.reply(chunk, { parse_mode: "HTML" });
+              lastChunkMsg = await ctx.reply(chunk, { parse_mode: "HTML" });
+              lastChunkContent = chunk;
             } catch (htmlError) {
               console.debug("HTML chunk failed, using plain text:", htmlError);
-              await ctx.reply(chunk);
+              lastChunkMsg = await ctx.reply(chunk);
+              lastChunkContent = chunk;
             }
+          }
+          if (lastChunkMsg && lastChunkContent !== null) {
+            state.textMessages.set(segmentId, lastChunkMsg);
+            state.lastContent.set(segmentId, lastChunkContent);
           }
 
           // Recreate progress at bottom after split messages (only if spinner enabled)
