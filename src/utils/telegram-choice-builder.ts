@@ -55,6 +55,84 @@ export class TelegramChoiceBuilder {
     return choices.questions.map((q) => this.buildQuestionKeyboard(q, sessionKey));
   }
 
+  /**
+   * Build a unified multi-form keyboard with progress tracking.
+   * Shows answered questions as summaries, current unanswered question with options.
+   * @param choices - Multi-question form definition
+   * @param sessionKey - Session identifier for callback compression
+   * @param formId - Unique form identifier for callback routing
+   * @param selections - Current user selections (questionId -> {choiceId, label})
+   * @returns Single InlineKeyboard with progressive UI
+   */
+  static buildMultiFormKeyboard(
+    choices: UserChoices,
+    sessionKey: string,
+    formId: string,
+    selections: Record<string, { choiceId: string; label: string }> = {}
+  ): InlineKeyboard {
+    if (!choices.questions?.length) {
+      throw new Error("UserChoices must have at least one question");
+    }
+
+    const keyboard = new InlineKeyboard();
+    const compressedKey = this.compressSessionKey(sessionKey);
+    const totalQuestions = choices.questions.length;
+    const answeredCount = Object.keys(selections).length;
+
+    // Progress indicator: ●●○○○
+    const progressIndicator =
+      "●".repeat(answeredCount) +
+      "○".repeat(totalQuestions - answeredCount);
+
+    // Find first unanswered question
+    const firstUnanswered = choices.questions.find((q) => !selections[q.id]);
+
+    // If all answered, show submit/reset
+    if (!firstUnanswered) {
+      // Submit button
+      const submitCallback = `mc:${compressedKey}:${formId}:__submit`;
+      validateCallbackData(submitCallback);
+      keyboard.text("🚀 Submit", submitCallback).row();
+
+      // Reset button
+      const resetCallback = `mc:${compressedKey}:${formId}:__reset`;
+      validateCallbackData(resetCallback);
+      keyboard.text("🗑️ Reset", resetCallback).row();
+
+      return keyboard;
+    }
+
+    // Show current question options
+    const safeQuestionId = sanitizeId(firstUnanswered.id, "question ID");
+
+    for (const option of firstUnanswered.choices) {
+      const safeOptionId = sanitizeId(option.id, "option ID");
+      const callbackData = `mc:${compressedKey}:${formId}:${safeQuestionId}:${safeOptionId}`;
+      validateCallbackData(callbackData);
+      keyboard.text(truncateLabel(option.label), callbackData).row();
+    }
+
+    // Direct input button for current question
+    const directCallback = `mc:${compressedKey}:${formId}:${safeQuestionId}:__direct`;
+    validateCallbackData(directCallback);
+    keyboard.text("✏️ Direct input", directCallback).row();
+
+    // Change buttons for answered questions (max 3 to avoid keyboard bloat)
+    const answeredQuestions = choices.questions.filter((q) => selections[q.id]);
+    for (const q of answeredQuestions.slice(0, 3)) {
+      const safeQId = sanitizeId(q.id, "question ID");
+      const changeCallback = `mc:${compressedKey}:${formId}:${safeQId}:__change`;
+      validateCallbackData(changeCallback);
+      const selectedLabel = selections[q.id]!.label;
+      keyboard.text(
+        `🔄 Change "${truncateLabel(selectedLabel)}"`,
+        changeCallback
+      ).row();
+    }
+
+    return keyboard;
+  }
+
   private static buildQuestionKeyboard(
     question: UserChoiceQuestion,
     sessionKey: string
