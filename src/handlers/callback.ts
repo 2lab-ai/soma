@@ -4,7 +4,7 @@ import { sessionManager } from "../session-manager";
 import type { ClaudeSession } from "../session";
 import { type ChatType, isAuthorizedForChat } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
+import { StreamingState, createStatusCallback, cleanupToolMessages } from "./streaming";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import { isAbortError } from "../utils/error-classification";
 
@@ -82,14 +82,7 @@ async function sendMessageToClaude(
     await auditLog(userId, username, auditAction, message, response);
   } catch (error) {
     console.error(`Error processing ${auditAction.toLowerCase()}:`, error);
-
-    for (const toolMsg of state.toolMessages) {
-      try {
-        await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
-      } catch (error) {
-        console.warn(`Failed to delete tool message ${toolMsg.message_id}:`, error);
-      }
-    }
+    await cleanupToolMessages(ctx, state.toolMessages);
 
     if (isAbortError(error)) {
       const wasInterrupt = session.consumeInterruptFlag();
@@ -166,6 +159,7 @@ async function handleChoiceCallback(
       formId: session.choiceState.formId,
       questionId,
       messageId: callbackMessageId!, // The specific question message
+      createdAt: Date.now(), // For 5-minute expiration
     };
     await ctx.answerCallbackQuery({ text: "Type your answer:" });
     await ctx.editMessageText("✏️ Waiting for your input...");

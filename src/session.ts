@@ -424,7 +424,9 @@ export class ClaudeSession {
     // Prepend any unconsumed steering from previous query
     const pendingSteering = this.getPendingSteering();
     if (pendingSteering) {
-      console.log(`[STEERING] Prepending ${pendingSteering.split("\n---\n").length} pending messages to query`);
+      console.log(
+        `[STEERING] Prepending ${pendingSteering.split("\n---\n").length} pending messages to query`
+      );
       messageToSend = `[MESSAGES SENT DURING PREVIOUS EXECUTION - user sent these while you were working]\n${pendingSteering}\n[END PREVIOUS MESSAGES]\n\n[NEW MESSAGE]\n${messageToSend}`;
     }
 
@@ -460,7 +462,8 @@ export class ClaudeSession {
           {
             hooks: [
               async (input, _toolUseId, _context) => {
-                const toolName = (input as { tool_name?: string }).tool_name || "unknown";
+                const toolName =
+                  (input as { tool_name?: string }).tool_name || "unknown";
                 console.log(`[HOOK] PreToolUse fired for: ${toolName}`);
 
                 const steering = this.consumeSteering();
@@ -468,7 +471,9 @@ export class ClaudeSession {
                   return {};
                 }
 
-                console.log(`[STEERING] Injecting ${steering.split("\n---\n").length} message(s) before ${toolName}`);
+                console.log(
+                  `[STEERING] Injecting ${steering.split("\n---\n").length} message(s) before ${toolName}`
+                );
                 return {
                   systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
                 };

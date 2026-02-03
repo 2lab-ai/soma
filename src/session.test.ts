@@ -181,6 +181,7 @@ describe("ClaudeSession - choiceState", () => {
     const directInputState: DirectInputState = {
       type: "single",
       messageId: 11111,
+      createdAt: Date.now(),
     };
 
     session.pendingDirectInput = directInputState;
@@ -196,6 +197,7 @@ describe("ClaudeSession - choiceState", () => {
       formId: "form-xyz",
       questionId: "q3",
       messageId: 22222,
+      createdAt: Date.now(),
     };
 
     session.pendingDirectInput = directInputState;
@@ -209,6 +211,7 @@ describe("ClaudeSession - choiceState", () => {
     session.pendingDirectInput = {
       type: "single",
       messageId: 999,
+      createdAt: Date.now(),
     };
 
     expect(session.pendingDirectInput).not.toBeNull();
@@ -227,6 +230,7 @@ describe("ClaudeSession - choiceState", () => {
     session.pendingDirectInput = {
       type: "single",
       messageId: 222,
+      createdAt: Date.now(),
     };
 
     expect(session.choiceState?.messageIds).toEqual([111]);
