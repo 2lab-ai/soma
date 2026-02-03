@@ -1,61 +1,41 @@
-import {
+import type {
   UserChoice,
   UserChoices,
   UserChoiceQuestion,
   ExtractedChoice,
 } from "../types/user-choice";
 
-/**
- * JSON extraction and parsing for UIAskUserQuestion
- * Ported from soma-work Slack implementation
- */
-export class UserChoiceExtractor {
-  /**
-   * Extract UserChoice, UserChoices, or UserChoiceGroup JSON from message text
-   * Supports both ```json blocks and raw JSON objects
-   */
-  static extractUserChoice(text: string): ExtractedChoice {
-    let choice: UserChoice | null = null;
-    let choices: UserChoices | null = null;
-    let textWithoutChoice = text;
+type ParseResult = { choice: UserChoice | null; choices: UserChoices | null };
 
-    // Try to find JSON in code blocks first
+export class UserChoiceExtractor {
+  static extractUserChoice(text: string): ExtractedChoice {
     const jsonBlockPattern = /```json\s*\n?([\s\S]*?)\n?```/g;
     let match;
-
     while ((match = jsonBlockPattern.exec(text)) !== null) {
-      const result = this.parseAndNormalizeChoice(match[1].trim());
+      const result = this.parseAndNormalizeChoice(match[1]!.trim());
       if (result.choice || result.choices) {
-        textWithoutChoice = text.replace(match[0], "").trim();
-        return { ...result, textWithoutChoice };
+        return { ...result, textWithoutChoice: text.replace(match[0], "").trim() };
       }
     }
 
-    // Try to find raw JSON objects (not in code blocks)
     const jsonStartPattern = /\{\s*"(?:type|question)"\s*:/g;
     let rawMatch;
-
     while ((rawMatch = jsonStartPattern.exec(text)) !== null) {
       const jsonStr = this.extractBalancedJson(text, rawMatch.index);
       if (jsonStr) {
         const result = this.parseAndNormalizeChoice(jsonStr);
         if (result.choice || result.choices) {
-          textWithoutChoice = text.substring(0, rawMatch.index).trim();
           return {
-            choice: result.choice,
-            choices: result.choices,
-            textWithoutChoice,
+            ...result,
+            textWithoutChoice: text.substring(0, rawMatch.index).trim(),
           };
         }
       }
     }
 
-    return { choice, choices, textWithoutChoice };
+    return { choice: null, choices: null, textWithoutChoice: text };
   }
 
-  /**
-   * Extract a balanced JSON object starting from a given position
-   */
   private static extractBalancedJson(text: string, startIndex: number): string | null {
     let braceCount = 0;
     let inString = false;
@@ -96,22 +76,14 @@ export class UserChoiceExtractor {
     return null;
   }
 
-  /**
-   * Parse JSON and normalize to UserChoice or UserChoices format
-   */
-  private static parseAndNormalizeChoice(jsonStr: string): {
-    choice: UserChoice | null;
-    choices: UserChoices | null;
-  } {
+  private static parseAndNormalizeChoice(jsonStr: string): ParseResult {
     try {
       const parsed = JSON.parse(jsonStr);
 
-      // Format 1: UserChoices (multi-question form)
       if (parsed.type === "user_choices" && Array.isArray(parsed.questions)) {
         return { choice: null, choices: parsed as UserChoices };
       }
 
-      // Format 2: UserChoice (single choice with type field)
       if (parsed.type === "user_choice") {
         const opts = parsed.choices || parsed.options;
         if (Array.isArray(opts)) {
@@ -127,7 +99,6 @@ export class UserChoiceExtractor {
         }
       }
 
-      // Format 3: UserChoiceGroup (from system.prompt)
       if (
         parsed.question &&
         Array.isArray(parsed.choices) &&
@@ -150,12 +121,13 @@ export class UserChoiceExtractor {
           );
 
           if (questions.length === 1) {
+            const q = questions[0]!;
             return {
               choice: {
                 type: "user_choice",
-                question: questions[0].question,
-                choices: questions[0].choices,
-                context: questions[0].context,
+                question: q.question,
+                choices: q.choices,
+                context: q.context,
               },
               choices: null,
             };
@@ -173,7 +145,7 @@ export class UserChoiceExtractor {
         }
       }
     } catch {
-      // Not valid JSON
+      // Invalid JSON
     }
 
     return { choice: null, choices: null };

@@ -21,6 +21,8 @@ import { checkCommandSafety, isPathAllowed } from "./security";
 import type { SessionData, StatusCallback, TokenUsage } from "./types";
 import type { ChoiceState, DirectInputState } from "./types/user-choice";
 
+export type ActivityState = "idle" | "working" | "waiting";
+
 type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
 
 function getThinkingLevel(message: string): number {
@@ -204,6 +206,16 @@ export class ClaudeSession {
 
   choiceState: ChoiceState | null = null;
   pendingDirectInput: DirectInputState | null = null;
+  private _activityState: ActivityState = "idle";
+
+  get activityState(): ActivityState {
+    return this._activityState;
+  }
+
+  setActivityState(state: ActivityState): void {
+    console.log(`[ACTIVITY] ${this._activityState} → ${state}`);
+    this._activityState = state;
+  }
 
   private getTranscriptJsonlPath(): string | null {
     if (!this.sessionId) return null;
@@ -469,6 +481,7 @@ export class ClaudeSession {
 
     this.abortController = new AbortController();
     this.isQueryRunning = true;
+    this.setActivityState("working");
     this.stopRequested = false;
     this.queryStarted = new Date();
     const queryStartedMs = this.queryStarted.getTime();
@@ -585,6 +598,7 @@ export class ClaudeSession {
                   const buttonsSent = await checkPendingAskUserRequests(ctx, chatId);
                   if (buttonsSent) {
                     askUserTriggered = true;
+                    this.setActivityState("waiting");
                     break;
                   }
                   if (attempt < 2) await new Promise((r) => setTimeout(r, 100));
@@ -764,6 +778,9 @@ export class ClaudeSession {
       }
     } finally {
       this.isQueryRunning = false;
+      if (this._activityState !== "idle") {
+        this.setActivityState("idle");
+      }
       this.abortController = null;
       this.queryStarted = null;
       this.currentTool = null;

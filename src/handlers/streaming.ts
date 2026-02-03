@@ -428,6 +428,7 @@ export async function createStatusCallback(
                   messageId: msg.message_id,
                   extractedChoice: state.extractedChoice,
                 };
+                session.setActivityState("waiting");
               } else if (state.extractedChoices) {
                 const keyboards = TelegramChoiceBuilder.buildMultiChoiceKeyboards(
                   state.extractedChoices,
@@ -465,6 +466,7 @@ export async function createStatusCallback(
                   extractedChoices: state.extractedChoices,
                   selections: {},
                 };
+                session.setActivityState("waiting");
               }
             } catch (error) {
               console.error("Failed to display choice keyboard:", error);

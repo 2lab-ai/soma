@@ -108,6 +108,20 @@ async function handleChoiceCallback(
     return;
   }
 
+  // Validate that callback is for the current choice message
+  const callbackMessageId = (
+    ctx.callbackQuery?.message as { message_id?: number } | undefined
+  )?.message_id;
+  if (callbackMessageId && session.choiceState.messageId !== callbackMessageId) {
+    await ctx.answerCallbackQuery({ text: "This choice is outdated." });
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+    } catch {
+      // Message too old to edit
+    }
+    return;
+  }
+
   // Handle direct input
   const lastPart = parts[parts.length - 1]!;
   if (lastPart === "__direct") {
@@ -210,6 +224,7 @@ async function handleChoiceCallback(
 
   // Clear choice state
   session.clearChoiceState();
+  session.setActivityState("working");
 
   // Update message to show selection
   try {
