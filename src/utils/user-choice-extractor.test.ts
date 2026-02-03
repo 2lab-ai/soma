@@ -136,4 +136,140 @@ describe("UserChoiceExtractor", () => {
     expect(result.choice).not.toBeNull();
     expect(result.choice?.choices.length).toBe(1);
   });
+
+  test("handles escaped quotes inside JSON strings", () => {
+    const text = `\`\`\`json
+{
+  "type": "user_choice",
+  "question": "Use \\"quotes\\" in code?",
+  "choices": [
+    {"id": "1", "label": "Yes, use \\"quotes\\""},
+    {"id": "2", "label": "No"}
+  ]
+}
+\`\`\``;
+
+    const result = UserChoiceExtractor.extractUserChoice(text);
+
+    expect(result.choice).not.toBeNull();
+    expect(result.choice?.question).toBe('Use "quotes" in code?');
+    expect(result.choice?.choices[0]?.label).toBe('Yes, use "quotes"');
+  });
+
+  test("handles empty choices array", () => {
+    const text = `\`\`\`json
+{
+  "type": "user_choice",
+  "question": "No options",
+  "choices": []
+}
+\`\`\``;
+
+    const result = UserChoiceExtractor.extractUserChoice(text);
+
+    expect(result.choice).not.toBeNull();
+    expect(result.choice?.choices.length).toBe(0);
+  });
+
+  test("extracts second JSON when first is invalid", () => {
+    const text = `First try: \`\`\`json
+{broken}
+\`\`\`
+
+Second try: \`\`\`json
+{
+  "type": "user_choice",
+  "question": "Valid",
+  "choices": [{"id": "1", "label": "A"}]
+}
+\`\`\``;
+
+    const result = UserChoiceExtractor.extractUserChoice(text);
+
+    expect(result.choice).not.toBeNull();
+    expect(result.choice?.question).toBe("Valid");
+  });
+
+  test("handles truncated/incomplete JSON", () => {
+    const text = `\`\`\`json
+{
+  "type": "user_ch`;
+
+    const result = UserChoiceExtractor.extractUserChoice(text);
+
+    expect(result.choice).toBeNull();
+    expect(result.choices).toBeNull();
+  });
+
+  test("handles Unicode characters (Korean)", () => {
+    const text = `\`\`\`json
+{
+  "type": "user_choice",
+  "question": "어떤 프레임워크를 선호하시나요?",
+  "choices": [
+    {"id": "1", "label": "리액트"},
+    {"id": "2", "label": "뷰"}
+  ]
+}
+\`\`\``;
+
+    const result = UserChoiceExtractor.extractUserChoice(text);
+
+    expect(result.choice).not.toBeNull();
+    expect(result.choice?.question).toBe("어떤 프레임워크를 선호하시나요?");
+    expect(result.choice?.choices[0]?.label).toBe("리액트");
+  });
+
+  test("handles leading/trailing whitespace in code blocks", () => {
+    const text = `\`\`\`json
+
+  {
+    "type": "user_choice",
+    "question": "Whitespace test",
+    "choices": [{"id": "1", "label": "A"}]
+  }
+
+\`\`\``;
+
+    const result = UserChoiceExtractor.extractUserChoice(text);
+
+    expect(result.choice).not.toBeNull();
+    expect(result.choice?.question).toBe("Whitespace test");
+  });
+
+  test("ignores invalid type field", () => {
+    const text = `\`\`\`json
+{
+  "type": "unknown_type",
+  "question": "Should be ignored",
+  "choices": [{"id": "1", "label": "A"}]
+}
+\`\`\``;
+
+    const result = UserChoiceExtractor.extractUserChoice(text);
+
+    expect(result.choice).toBeNull();
+    expect(result.choices).toBeNull();
+  });
+
+  test("handles nested objects in choices", () => {
+    const text = `\`\`\`json
+{
+  "type": "user_choice",
+  "question": "Complex",
+  "choices": [
+    {
+      "id": "1",
+      "label": "Option with nested data",
+      "description": "Has { 'nested': 'value' } inside"
+    }
+  ]
+}
+\`\`\``;
+
+    const result = UserChoiceExtractor.extractUserChoice(text);
+
+    expect(result.choice).not.toBeNull();
+    expect(result.choice?.choices[0]?.description).toContain("nested");
+  });
 });
