@@ -114,6 +114,14 @@ MCP servers defined in `mcp-config.ts`.
 
 ## Patterns
 
+**UIAskUserQuestion (Telegram choice keyboard)**: When asking 지혁 questions with discrete options (2-8 choices), emit JSON: `{"type": "user_choice", "question": "...", "choices": [{"id": "a", "label": "...", "description": "..."}]}` - Do NOT use AskUserQuestion tool. This creates Telegram inline keyboards that trigger ActivityState transitions.
+
+**Comprehensive review workflow**: Before deployment, run Oracle + PR review toolkit in sequence: (1) Oracle for architecture, (2) code-reviewer for bugs/style, (3) silent-failure-hunter for error handling, (4) type-design-analyzer for type safety, (5) pr-test-analyzer for test gaps. Found 6 bugs before deployment in ActivityState feature.
+
+**State management in ClaudeSession**: New state fields pattern: private `_field` with getter/setter, console.log transitions for observability, careful finally block guards (check current state before resetting), integration with existing state (isRunning, choiceState).
+
+**Testing discipline**: PR review will expose missing tests. Write tests BEFORE deployment, not after. Critical gaps: state machine transitions, integration scenarios, edge cases (concurrent callbacks, messageId validation).
+
 **Adding a command**: Create handler in `commands.ts`, register in `index.ts` with `bot.command("name", handler)`
 
 **Adding a message handler**: Create in `handlers/`, export from `index.ts`, register in `index.ts` with appropriate filter
