@@ -368,14 +368,22 @@ export class ClaudeSession {
     this._isProcessing = true;
     return () => {
       this._isProcessing = false;
+      // Don't clear steering - keep for next query if not consumed
+      // (PreToolUse only fires when tools are used, so steering can be missed)
       if (this.steeringBuffer.length) {
         console.log(
-          `[STEERING] Clearing ${this.steeringBuffer.length} unconsumed messages`
+          `[STEERING] Keeping ${this.steeringBuffer.length} unconsumed messages for next query`
         );
-        this.steeringBuffer = [];
-        this.steeringMessageIds = [];
       }
     };
+  }
+
+  getPendingSteering(): string | null {
+    if (!this.steeringBuffer.length) return null;
+    const combined = this.steeringBuffer.join("\n---\n");
+    this.steeringBuffer = [];
+    this.steeringMessageIds = [];
+    return combined;
   }
 
   async stop(): Promise<"stopped" | "pending" | false> {
@@ -412,6 +420,14 @@ export class ClaudeSession {
       String(thinkingTokens);
 
     let messageToSend = message;
+
+    // Prepend any unconsumed steering from previous query
+    const pendingSteering = this.getPendingSteering();
+    if (pendingSteering) {
+      console.log(`[STEERING] Prepending ${pendingSteering.split("\n---\n").length} pending messages to query`);
+      messageToSend = `[MESSAGES SENT DURING PREVIOUS EXECUTION - user sent these while you were working]\n${pendingSteering}\n[END PREVIOUS MESSAGES]\n\n[NEW MESSAGE]\n${messageToSend}`;
+    }
+
     if (isNewSession) {
       const now = new Date();
       const datePrefix = `[Current date/time: ${now.toLocaleDateString("en-US", {
@@ -423,7 +439,7 @@ export class ClaudeSession {
         minute: "2-digit",
         timeZoneName: "short",
       })}]\n\n`;
-      messageToSend = datePrefix + message;
+      messageToSend = datePrefix + messageToSend;
     }
 
     const options: Options = {
@@ -443,15 +459,17 @@ export class ClaudeSession {
         PreToolUse: [
           {
             hooks: [
-              async (_input) => {
+              async (input, _toolUseId, _context) => {
+                const toolName = (input as { tool_name?: string }).tool_name || "unknown";
+                console.log(`[HOOK] PreToolUse fired for: ${toolName}`);
+
                 const steering = this.consumeSteering();
                 if (!steering) {
-                  return { continue: true };
+                  return {};
                 }
 
-                console.log(`[STEERING] Injecting user message before tool execution`);
+                console.log(`[STEERING] Injecting ${steering.split("\n---\n").length} message(s) before ${toolName}`);
                 return {
-                  continue: true,
                   systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
                 };
               },
