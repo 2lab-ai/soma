@@ -20,6 +20,7 @@ import {
   startTypingIndicator,
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
+import { handleAbortError } from "../utils/error-classification";
 
 // Bot username (set by index.ts after bot info is fetched)
 export let botUsername = "";
@@ -277,12 +278,8 @@ export async function handleText(ctx: Context): Promise<void> {
       console.error("Error processing message:", error);
 
       // Check if it was a cancellation
-      if (errorStr.includes("abort") || errorStr.includes("cancel")) {
-        // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
-        const wasInterrupt = session.consumeInterruptFlag();
-        if (!wasInterrupt) {
-          await ctx.reply("🛑 Query stopped.");
-        }
+      if (await handleAbortError(ctx, error, session)) {
+        // Abort handled
       } else {
         await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
       }
