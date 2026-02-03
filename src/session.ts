@@ -5,7 +5,7 @@
  * V1 supports full options (cwd, mcpServers, settingSources, etc.)
  */
 
-import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
+import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync } from "fs";
 import type { Context } from "grammy";
 import {
@@ -47,10 +47,43 @@ function getThinkingLevel(message: string): number {
   return DEFAULT_THINKING_TOKENS;
 }
 
+type ClaudeCodeContextWindow = {
+  current_usage?: {
+    input_tokens?: number;
+    cache_creation_input_tokens?: number;
+    cache_read_input_tokens?: number;
+  };
+  context_window_size?: number;
+};
+
+function isClaudeCodeContextWindow(value: unknown): value is ClaudeCodeContextWindow {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  if (
+    "current_usage" in v &&
+    v.current_usage !== undefined &&
+    v.current_usage !== null &&
+    typeof v.current_usage !== "object"
+  ) {
+    return false;
+  }
+  if (
+    "context_window_size" in v &&
+    v.context_window_size !== undefined &&
+    typeof v.context_window_size !== "number"
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * Manages Claude Code sessions using the Agent SDK V1.
  */
-class ClaudeSession {
+export class ClaudeSession {
+  readonly sessionKey: string;
+  readonly workingDir: string;
+
   sessionId: string | null = null;
   lastActivity: Date | null = null;
   queryStarted: Date | null = null;
@@ -61,6 +94,14 @@ class ClaudeSession {
   lastUsage: TokenUsage | null = null;
   lastMessage: string | null = null;
 
+  // Context window from Claude Code (claude-dashboard style)
+  contextWindowUsage: {
+    input_tokens: number;
+    cache_creation_input_tokens: number;
+    cache_read_input_tokens: number;
+  } | null = null;
+  contextWindowSize = 200_000;
+
   // Cumulative token tracking
   sessionStartTime: Date | null = null;
   totalInputTokens = 0;
@@ -68,6 +109,11 @@ class ClaudeSession {
   totalCacheReadTokens = 0;
   totalCacheCreateTokens = 0;
   totalQueries = 0;
+
+  constructor(sessionKey = "default") {
+    this.sessionKey = sessionKey;
+    this.workingDir = WORKING_DIR;
+  }
 
   // Context limit tracking
   contextLimitWarned = false; // Only warn once per session (90% threshold)
@@ -96,12 +142,35 @@ class ClaudeSession {
   }
 
   /**
-   * Current cumulative context tokens (input + output) for this session.
+   * Current context window usage (Claude dashboard style).
+   * Prefers API-reported usage snapshot over cumulative totals.
    *
-   * This is the same value used by accumulateUsage() to trigger context-limit warnings/auto-save.
+   * Returns: input + cache_creation + cache_read tokens
+   *
+   * Primary source: contextWindowUsage (latest API snapshot, can decrease via caching)
+   * Fallback: totalInputTokens + totalCacheCreateTokens (overestimates but reliable)
+   *
+   * Note: Fallback grows monotonically and will exceed actual context over long sessions.
+   * Use for relative comparisons only when contextWindowUsage unavailable.
    */
   get currentContextTokens(): number {
-    return this.totalInputTokens + this.totalOutputTokens;
+    return this.getContextTokensFromSnapshot() ?? this.getContextTokensFromCumulatives();
+  }
+
+  private getContextTokensFromSnapshot(): number | null {
+    const usage = this.contextWindowUsage;
+    if (!usage) return null;
+
+    const total =
+      (usage.input_tokens ?? 0) +
+      (usage.cache_creation_input_tokens ?? 0) +
+      (usage.cache_read_input_tokens ?? 0);
+
+    return total > 0 ? total : null;
+  }
+
+  private getContextTokensFromCumulatives(): number {
+    return this.totalInputTokens + this.totalCacheCreateTokens;
   }
 
   get needsSave(): boolean {
@@ -287,6 +356,8 @@ class ClaudeSession {
       settingSources: ["user", "project"],
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
+      // Needed to observe per-API-call usage (message_start/message_delta) for accurate context usage.
+      includePartialMessages: true,
       systemPrompt: SAFETY_PROMPT,
       mcpServers: MCP_SERVERS,
       maxThinkingTokens: thinkingTokens,
@@ -297,7 +368,7 @@ class ClaudeSession {
         PreToolUse: [
           {
             hooks: [
-              async (input) => {
+              async (_input) => {
                 const steering = this.consumeSteering();
                 if (!steering) {
                   return { continue: true };
@@ -352,6 +423,8 @@ class ClaudeSession {
     let lastTextUpdate = 0;
     let queryCompleted = false;
     let askUserTriggered = false;
+    // Claude dashboard "current_usage" equivalent: usage for the most recent underlying API call.
+    let lastCallUsage: TokenUsage | null = null;
 
     try {
       // Use V1 query() API - supports all options including cwd, mcpServers, etc.
@@ -361,7 +434,7 @@ class ClaudeSession {
           ...options,
           abortController: this.abortController,
         },
-      });
+      }) as AsyncGenerator<SDKMessage>;
 
       // Process streaming response
       for await (const event of queryInstance) {
@@ -369,6 +442,37 @@ class ClaudeSession {
         if (this.stopRequested) {
           console.log("Query aborted by user");
           break;
+        }
+
+        // Track raw per-API-call usage so /context matches Claude dashboard.
+        // Agent SDK result usage is cumulative across calls; Claude dashboard shows the latest call.
+        if (event.type === "stream_event") {
+          const raw = event.event;
+          const usage: unknown =
+            raw.type === "message_start"
+              ? raw.message.usage
+              : raw.type === "message_delta"
+                ? raw.usage
+                : null;
+
+          if (usage && typeof usage === "object") {
+            const u = usage as Partial<TokenUsage>;
+            if (typeof u.input_tokens === "number" && u.input_tokens > 0) {
+              lastCallUsage = {
+                input_tokens: u.input_tokens,
+                output_tokens:
+                  typeof u.output_tokens === "number" ? u.output_tokens : 0,
+                cache_read_input_tokens:
+                  typeof u.cache_read_input_tokens === "number"
+                    ? u.cache_read_input_tokens
+                    : 0,
+                cache_creation_input_tokens:
+                  typeof u.cache_creation_input_tokens === "number"
+                    ? u.cache_creation_input_tokens
+                    : 0,
+              };
+            }
+          }
         }
 
         // Capture session_id from first message
@@ -495,9 +599,101 @@ class ClaudeSession {
           console.log("Response complete");
           queryCompleted = true;
 
-          if ("usage" in event && event.usage) {
+          // Context window tracking
+          // Claude dashboard shows "current_usage" (latest underlying API call), not total query usage.
+          // Agent SDK result `usage` is cumulative across calls, so we prefer stream_event usage when available.
+          const contextWindowFromClaudeCode = (() => {
+            const cw = (event as unknown as { context_window?: unknown })
+              .context_window;
+            if (!isClaudeCodeContextWindow(cw) || !cw.current_usage) return null;
+
+            return {
+              usage: {
+                input_tokens: cw.current_usage.input_tokens || 0,
+                cache_creation_input_tokens:
+                  cw.current_usage.cache_creation_input_tokens || 0,
+                cache_read_input_tokens: cw.current_usage.cache_read_input_tokens || 0,
+              },
+              size: cw.context_window_size || null,
+            };
+          })();
+
+          if (contextWindowFromClaudeCode) {
+            this.contextWindowUsage = contextWindowFromClaudeCode.usage;
+            if (
+              typeof contextWindowFromClaudeCode.size === "number" &&
+              contextWindowFromClaudeCode.size > 0
+            ) {
+              this.contextWindowSize = contextWindowFromClaudeCode.size;
+            }
+          } else if (lastCallUsage) {
+            this.contextWindowUsage = {
+              input_tokens: lastCallUsage.input_tokens || 0,
+              cache_creation_input_tokens:
+                lastCallUsage.cache_creation_input_tokens || 0,
+              cache_read_input_tokens: lastCallUsage.cache_read_input_tokens || 0,
+            };
+          } else if ("usage" in event && event.usage) {
+            const u = event.usage as unknown as TokenUsage;
+            this.contextWindowUsage = {
+              input_tokens: u.input_tokens || 0,
+              cache_creation_input_tokens: u.cache_creation_input_tokens || 0,
+              cache_read_input_tokens: u.cache_read_input_tokens || 0,
+            };
+          }
+
+          // Try modelUsage for cumulative tracking
+          if ("modelUsage" in event && event.modelUsage) {
+            const modelUsage = event.modelUsage as Record<
+              string,
+              {
+                inputTokens: number;
+                outputTokens: number;
+                cacheReadInputTokens: number;
+                cacheCreationInputTokens: number;
+                contextWindow: number;
+              }
+            >;
+            let detectedContextWindow = 0;
+            let totalIn = 0,
+              totalOut = 0,
+              totalCacheRead = 0,
+              totalCacheCreate = 0;
+            for (const model of Object.keys(modelUsage)) {
+              const mu = modelUsage[model];
+              if (!mu) continue;
+              if (
+                typeof mu.contextWindow === "number" &&
+                mu.contextWindow > detectedContextWindow
+              ) {
+                detectedContextWindow = mu.contextWindow;
+              }
+              totalIn += mu.inputTokens || 0;
+              totalOut += mu.outputTokens || 0;
+              totalCacheRead += mu.cacheReadInputTokens || 0;
+              totalCacheCreate += mu.cacheCreationInputTokens || 0;
+            }
+            if (detectedContextWindow > 0) {
+              this.contextWindowSize = detectedContextWindow;
+            }
+            this.lastUsage = {
+              input_tokens: totalIn,
+              output_tokens: totalOut,
+              cache_read_input_tokens: totalCacheRead,
+              cache_creation_input_tokens: totalCacheCreate,
+            };
+            this.accumulateUsage(this.lastUsage);
+          } else if ("usage" in event && event.usage) {
+            // Fallback to usage field
             this.lastUsage = event.usage as TokenUsage;
             this.accumulateUsage(this.lastUsage);
+          }
+
+          if (this.contextWindowUsage) {
+            console.log(
+              `Context: ${this.currentContextTokens}/${this.contextWindowSize} ` +
+                `(${((this.currentContextTokens / this.contextWindowSize) * 100).toFixed(1)}%)`
+            );
           }
         }
       }
@@ -587,6 +783,28 @@ class ClaudeSession {
     console.log("Context restored - cooldown activated (50 messages)");
   }
 
+  /**
+   * Restore session state from persisted data.
+   * Used by SessionManager when loading sessions from disk.
+   */
+  restoreFromData(data: SessionData): void {
+    this.sessionId = data.session_id;
+    this.lastActivity = new Date();
+    this.totalInputTokens = data.totalInputTokens || 0;
+    this.totalOutputTokens = data.totalOutputTokens || 0;
+    this.totalQueries = data.totalQueries || 0;
+    this.sessionStartTime = data.sessionStartTime
+      ? new Date(data.sessionStartTime)
+      : null;
+
+    if (data.contextWindowUsage !== undefined) {
+      this.contextWindowUsage = data.contextWindowUsage || null;
+    }
+    if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0) {
+      this.contextWindowSize = data.contextWindowSize;
+    }
+  }
+
   private accumulateUsage(u: TokenUsage): void {
     if (!this.sessionStartTime) this.sessionStartTime = new Date();
 
@@ -598,16 +816,17 @@ class ClaudeSession {
 
     console.log(
       `Usage: in=${u.input_tokens} out=${u.output_tokens} ` +
-        `cache_read=${u.cache_read_input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0}`
+        `cache_read=${u.cache_read_input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0} ` +
+        `cumulative=${this.currentContextTokens}`
     );
 
     // Context limit monitoring (Oracle critical)
-    const CONTEXT_LIMIT = 200_000;
-    const SAVE_THRESHOLD = 180_000; // Trigger at 90% (20k buffer)
+    const CONTEXT_LIMIT = this.contextWindowSize || 200_000;
+    const SAVE_THRESHOLD = Math.floor(CONTEXT_LIMIT * 0.9); // Trigger at 90%
     const COOLDOWN_MESSAGES = 50; // Don't re-trigger for 50 messages after /load
 
-    // ORACLE FIX: Use cumulative context, not per-message
-    const currentContext = this.totalInputTokens + this.totalOutputTokens;
+    // Use getter for consistent calculation (includes cache tokens)
+    const currentContext = this.currentContextTokens;
 
     // Increment message counter
     if (this.recentlyRestored) {
@@ -623,9 +842,9 @@ class ClaudeSession {
     }
 
     // Multi-threshold warning system (70%, 85%, 95%)
-    const THRESHOLD_70 = 140_000;
-    const THRESHOLD_85 = 170_000;
-    const THRESHOLD_95 = 190_000;
+    const THRESHOLD_70 = Math.floor(CONTEXT_LIMIT * 0.7);
+    const THRESHOLD_85 = Math.floor(CONTEXT_LIMIT * 0.85);
+    const THRESHOLD_95 = Math.floor(CONTEXT_LIMIT * 0.95);
 
     if (currentContext >= THRESHOLD_70 && !this.warned70 && !this.recentlyRestored) {
       this.warned70 = true;
@@ -639,7 +858,9 @@ class ClaudeSession {
         percentage,
         timestamp: new Date().toISOString(),
       });
-      console.warn(`⚠️  Context: ${currentContext}/${CONTEXT_LIMIT} (${percentage}%) - 70% reached`);
+      console.warn(
+        `⚠️  Context: ${currentContext}/${CONTEXT_LIMIT} (${percentage}%) - 70% reached`
+      );
     }
 
     if (currentContext >= THRESHOLD_85 && !this.warned85 && !this.recentlyRestored) {
@@ -654,7 +875,9 @@ class ClaudeSession {
         percentage,
         timestamp: new Date().toISOString(),
       });
-      console.warn(`⚠️  Context: ${currentContext}/${CONTEXT_LIMIT} (${percentage}%) - 85% reached`);
+      console.warn(
+        `⚠️  Context: ${currentContext}/${CONTEXT_LIMIT} (${percentage}%) - 85% reached`
+      );
     }
 
     if (currentContext >= THRESHOLD_95 && !this.warned95 && !this.recentlyRestored) {
@@ -669,7 +892,9 @@ class ClaudeSession {
         percentage,
         timestamp: new Date().toISOString(),
       });
-      console.warn(`⚠️  Context: ${currentContext}/${CONTEXT_LIMIT} (${percentage}%) - 95% CRITICAL`);
+      console.warn(
+        `⚠️  Context: ${currentContext}/${CONTEXT_LIMIT} (${percentage}%) - 95% CRITICAL`
+      );
     }
 
     // Check if we should trigger save (180k threshold)
@@ -706,15 +931,33 @@ class ClaudeSession {
       const data: SessionData = {
         session_id: this.sessionId,
         saved_at: new Date().toISOString(),
-        working_dir: WORKING_DIR,
-        // Save token counters for context tracking
+        working_dir: this.workingDir,
+        contextWindowUsage: this.contextWindowUsage,
+        contextWindowSize: this.contextWindowSize,
         totalInputTokens: this.totalInputTokens,
         totalOutputTokens: this.totalOutputTokens,
         totalQueries: this.totalQueries,
         sessionStartTime: this.sessionStartTime?.toISOString(),
       };
-      Bun.write(SESSION_FILE, JSON.stringify(data));
-      console.log(`Session saved to ${SESSION_FILE} (context: ${this.totalInputTokens + this.totalOutputTokens} tokens)`);
+
+      // Determine save path based on session key
+      let savePath: string;
+      if (this.sessionKey === "default") {
+        savePath = SESSION_FILE;
+      } else {
+        const { mkdirSync, existsSync } = require("fs");
+        const sessionsDir = "/tmp/soma-sessions";
+        if (!existsSync(sessionsDir)) {
+          mkdirSync(sessionsDir, { recursive: true });
+        }
+        const safeKey = this.sessionKey.replace(/:/g, "_");
+        savePath = `${sessionsDir}/${safeKey}.json`;
+      }
+
+      Bun.write(savePath, JSON.stringify(data));
+      console.log(
+        `Session saved to ${savePath} (context: ${this.totalInputTokens + this.totalOutputTokens} tokens)`
+      );
     } catch (error) {
       console.warn(`Failed to save session: ${error}`);
     }
@@ -748,7 +991,17 @@ class ClaudeSession {
       this.totalInputTokens = data.totalInputTokens || 0;
       this.totalOutputTokens = data.totalOutputTokens || 0;
       this.totalQueries = data.totalQueries || 0;
-      this.sessionStartTime = data.sessionStartTime ? new Date(data.sessionStartTime) : null;
+      this.sessionStartTime = data.sessionStartTime
+        ? new Date(data.sessionStartTime)
+        : null;
+
+      // Restore last-known context window snapshot (if available)
+      if (data.contextWindowUsage !== undefined) {
+        this.contextWindowUsage = data.contextWindowUsage || null;
+      }
+      if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0) {
+        this.contextWindowSize = data.contextWindowSize;
+      }
 
       const contextTokens = this.totalInputTokens + this.totalOutputTokens;
       console.log(
