@@ -50,4 +50,5 @@ export interface DirectInputState {
   formId?: string; // For multi-form
   questionId?: string; // For multi-form specific question
   messageId: number; // Original choice message ID
+  createdAt: number; // Required - timestamp for expiration check (5 min)
 }

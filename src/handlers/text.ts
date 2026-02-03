@@ -19,8 +19,204 @@ import {
   checkInterrupt,
   startTypingIndicator,
 } from "../utils";
-import { StreamingState, createStatusCallback } from "./streaming";
+import { StreamingState, createStatusCallback, cleanupToolMessages } from "./streaming";
 import { handleAbortError } from "../utils/error-classification";
+import type { ClaudeSession } from "../session";
+
+const DIRECT_INPUT_EXPIRY_MS = 5 * 60 * 1000;
+
+interface DirectInputResult {
+  handled: boolean;
+}
+
+async function editMessageSilently(
+  ctx: Context,
+  chatId: number,
+  messageId: number,
+  text: string
+): Promise<void> {
+  try {
+    await ctx.api.editMessageText(chatId, messageId, text);
+  } catch (error) {
+    console.error("Failed to update direct input message:", error);
+    // Inform user that update failed but input was received
+    await ctx.reply("✓ Answer recorded (display update failed)").catch(() => {});
+  }
+}
+
+function isExpired(createdAt: number): boolean {
+  return Date.now() - createdAt > DIRECT_INPUT_EXPIRY_MS;
+}
+
+async function handleDirectInput(
+  ctx: Context,
+  session: ClaudeSession,
+  chatId: number,
+  message: string,
+  username: string,
+  userId: number
+): Promise<DirectInputResult> {
+  const directInput = session.pendingDirectInput!;
+
+  if (isExpired(directInput.createdAt)) {
+    session.clearDirectInput();
+    session.clearChoiceState();
+    await ctx.reply("⏱️ Direct input expired (5 min). Please ask again.");
+    return { handled: true };
+  }
+
+  session.clearDirectInput();
+
+  let selectedLabel: string;
+
+  if (directInput.type === "single") {
+    selectedLabel = message;
+    session.clearChoiceState();
+    session.setActivityState("working");
+  } else {
+    const result = await handleMultiFormInput(
+      ctx,
+      session,
+      chatId,
+      directInput,
+      message
+    );
+    if (!result.complete) return { handled: true };
+    selectedLabel = result.selectedLabel;
+  }
+
+  await editMessageSilently(
+    ctx,
+    chatId,
+    directInput.messageId,
+    `✓ ${selectedLabel.slice(0, 200)}`
+  );
+  await sendDirectInputToClaude(
+    ctx,
+    session,
+    selectedLabel,
+    username,
+    userId,
+    chatId,
+    message
+  );
+  return { handled: true };
+}
+
+interface MultiFormResult {
+  complete: boolean;
+  selectedLabel: string;
+}
+
+async function handleMultiFormInput(
+  ctx: Context,
+  session: ClaudeSession,
+  chatId: number,
+  directInput: NonNullable<ClaudeSession["pendingDirectInput"]>,
+  message: string
+): Promise<MultiFormResult> {
+  if (!session.choiceState || !directInput.questionId) {
+    await ctx.reply("⚠️ Form expired. Please ask again.");
+    return { complete: false, selectedLabel: "" };
+  }
+
+  const choices = session.choiceState.extractedChoices;
+  if (!choices) {
+    await ctx.reply("⚠️ Form data not found.");
+    return { complete: false, selectedLabel: "" };
+  }
+
+  const question = choices.questions.find((q) => q.id === directInput.questionId);
+  if (!question) {
+    await ctx.reply("⚠️ Invalid question ID.");
+    return { complete: false, selectedLabel: "" };
+  }
+
+  if (!session.choiceState.selections) {
+    session.choiceState.selections = {};
+  }
+  session.choiceState.selections[directInput.questionId] = {
+    choiceId: "__direct__",
+    label: message,
+  };
+
+  const allAnswered =
+    Object.keys(session.choiceState.selections).length === choices.questions.length;
+
+  if (!allAnswered) {
+    await editMessageSilently(
+      ctx,
+      chatId,
+      directInput.messageId,
+      `✓ ${message.slice(0, 100)}`
+    );
+    await ctx.reply("👌 Answer recorded. Continue with other questions.");
+    return { complete: false, selectedLabel: "" };
+  }
+
+  const answers = choices.questions
+    .map((q) => {
+      const sel = session.choiceState?.selections?.[q.id];
+      return sel ? `${q.question}: ${sel.label}` : null;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  session.clearChoiceState();
+  session.setActivityState("working");
+  return { complete: true, selectedLabel: `Answered all questions:\n${answers}` };
+}
+
+async function sendDirectInputToClaude(
+  ctx: Context,
+  session: ClaudeSession,
+  selectedLabel: string,
+  username: string,
+  userId: number,
+  chatId: number,
+  originalMessage: string
+): Promise<void> {
+  // Rate limit check
+  const [allowed, retryAfter] = rateLimiter.check(userId);
+  if (!allowed) {
+    await auditLogRateLimit(userId, username, retryAfter!);
+    await ctx.reply(`⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`);
+    return;
+  }
+
+  const typing = startTypingIndicator(ctx);
+  const state = new StreamingState();
+  const statusCallback = await createStatusCallback(ctx, state, session);
+
+  try {
+    const response = await session.sendMessageStreaming(
+      selectedLabel,
+      username,
+      userId,
+      statusCallback,
+      chatId,
+      ctx
+    );
+    await auditLog(userId, username, "DIRECT_INPUT", originalMessage, response);
+  } catch (error) {
+    // Log full error for debugging
+    console.error("Error processing direct input:", error);
+    console.error("Stack:", error instanceof Error ? error.stack : "N/A");
+
+    // Reset activity state on error
+    session.setActivityState("idle");
+
+    await cleanupToolMessages(ctx, state.toolMessages);
+
+    if (!(await handleAbortError(ctx, error, session))) {
+      const errorStr = String(error);
+      await ctx.reply(`❌ Error: ${errorStr.slice(0, 300)}`);
+    }
+  } finally {
+    state.cleanup();
+    typing.stop();
+  }
+}
 
 // Bot username (set by index.ts after bot info is fetched)
 export let botUsername = "";
@@ -70,6 +266,19 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // Get session for this chat/thread
   const session = sessionManager.getSession(chatId, threadId);
+
+  // 2. Check for pending direct input (before normal processing)
+  if (session.pendingDirectInput) {
+    const result = await handleDirectInput(
+      ctx,
+      session,
+      chatId,
+      message,
+      username,
+      userId
+    );
+    if (result.handled) return;
+  }
 
   // 2. Check for interrupt prefix
   const wasInterrupt = message.startsWith("!");
@@ -249,14 +458,7 @@ export async function handleText(ctx: Context): Promise<void> {
       const errorStr = String(error);
       const isClaudeCodeCrash = errorStr.includes("exited with code");
 
-      // Clean up any partial messages from this attempt
-      for (const toolMsg of state.toolMessages) {
-        try {
-          await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
+      await cleanupToolMessages(ctx, state.toolMessages);
 
       // Retry on Claude Code crash (not user cancellation)
       // Common cause: stale session ID from previous run
