@@ -40,6 +40,8 @@ export interface ChoiceState {
   type: "single" | "multi";
   formId?: string; // For multi-form tracking
   messageId: number; // Telegram message ID with the choice UI
+  extractedChoice?: UserChoice; // For single choice
+  extractedChoices?: UserChoices; // For multi-form
   selections?: Record<string, { choiceId: string; label: string }>; // For multi-form
 }
 
