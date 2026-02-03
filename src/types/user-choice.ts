@@ -52,3 +52,11 @@ export interface DirectInputState {
   messageId: number; // Original choice message ID
   createdAt: number; // Required - timestamp for expiration check (5 min)
 }
+
+export interface ParseTextChoiceState {
+  type: "single" | "multi";
+  extractedChoice?: UserChoice; // For single
+  extractedChoices?: UserChoices; // For multi
+  messageId: number; // Fallback message ID
+  createdAt: number; // Expiration check (5 min)
+}

@@ -483,6 +483,72 @@ export async function createStatusCallback(
               }
             } catch (error) {
               console.error("Failed to display choice keyboard:", error);
+
+              // Fallback: Text-based numbered list
+              try {
+                if (state.extractedChoice) {
+                  const options = state.extractedChoice.choices
+                    .map(
+                      (opt, idx) => `${idx + 1}️⃣ ${opt.label}${opt.description ? ` - ${opt.description}` : ""}`
+                    )
+                    .join("\n");
+
+                  const fallbackMsg = await ctx.reply(
+                    `${state.extractedChoice.question}\n\n${options}\n\n` +
+                      `💬 Reply with the number (1, 2, 3, etc.)`
+                  );
+
+                  session.parseTextChoiceState = {
+                    type: "single",
+                    extractedChoice: state.extractedChoice,
+                    messageId: fallbackMsg.message_id,
+                    createdAt: Date.now(),
+                  };
+                  session.setActivityState("waiting");
+                } else if (state.extractedChoices) {
+                  // Multi-form fallback
+                  if (
+                    state.extractedChoices.title ||
+                    state.extractedChoices.description
+                  ) {
+                    const header = [
+                      state.extractedChoices.title,
+                      state.extractedChoices.description,
+                    ]
+                      .filter(Boolean)
+                      .join("\n");
+                    await ctx.reply(header);
+                  }
+
+                  const questionMsgs = [];
+                  for (const question of state.extractedChoices.questions) {
+                    const options = question.choices
+                      .map(
+                        (opt, idx) => `${idx + 1}️⃣ ${opt.label}${opt.description ? ` - ${opt.description}` : ""}`
+                      )
+                      .join("\n");
+
+                    const msg = await ctx.reply(
+                      `${question.question}\n\n${options}\n\n` +
+                        `💬 Reply with the number (1, 2, 3, etc.)`
+                    );
+                    questionMsgs.push(msg);
+                  }
+
+                  session.parseTextChoiceState = {
+                    type: "multi",
+                    extractedChoices: state.extractedChoices,
+                    messageId: questionMsgs[0]!.message_id, // Track first message
+                    createdAt: Date.now(),
+                  };
+                  session.setActivityState("waiting");
+                }
+              } catch (fallbackError) {
+                console.error("Fallback text display also failed:", fallbackError);
+                await ctx.reply(
+                  "⚠️ Unable to display options. Please describe your choice."
+                );
+              }
             }
           }
         }
