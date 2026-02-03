@@ -12,6 +12,29 @@ type CallbackMessage = {
   message_thread_id?: number;
 };
 
+const ERROR_PATTERNS: [RegExp, string][] = [
+  [
+    /network|fetch|timeout|econnrefused/i,
+    "⚠️ Network issue detected. Please try again.",
+  ],
+  [
+    /rate.?limit|429|too many/i,
+    "⏳ Too many requests. Please wait a moment and try again.",
+  ],
+  [
+    /permission|403|forbidden/i,
+    "🔒 Permission error. Bot may need additional permissions.",
+  ],
+  [/not found|404/i, "🔍 Resource not found. Please try a different action."],
+];
+
+function getErrorGuidance(errorStr: string): string {
+  for (const [pattern, message] of ERROR_PATTERNS) {
+    if (pattern.test(errorStr)) return message;
+  }
+  return "ℹ️ An unexpected error occurred. Please try again or contact support.";
+}
+
 function getCallbackMessage(ctx: Context): CallbackMessage | undefined {
   return ctx.callbackQuery?.message as CallbackMessage | undefined;
 }
@@ -74,7 +97,8 @@ async function sendMessageToClaude(
         await ctx.reply("🛑 Query stopped.");
       }
     } else {
-      await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
+      const guidance = getErrorGuidance(errorStr);
+      await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}\n\n${guidance}`);
     }
   } finally {
     state.cleanup();
