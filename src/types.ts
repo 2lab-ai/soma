@@ -45,6 +45,39 @@ export interface TokenUsage {
   cache_creation_input_tokens?: number;
 }
 
+// Steering message structure (real-time user messages during Claude execution)
+export interface SteeringMessage {
+  content: string;
+  messageId: number;
+  timestamp: number;
+  receivedDuringTool?: string;
+}
+
+// Factory function for creating validated SteeringMessage instances
+export function createSteeringMessage(
+  content: string,
+  messageId: number,
+  receivedDuringTool?: string
+): SteeringMessage {
+  // Validate content is not empty
+  const trimmedContent = content.trim();
+  if (!trimmedContent) {
+    throw new Error("Steering message content cannot be empty");
+  }
+
+  // Validate messageId is a positive integer
+  if (!Number.isInteger(messageId) || messageId <= 0) {
+    throw new Error(`Message ID must be a positive integer, got: ${messageId}`);
+  }
+
+  return {
+    content: trimmedContent,
+    messageId,
+    timestamp: Date.now(),
+    receivedDuringTool: receivedDuringTool || undefined
+  };
+}
+
 // MCP server configuration types
 export type McpServerConfig = McpStdioConfig | McpHttpConfig;
 

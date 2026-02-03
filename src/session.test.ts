@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { ClaudeSession } from "./session";
+import { createSteeringMessage } from "./types";
 import type { SessionData } from "./types";
 import type { ChoiceState, DirectInputState } from "./types/user-choice";
 
@@ -622,5 +623,57 @@ describe("ClaudeSession - activityState error handling", () => {
     expect(errorHandlerExecuted).toBe(true);
     expect(finallyExecuted).toBe(true);
     expect(session.activityState).toBe("idle");
+  });
+});
+
+describe("createSteeringMessage - factory validation", () => {
+  test("creates valid steering message with all fields", () => {
+    const msg = createSteeringMessage("test content", 123, "Bash");
+
+    expect(msg.content).toBe("test content");
+    expect(msg.messageId).toBe(123);
+    expect(msg.receivedDuringTool).toBe("Bash");
+    expect(typeof msg.timestamp).toBe("number");
+    expect(msg.timestamp).toBeGreaterThan(0);
+  });
+
+  test("creates valid steering message without optional tool", () => {
+    const msg = createSteeringMessage("test content", 456);
+
+    expect(msg.content).toBe("test content");
+    expect(msg.messageId).toBe(456);
+    expect(msg.receivedDuringTool).toBeUndefined();
+  });
+
+  test("trims whitespace from content", () => {
+    const msg = createSteeringMessage("  spaced content  ", 789);
+
+    expect(msg.content).toBe("spaced content");
+  });
+
+  test("throws error for empty content", () => {
+    expect(() => createSteeringMessage("", 123)).toThrow("content cannot be empty");
+  });
+
+  test("throws error for whitespace-only content", () => {
+    expect(() => createSteeringMessage("   ", 123)).toThrow("content cannot be empty");
+  });
+
+  test("throws error for negative messageId", () => {
+    expect(() => createSteeringMessage("test", -1)).toThrow("positive integer");
+  });
+
+  test("throws error for zero messageId", () => {
+    expect(() => createSteeringMessage("test", 0)).toThrow("positive integer");
+  });
+
+  test("throws error for non-integer messageId", () => {
+    expect(() => createSteeringMessage("test", 12.5)).toThrow("positive integer");
+  });
+
+  test("converts empty tool string to undefined", () => {
+    const msg = createSteeringMessage("test", 123, "");
+
+    expect(msg.receivedDuringTool).toBeUndefined();
   });
 });

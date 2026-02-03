@@ -356,17 +356,27 @@ export async function handleText(ctx: Context): Promise<void> {
       }
     } else {
       const messageId = ctx.message?.message_id;
+
+      // Structured logging context for steering operations
+      const steeringContext = {
+        chatId,
+        userId,
+        username,
+        messageId,
+        currentTool: session.currentTool,
+        hasSteeringMessages: session.hasSteeringMessages(),
+        timestamp: new Date().toISOString()
+      };
+
       if (messageId === undefined) {
         console.error("[STEERING] CRITICAL: Missing message_id, cannot buffer steering", {
-          chatId,
-          userId,
-          username,
+          ...steeringContext,
           messagePreview: message.slice(0, 100)
         });
         try {
           await ctx.reply("⚠️ Unable to queue message (technical issue: missing message ID). Please try sending again.");
         } catch (replyError) {
-          console.error("Failed to notify user of missing message_id:", replyError);
+          console.error("Failed to notify user of missing message_id:", replyError, steeringContext);
           // Final fallback: attempt reaction
           try {
             await ctx.react("❌");
@@ -378,9 +388,8 @@ export async function handleText(ctx: Context): Promise<void> {
       const evicted = session.addSteering(message, messageId, session.currentTool || undefined);
 
       if (evicted) {
-        console.warn(`[STEERING] Buffer full, oldest message evicted`, {
-          chatId,
-          userId,
+        console.warn("[STEERING] Buffer full, oldest message evicted", {
+          ...steeringContext,
           bufferSize: 20
         });
 
@@ -391,29 +400,26 @@ export async function handleText(ctx: Context): Promise<void> {
           await ctx.reply("⚠️ **Message Queue Full**\n\nYour oldest queued message was dropped because Claude is very busy. Please wait for current task to complete.");
           notified = true;
         } catch (replyError) {
-          console.error("Failed to notify via reply:", replyError);
+          console.error("Failed to notify via reply:", replyError, steeringContext);
 
           // Fallback to reaction (use valid Telegram emoji)
           try {
             await ctx.react("🤔");
             notified = true;
           } catch (reactError) {
-            console.error("Failed to notify via reaction:", reactError);
+            console.error("Failed to notify via reaction:", reactError, steeringContext);
           }
         }
 
         if (!notified) {
-          console.error("[STEERING] CRITICAL: Could not notify user of message eviction", {
-            chatId,
-            userId
-          });
+          console.error("[STEERING] CRITICAL: Could not notify user of message eviction", steeringContext);
         }
       } else {
-        console.log(`[STEERING] Buffered user message during execution`);
+        console.log("[STEERING] Buffered user message during execution", steeringContext);
         try {
           await ctx.react("👌");
         } catch (error) {
-          console.debug("Failed to add steering reaction:", error);
+          console.debug("Failed to add steering reaction:", error, steeringContext);
         }
       }
       return;
