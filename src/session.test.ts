@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach } from "bun:test";
 import { ClaudeSession } from "./session";
+import type { SessionData } from "./types";
 import type { ChoiceState, DirectInputState } from "./types/user-choice";
 
 describe("ClaudeSession - steering", () => {
@@ -20,23 +21,23 @@ describe("ClaudeSession - steering", () => {
     expect(session.hasSteeringMessages()).toBe(true);
   });
 
-  test("consumeSteering returns single message without separator", () => {
+  test("consumeSteering returns single message with timestamp", () => {
     session.addSteering("only message", 123);
 
     const result = session.consumeSteering();
 
-    expect(result).toBe("only message");
+    expect(result).toMatch(/^\[\d{2}:\d{2}:\d{2}\] only message$/);
     expect(session.hasSteeringMessages()).toBe(false);
   });
 
-  test("consumeSteering joins multiple messages with separator", () => {
+  test("consumeSteering joins multiple messages with separator and timestamps", () => {
     session.addSteering("first", 1);
     session.addSteering("second", 2);
     session.addSteering("third", 3);
 
     const result = session.consumeSteering();
 
-    expect(result).toBe("first\n---\nsecond\n---\nthird");
+    expect(result).toMatch(/^\[\d{2}:\d{2}:\d{2}\] first\n---\n\[\d{2}:\d{2}:\d{2}\] second\n---\n\[\d{2}:\d{2}:\d{2}\] third$/);
     expect(session.hasSteeringMessages()).toBe(false);
   });
 
@@ -49,11 +50,12 @@ describe("ClaudeSession - steering", () => {
     expect(session.hasSteeringMessages()).toBe(false);
   });
 
-  test("addSteering works without messageId", () => {
-    session.addSteering("no id message");
+  test("addSteering requires messageId", () => {
+    session.addSteering("message with id", 999);
 
     expect(session.hasSteeringMessages()).toBe(true);
-    expect(session.consumeSteering()).toBe("no id message");
+    const result = session.consumeSteering();
+    expect(result).toMatch(/^\[\d{2}:\d{2}:\d{2}\] message with id$/);
   });
 
   test("startProcessing does NOT clear unconsumed steering (for next query)", () => {
@@ -80,7 +82,7 @@ describe("ClaudeSession - steering", () => {
 
     // getPendingSteering retrieves and clears
     const pending = session.getPendingSteering();
-    expect(pending).toBe("pending 1\n---\npending 2");
+    expect(pending).toMatch(/^\[\d{2}:\d{2}:\d{2}\] pending 1\n---\n\[\d{2}:\d{2}:\d{2}\] pending 2$/);
     expect(session.hasSteeringMessages()).toBe(false);
   });
 
@@ -94,7 +96,7 @@ describe("ClaudeSession - steering", () => {
 
     // Simulating PreToolUse consuming the steering
     const consumed = session.consumeSteering();
-    expect(consumed).toBe("during processing 1\n---\nduring processing 2");
+    expect(consumed).toMatch(/^\[\d{2}:\d{2}:\d{2}\] during processing 1\n---\n\[\d{2}:\d{2}:\d{2}\] during processing 2$/);
 
     stopProcessing();
     // Nothing left after consumption
@@ -116,7 +118,88 @@ describe("ClaudeSession - steering", () => {
     // Both messages should be kept
     expect(session.hasSteeringMessages()).toBe(true);
     const pending = session.getPendingSteering();
-    expect(pending).toBe("msg 1\n---\nmsg 2");
+    expect(pending).toMatch(/^\[\d{2}:\d{2}:\d{2}\] msg 1\n---\n\[\d{2}:\d{2}:\d{2}\] msg 2$/);
+  });
+
+  test("addSteering evicts oldest when MAX_STEERING_MESSAGES reached", () => {
+    // Fill buffer to MAX_STEERING_MESSAGES (20)
+    for (let i = 1; i <= 20; i++) {
+      const evicted = session.addSteering(`msg ${i}`, i);
+      expect(evicted).toBe(false);
+    }
+
+    // 21st message should trigger eviction
+    const evicted = session.addSteering("msg 21", 21);
+    expect(evicted).toBe(true);
+
+    // Verify oldest message (msg 1) was evicted, newest present
+    const result = session.consumeSteering();
+    const lines = result!.split("\n---\n");
+    const firstLine = lines[0];
+    const lastLine = lines[lines.length - 1];
+
+    // First should be msg 2 (msg 1 evicted)
+    expect(firstLine).toMatch(/^\[\d{2}:\d{2}:\d{2}\] msg 2$/);
+    // Last should be msg 21
+    expect(lastLine).toMatch(/^\[\d{2}:\d{2}:\d{2}\] msg 21$/);
+
+    // Buffer should have exactly 20 messages
+    expect(result!.split("\n---\n")).toHaveLength(20);
+  });
+
+  test("consumeSteering includes tool context when provided", () => {
+    session.addSteering("message during tool", 123, "Bash");
+
+    const result = session.consumeSteering();
+
+    expect(result).toMatch(/\(during Bash\)/);
+    expect(result).toMatch(/^\[\d{2}:\d{2}:\d{2} \(during Bash\)\] message during tool$/);
+  });
+
+  test("consumeSteering handles messages with and without receivedDuringTool", () => {
+    session.addSteering("normal message", 1);
+    session.addSteering("during read", 2, "Read");
+    session.addSteering("another normal", 3);
+
+    const result = session.consumeSteering();
+
+    // Verify mixed formatting
+    expect(result).toContain("normal message");
+    expect(result).toContain("(during Read)");
+    expect(result).toContain("another normal");
+  });
+
+  test("kill clears steering buffer", async () => {
+    session.addSteering("message before kill", 1);
+    session.addSteering("another message", 2);
+    expect(session.hasSteeringMessages()).toBe(true);
+
+    await session.kill();
+
+    expect(session.hasSteeringMessages()).toBe(false);
+    expect(session.consumeSteering()).toBeNull();
+  });
+
+  test("restoreFromData clears steering buffer", () => {
+    session.addSteering("message before restore", 1);
+    expect(session.hasSteeringMessages()).toBe(true);
+
+    const mockData: SessionData = {
+      session_id: "test-session-123",
+      saved_at: new Date().toISOString(),
+      working_dir: "/test",
+      contextWindowUsage: null,
+      contextWindowSize: 200000,
+      totalInputTokens: 1000,
+      totalOutputTokens: 500,
+      totalQueries: 5,
+      sessionStartTime: new Date().toISOString(),
+    };
+
+    session.restoreFromData(mockData);
+
+    expect(session.hasSteeringMessages()).toBe(false);
+    expect(session.consumeSteering()).toBeNull();
   });
 });
 
@@ -338,7 +421,7 @@ describe("ClaudeSession - activityState transitions", () => {
 
     // Other session operations
     session.choiceState = { type: "single", messageIds: [123] };
-    session.addSteering("test message");
+    session.addSteering("test message", 456);
 
     // State should remain unchanged
     expect(session.activityState).toBe("waiting");
