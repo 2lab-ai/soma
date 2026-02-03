@@ -244,3 +244,347 @@ describe("ClaudeSession - choiceState", () => {
     expect(session.pendingDirectInput).toBeNull();
   });
 });
+
+describe("ClaudeSession - activityState basics", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-activity-basics");
+  });
+
+  test("initializes with idle state", () => {
+    expect(session.activityState).toBe("idle");
+  });
+
+  test("setActivityState changes to working", () => {
+    session.setActivityState("working");
+    expect(session.activityState).toBe("working");
+  });
+
+  test("setActivityState changes to waiting", () => {
+    session.setActivityState("waiting");
+    expect(session.activityState).toBe("waiting");
+  });
+
+  test("setActivityState changes back to idle", () => {
+    session.setActivityState("working");
+    session.setActivityState("idle");
+    expect(session.activityState).toBe("idle");
+  });
+
+  test("multiple state changes work correctly", () => {
+    expect(session.activityState).toBe("idle");
+    session.setActivityState("working");
+    expect(session.activityState).toBe("working");
+    session.setActivityState("waiting");
+    expect(session.activityState).toBe("waiting");
+    session.setActivityState("idle");
+    expect(session.activityState).toBe("idle");
+  });
+});
+
+describe("ClaudeSession - activityState transitions", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-activity-transitions");
+  });
+
+  test("full lifecycle: idle → working → waiting → working → idle", () => {
+    expect(session.activityState).toBe("idle");
+
+    // Query starts
+    session.setActivityState("working");
+    expect(session.activityState).toBe("working");
+
+    // Keyboard displayed
+    session.setActivityState("waiting");
+    expect(session.activityState).toBe("waiting");
+
+    // User responds
+    session.setActivityState("working");
+    expect(session.activityState).toBe("working");
+
+    // Query completes
+    session.setActivityState("idle");
+    expect(session.activityState).toBe("idle");
+  });
+
+  test("idempotent: setting same state twice", () => {
+    session.setActivityState("working");
+    session.setActivityState("working");
+    expect(session.activityState).toBe("working");
+
+    session.setActivityState("waiting");
+    session.setActivityState("waiting");
+    expect(session.activityState).toBe("waiting");
+  });
+
+  test("skip transition: idle → waiting (valid but unusual)", () => {
+    expect(session.activityState).toBe("idle");
+    session.setActivityState("waiting");
+    expect(session.activityState).toBe("waiting");
+  });
+
+  test("error recovery: working → idle", () => {
+    session.setActivityState("working");
+    // Simulating error recovery (finally block or explicit error handling)
+    session.setActivityState("idle");
+    expect(session.activityState).toBe("idle");
+  });
+
+  test("state preserved across other operations", () => {
+    session.setActivityState("waiting");
+
+    // Other session operations
+    session.choiceState = { type: "single", messageIds: [123] };
+    session.addSteering("test message");
+
+    // State should remain unchanged
+    expect(session.activityState).toBe("waiting");
+
+    session.clearChoiceState();
+    expect(session.activityState).toBe("waiting");
+  });
+
+  test("multi-form partial completion: stays in waiting", () => {
+    session.setActivityState("waiting");
+
+    // Simulate partial multi-form completion
+    session.choiceState = {
+      type: "multi",
+      messageIds: [1, 2, 3],
+      selections: { q1: { choiceId: "1", label: "Answer 1" } },
+    };
+
+    // State should stay waiting until all questions answered
+    expect(session.activityState).toBe("waiting");
+  });
+});
+
+describe("ClaudeSession - activityState coordination", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-coordination");
+  });
+
+  test("choiceState cleared when transitioning waiting → working", () => {
+    session.choiceState = {
+      type: "single",
+      messageIds: [100],
+    };
+    session.setActivityState("waiting");
+
+    // Simulate user selection
+    session.clearChoiceState();
+    session.setActivityState("working");
+
+    expect(session.choiceState).toBeNull();
+    expect(session.activityState).toBe("working");
+  });
+
+  test("directInput cleared independently of activityState", () => {
+    session.pendingDirectInput = {
+      type: "single",
+      messageId: 100,
+      createdAt: Date.now(),
+    };
+    session.setActivityState("waiting");
+
+    session.clearDirectInput();
+
+    expect(session.pendingDirectInput).toBeNull();
+    expect(session.activityState).toBe("waiting"); // State unchanged
+  });
+
+  test("parseTextChoice cleared independently of activityState", () => {
+    session.parseTextChoiceState = {
+      type: "single",
+      messageId: 100,
+      createdAt: Date.now(),
+    };
+    session.setActivityState("waiting");
+
+    session.clearParseTextChoice();
+
+    expect(session.parseTextChoiceState).toBeNull();
+    expect(session.activityState).toBe("waiting"); // State unchanged
+  });
+
+  test("multi-form completion: choiceState cleared, state transitions working", () => {
+    session.choiceState = {
+      type: "multi",
+      messageIds: [1, 2],
+      selections: {
+        q1: { choiceId: "a", label: "A" },
+        q2: { choiceId: "b", label: "B" },
+      },
+    };
+    session.setActivityState("waiting");
+
+    // Simulate all questions answered
+    const allAnswered =
+      Object.keys(session.choiceState.selections!).length === 2;
+    expect(allAnswered).toBe(true);
+
+    session.clearChoiceState();
+    session.setActivityState("working");
+
+    expect(session.choiceState).toBeNull();
+    expect(session.activityState).toBe("working");
+  });
+});
+
+describe("ClaudeSession - activityState error handling", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-error-handling");
+  });
+
+  test("error during working: resets to idle", () => {
+    session.setActivityState("working");
+
+    // Simulate error handling (what sendDirectInputToClaude does)
+    try {
+      throw new Error("Test error");
+    } catch {
+      session.setActivityState("idle");
+    }
+
+    expect(session.activityState).toBe("idle");
+  });
+
+  test("finally block guard: only resets if not already idle", () => {
+    // Already idle
+    expect(session.activityState).toBe("idle");
+
+    // Simulate finally block logic from session.ts:814
+    if (session.activityState !== "idle") {
+      session.setActivityState("idle");
+    }
+
+    expect(session.activityState).toBe("idle");
+  });
+
+  test("expiration cleanup: directInput cleared, state can be set separately", () => {
+    session.pendingDirectInput = {
+      type: "single",
+      messageId: 100,
+      createdAt: Date.now() - 6 * 60 * 1000, // Expired (> 5 min)
+    };
+    session.choiceState = { type: "single", messageIds: [100] };
+    session.setActivityState("waiting");
+
+    // Simulate expiration handler (text.ts:61-65)
+    const FIVE_MINUTES = 5 * 60 * 1000;
+    const expired = Date.now() - session.pendingDirectInput.createdAt > FIVE_MINUTES;
+    expect(expired).toBe(true);
+
+    session.clearDirectInput();
+    session.clearChoiceState();
+
+    expect(session.pendingDirectInput).toBeNull();
+    expect(session.choiceState).toBeNull();
+    // Activity state unchanged by cleanup (would be set by handler)
+    expect(session.activityState).toBe("waiting");
+  });
+
+  test("parseTextChoice expiration: state cleared independently", () => {
+    session.parseTextChoiceState = {
+      type: "single",
+      messageId: 100,
+      createdAt: Date.now() - 6 * 60 * 1000, // Expired
+    };
+    session.setActivityState("waiting");
+
+    // Simulate expiration check (text.ts:288-291)
+    const FIVE_MINUTES = 5 * 60 * 1000;
+    const expired = Date.now() - session.parseTextChoiceState.createdAt > FIVE_MINUTES;
+    expect(expired).toBe(true);
+
+    session.clearParseTextChoice();
+
+    expect(session.parseTextChoiceState).toBeNull();
+    expect(session.activityState).toBe("waiting");
+  });
+
+  test("concurrent button clicks: state remains consistent", () => {
+    // Setup: User clicks button, keyboard displayed, waiting state
+    session.choiceState = {
+      type: "single",
+      messageIds: [100],
+    };
+    session.setActivityState("waiting");
+
+    // Simulate: User clicks button again before first handler completes
+    const initialState = session.activityState;
+    expect(initialState).toBe("waiting");
+
+    // Rapid state transitions (simulating concurrent callbacks)
+    session.setActivityState("working"); // First click handler
+    session.setActivityState("working"); // Second click (should be idempotent)
+
+    // Verify: State consistent, no corruption
+    expect(session.activityState).toBe("working");
+    expect(session.choiceState).not.toBeNull(); // Not cleared yet
+  });
+
+  test("interrupt during waiting state: transitions cleanly", () => {
+    // Setup: Keyboard displayed, user in waiting state
+    session.choiceState = {
+      type: "single",
+      messageIds: [200],
+    };
+    session.pendingDirectInput = {
+      type: "single",
+      messageId: 200,
+      createdAt: Date.now(),
+    };
+    session.setActivityState("waiting");
+
+    expect(session.activityState).toBe("waiting");
+    expect(session.pendingDirectInput).not.toBeNull();
+
+    // Simulate: User sends interrupt message (text.ts handles with checkInterrupt)
+    // Interrupt should clear pending state and transition to working
+    session.clearDirectInput();
+    session.clearChoiceState();
+    session.setActivityState("working");
+
+    // Verify: Clean transition, no orphaned state
+    expect(session.activityState).toBe("working");
+    expect(session.pendingDirectInput).toBeNull();
+    expect(session.choiceState).toBeNull();
+  });
+
+  test("finally block race condition: concurrent setActivityState calls", () => {
+    session.setActivityState("working");
+
+    // Simulate race: Handler still running while finally block executes
+    let finallyExecuted = false;
+    let errorHandlerExecuted = false;
+
+    try {
+      // Main handler sets working
+      session.setActivityState("working");
+      throw new Error("Simulated error");
+    } catch {
+      // Error handler tries to set idle
+      errorHandlerExecuted = true;
+      session.setActivityState("idle");
+    } finally {
+      // Finally block guard (session.ts:814-816 pattern)
+      finallyExecuted = true;
+      if (session.activityState !== "idle") {
+        session.setActivityState("idle");
+      }
+    }
+
+    // Verify: Both handlers executed, state is idle, no corruption
+    expect(errorHandlerExecuted).toBe(true);
+    expect(finallyExecuted).toBe(true);
+    expect(session.activityState).toBe("idle");
+  });
+});
