@@ -9,6 +9,8 @@ import type { Message } from "grammy/types";
 import { InlineKeyboard } from "grammy";
 import type { StatusCallback } from "../types";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
+import { UserChoiceExtractor } from "../utils/user-choice-extractor";
+import type { UserChoice, UserChoices } from "../types/user-choice";
 import {
   TELEGRAM_MESSAGE_LIMIT,
   TELEGRAM_SAFE_LIMIT,
@@ -97,6 +99,9 @@ export class StreamingState {
   progressTimer: Timer | null = null; // timer for updating progress
   startTime: Date | null = null; // work start time
   rateLimitNotified = false; // whether we've already notified about rate limit
+  extractedChoice: UserChoice | null = null; // extracted single choice
+  extractedChoices: UserChoices | null = null; // extracted multi-form choices
+  hasUserChoice = false; // flag: choice detected in response
 
   cleanup() {
     if (this.progressTimer) {
@@ -339,17 +344,28 @@ export async function createStatusCallback(
       } else if (statusType === "segment_end" && segmentId !== undefined) {
         if (!content) return;
 
+        // Extract user choice JSON before formatting
+        const extracted = UserChoiceExtractor.extractUserChoice(content);
+        if (extracted.choice || extracted.choices) {
+          state.extractedChoice = extracted.choice;
+          state.extractedChoices = extracted.choices;
+          state.hasUserChoice = true;
+        }
+
+        // Use text without JSON for display
+        const displayContent = extracted.textWithoutChoice || content;
+
         // If no message exists yet (short response), create one
         if (!state.textMessages.has(segmentId)) {
-          const formatted = convertMarkdownToHtml(content);
+          const formatted = convertMarkdownToHtml(displayContent);
           try {
             const msg = await ctx.reply(formatted, { parse_mode: "HTML" });
             state.textMessages.set(segmentId, msg);
             state.lastContent.set(segmentId, formatted);
           } catch {
-            const msg = await ctx.reply(content);
+            const msg = await ctx.reply(displayContent);
             state.textMessages.set(segmentId, msg);
-            state.lastContent.set(segmentId, content);
+            state.lastContent.set(segmentId, displayContent);
           }
 
           // Recreate progress at bottom after new message (only if spinner enabled)
@@ -360,7 +376,7 @@ export async function createStatusCallback(
         }
 
         const msg = state.textMessages.get(segmentId)!;
-        const formatted = convertMarkdownToHtml(content);
+        const formatted = convertMarkdownToHtml(displayContent);
 
         // Skip if content unchanged
         if (formatted === state.lastContent.get(segmentId)) {

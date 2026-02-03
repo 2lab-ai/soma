@@ -1,0 +1,124 @@
+import { describe, test, expect, beforeEach } from "bun:test";
+import { ClaudeSession } from "./session";
+import type { ChoiceState, DirectInputState } from "./types/user-choice";
+
+describe("ClaudeSession - choiceState", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-session");
+  });
+
+  test("initializes with null choiceState", () => {
+    expect(session.choiceState).toBeNull();
+    expect(session.pendingDirectInput).toBeNull();
+  });
+
+  test("can set and track single choice state", () => {
+    const choiceState: ChoiceState = {
+      type: "single",
+      messageId: 12345,
+    };
+
+    session.choiceState = choiceState;
+
+    expect(session.choiceState).not.toBeNull();
+    expect(session.choiceState?.type).toBe("single");
+    expect(session.choiceState?.messageId).toBe(12345);
+  });
+
+  test("can set and track multi-form choice state", () => {
+    const choiceState: ChoiceState = {
+      type: "multi",
+      formId: "form-abc",
+      messageId: 67890,
+      selections: {
+        q1: { choiceId: "1", label: "Option A" },
+        q2: { choiceId: "2", label: "Option B" },
+      },
+    };
+
+    session.choiceState = choiceState;
+
+    expect(session.choiceState).not.toBeNull();
+    expect(session.choiceState?.type).toBe("multi");
+    expect(session.choiceState?.formId).toBe("form-abc");
+    expect(session.choiceState?.selections?.q1?.label).toBe("Option A");
+  });
+
+  test("clearChoiceState() sets choiceState to null", () => {
+    session.choiceState = {
+      type: "single",
+      messageId: 123,
+    };
+
+    expect(session.choiceState).not.toBeNull();
+
+    session.clearChoiceState();
+
+    expect(session.choiceState).toBeNull();
+  });
+
+  test("can set and track direct input state", () => {
+    const directInputState: DirectInputState = {
+      type: "single",
+      messageId: 11111,
+    };
+
+    session.pendingDirectInput = directInputState;
+
+    expect(session.pendingDirectInput).not.toBeNull();
+    expect(session.pendingDirectInput?.type).toBe("single");
+    expect(session.pendingDirectInput?.messageId).toBe(11111);
+  });
+
+  test("can set and track multi-form direct input state", () => {
+    const directInputState: DirectInputState = {
+      type: "multi",
+      formId: "form-xyz",
+      questionId: "q3",
+      messageId: 22222,
+    };
+
+    session.pendingDirectInput = directInputState;
+
+    expect(session.pendingDirectInput).not.toBeNull();
+    expect(session.pendingDirectInput?.formId).toBe("form-xyz");
+    expect(session.pendingDirectInput?.questionId).toBe("q3");
+  });
+
+  test("clearDirectInput() sets pendingDirectInput to null", () => {
+    session.pendingDirectInput = {
+      type: "single",
+      messageId: 999,
+    };
+
+    expect(session.pendingDirectInput).not.toBeNull();
+
+    session.clearDirectInput();
+
+    expect(session.pendingDirectInput).toBeNull();
+  });
+
+  test("choiceState and directInput are independent", () => {
+    session.choiceState = {
+      type: "single",
+      messageId: 111,
+    };
+
+    session.pendingDirectInput = {
+      type: "single",
+      messageId: 222,
+    };
+
+    expect(session.choiceState?.messageId).toBe(111);
+    expect(session.pendingDirectInput?.messageId).toBe(222);
+
+    session.clearChoiceState();
+    expect(session.choiceState).toBeNull();
+    expect(session.pendingDirectInput).not.toBeNull();
+
+    session.clearDirectInput();
+    expect(session.pendingDirectInput).toBeNull();
+  });
+});
