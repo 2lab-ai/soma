@@ -19,7 +19,11 @@ import { checkPendingAskUserRequests } from "./handlers/streaming";
 import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import type { SessionData, StatusCallback, TokenUsage } from "./types";
-import type { ChoiceState, DirectInputState } from "./types/user-choice";
+import type {
+  ChoiceState,
+  DirectInputState,
+  ParseTextChoiceState,
+} from "./types/user-choice";
 import { isAbortError } from "./utils/error-classification";
 
 export type ActivityState = "idle" | "working" | "waiting";
@@ -207,6 +211,7 @@ export class ClaudeSession {
 
   choiceState: ChoiceState | null = null;
   pendingDirectInput: DirectInputState | null = null;
+  parseTextChoiceState: ParseTextChoiceState | null = null;
   private _activityState: ActivityState = "idle";
 
   get activityState(): ActivityState {
@@ -345,6 +350,9 @@ export class ClaudeSession {
   }
   clearDirectInput(): void {
     this.pendingDirectInput = null;
+  }
+  clearParseTextChoice(): void {
+    this.parseTextChoiceState = null;
   }
 
   addSteering(message: string, messageId?: number): void {

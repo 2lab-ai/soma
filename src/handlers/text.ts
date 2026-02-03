@@ -280,6 +280,59 @@ export async function handleText(ctx: Context): Promise<void> {
     if (result.handled) return;
   }
 
+  // 2.5. Check for parseTextChoice (fallback from keyboard failure)
+  if (session.parseTextChoiceState) {
+    const parseState = session.parseTextChoiceState;
+
+    // Check expiration (5 minutes)
+    if (isExpired(parseState.createdAt)) {
+      session.clearParseTextChoice();
+      await ctx.reply("⏱️ Choice expired (5 min). Please ask again.");
+      return;
+    }
+
+    // Parse number from message
+    const numberMatch = message.match(/^(\d+)$/);
+    if (!numberMatch) {
+      await ctx.reply(
+        "❓ Please reply with just the number (e.g., 1, 2, 3). Or ask again."
+      );
+      return;
+    }
+
+    const choiceNum = parseInt(numberMatch[1]!, 10);
+    session.clearParseTextChoice();
+
+    if (parseState.type === "single") {
+      const choice = parseState.extractedChoice;
+      if (!choice || choiceNum < 1 || choiceNum > choice.choices.length) {
+        await ctx.reply(
+          `❌ Invalid number. Please choose 1-${choice?.choices.length || 0}.`
+        );
+        return;
+      }
+
+      const selectedOption = choice.choices[choiceNum - 1]!;
+      session.setActivityState("working");
+
+      await sendDirectInputToClaude(
+        ctx,
+        session,
+        selectedOption.label,
+        username,
+        userId,
+        chatId,
+        message
+      );
+      return;
+    } else {
+      // Multi-form not fully supported in text fallback yet
+      // For now, treat as single-question text input
+      await ctx.reply("⚠️ Multi-form text fallback not yet supported. Please try again.");
+      return;
+    }
+  }
+
   // 2. Check for interrupt prefix
   const wasInterrupt = message.startsWith("!");
   message = await checkInterrupt(message);
