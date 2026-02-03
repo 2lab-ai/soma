@@ -31,9 +31,7 @@ describe("Choice Flow Integration", () => {
       const extracted = UserChoiceExtractor.extractUserChoice(claudeResponse);
 
       expect(extracted.choice).not.toBeNull();
-      expect(extracted.choice?.question).toBe(
-        "Which framework do you prefer?"
-      );
+      expect(extracted.choice?.question).toBe("Which framework do you prefer?");
       expect(extracted.choice?.choices.length).toBe(3);
 
       // Step 2: Build keyboard
@@ -74,8 +72,7 @@ describe("Choice Flow Integration", () => {
 
       // Invalid callback (wrong session)
       const wrongSessionKey = "456";
-      const wrongCompressed =
-        TelegramChoiceBuilder.compressSessionKey(wrongSessionKey);
+      const wrongCompressed = TelegramChoiceBuilder.compressSessionKey(wrongSessionKey);
       expect(compressedKey).not.toBe(wrongCompressed);
     });
 
@@ -111,26 +108,25 @@ describe("Choice Flow Integration", () => {
             id: "q1",
             question: "Select database",
             choices: [
-              { id: "pg", "label": "PostgreSQL" },
-              { id: "my", "label": "MySQL" },
+              { id: "pg", label: "PostgreSQL" },
+              { id: "my", label: "MySQL" },
             ],
           },
           {
             id: "q2",
             question: "Select auth method",
             choices: [
-              { id: "oauth", "label": "OAuth" },
-              { id: "jwt", "label": "JWT" },
+              { id: "oauth", label: "OAuth" },
+              { id: "jwt", label: "JWT" },
             ],
           },
         ],
       };
 
-      const keyboards =
-        TelegramChoiceBuilder.buildMultiChoiceKeyboards(
-          multiChoices,
-          sessionKey
-        );
+      const keyboards = TelegramChoiceBuilder.buildMultiChoiceKeyboards(
+        multiChoices,
+        sessionKey
+      );
 
       expect(keyboards.length).toBe(2);
 
@@ -230,10 +226,7 @@ describe("Choice Flow Integration", () => {
 
       // Building keyboard with empty choices should throw
       expect(() =>
-        TelegramChoiceBuilder.buildSingleChoiceKeyboard(
-          extracted.choice!,
-          "test-123"
-        )
+        TelegramChoiceBuilder.buildSingleChoiceKeyboard(extracted.choice!, "test-123")
       ).toThrow("at least one option");
     });
 
@@ -292,11 +285,10 @@ describe("Choice Flow Integration", () => {
         ],
       };
 
-      const keyboards =
-        TelegramChoiceBuilder.buildMultiChoiceKeyboards(
-          multiChoices,
-          sessionKey
-        );
+      const keyboards = TelegramChoiceBuilder.buildMultiChoiceKeyboards(
+        multiChoices,
+        sessionKey
+      );
 
       const inlineKeyboard = (keyboards[0] as any).inline_keyboard;
       const lastRow = inlineKeyboard[inlineKeyboard.length - 2];

@@ -74,7 +74,7 @@ export function createSteeringMessage(
     content: trimmedContent,
     messageId,
     timestamp: Date.now(),
-    receivedDuringTool: receivedDuringTool || undefined
+    receivedDuringTool: receivedDuringTool || undefined,
   };
 }
 

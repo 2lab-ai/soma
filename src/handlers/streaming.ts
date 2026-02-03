@@ -94,59 +94,6 @@ async function setReaction(ctx: Context, emoji: TelegramEmoji): Promise<void> {
   }
 }
 
-export function createAskUserKeyboard(
-  requestId: string,
-  options: string[]
-): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-  for (let idx = 0; idx < options.length; idx++) {
-    keyboard
-      .text(
-        truncate(options[idx]!, BUTTON_LABEL_MAX_LENGTH),
-        `askuser:${requestId}:${idx}`
-      )
-      .row();
-  }
-  return keyboard;
-}
-
-export async function checkPendingAskUserRequests(
-  ctx: Context,
-  chatId: number
-): Promise<boolean> {
-  const glob = new Bun.Glob("ask-user-*.json");
-  let buttonsSent = false;
-
-  for await (const filename of glob.scan({ cwd: "/tmp", absolute: false })) {
-    const filepath = `/tmp/${filename}`;
-    try {
-      const data = JSON.parse(await Bun.file(filepath).text());
-
-      if (data.status !== "pending" || String(data.chat_id) !== String(chatId))
-        continue;
-
-      const {
-        question = "Please choose:",
-        options = [],
-        request_id: requestId = "",
-      } = data;
-      if (options.length === 0 || !requestId) continue;
-
-      await ctx.reply(`❓ ${question}`, {
-        reply_markup: createAskUserKeyboard(requestId, options),
-      });
-      buttonsSent = true;
-
-      data.status = "sent";
-      await Bun.write(filepath, JSON.stringify(data));
-    } catch (error) {
-      console.warn(`Failed to process ask-user file ${filepath}:`, error);
-    }
-  }
-
-  return buttonsSent;
-}
-
 export class StreamingState {
   textMessages = new Map<number, Message>();
   thinkingMessages: Message[] = [];
@@ -489,7 +436,8 @@ export async function createStatusCallback(
                 if (state.extractedChoice) {
                   const options = state.extractedChoice.choices
                     .map(
-                      (opt, idx) => `${idx + 1}️⃣ ${opt.label}${opt.description ? ` - ${opt.description}` : ""}`
+                      (opt, idx) =>
+                        `${idx + 1}️⃣ ${opt.label}${opt.description ? ` - ${opt.description}` : ""}`
                     )
                     .join("\n");
 
@@ -524,7 +472,8 @@ export async function createStatusCallback(
                   for (const question of state.extractedChoices.questions) {
                     const options = question.choices
                       .map(
-                        (opt, idx) => `${idx + 1}️⃣ ${opt.label}${opt.description ? ` - ${opt.description}` : ""}`
+                        (opt, idx) =>
+                          `${idx + 1}️⃣ ${opt.label}${opt.description ? ` - ${opt.description}` : ""}`
                       )
                       .join("\n");
 
