@@ -1,4 +1,4 @@
-# Claude Telegram Bot
+# Soma
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Bun](https://img.shields.io/badge/Bun-1.0+-black.svg)](https://bun.sh/)
@@ -33,8 +33,8 @@ To achieve this, I set up a folder with a CLAUDE.md that teaches Claude about me
 ## Quick Start
 
 ```bash
-git clone https://github.com/linuz90/claude-telegram-bot?tab=readme-ov-file
-cd claude-telegram-bot-ts
+git clone https://github.com/linuz90/soma
+cd soma
 
 cp .env.example .env
 # Edit .env with your credentials
@@ -141,9 +141,9 @@ The bot includes a built-in `ask_user` MCP server that lets Claude present optio
 ## Running as a Service (macOS)
 
 ```bash
-cp launchagent/com.claude-telegram-ts.plist.template ~/Library/LaunchAgents/com.claude-telegram-ts.plist
+cp launchagent/ai.2lab.soma.plist.template ~/Library/LaunchAgents/ai.2lab.soma.plist
 # Edit the plist with your paths and env vars
-launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
+launchctl load ~/Library/LaunchAgents/ai.2lab.soma.plist
 ```
 
 The bot will start automatically on login and restart if it crashes.
@@ -153,18 +153,18 @@ The bot will start automatically on login and restart if it crashes.
 **Logs:**
 
 ```bash
-tail -f /tmp/claude-telegram-bot-ts.log   # stdout
-tail -f /tmp/claude-telegram-bot-ts.err   # stderr
+tail -f /tmp/soma.log   # stdout
+tail -f /tmp/soma.err   # stderr
 ```
 
 **Shell aliases:** If running as a service, these aliases make it easy to manage the bot (add to `~/.zshrc` or `~/.bashrc`):
 
 ```bash
-alias cbot='launchctl list | grep com.claude-telegram-ts'
-alias cbot-stop='launchctl bootout gui/$(id -u)/com.claude-telegram-ts 2>/dev/null && echo "Stopped"'
-alias cbot-start='launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude-telegram-ts.plist 2>/dev/null && echo "Started"'
-alias cbot-restart='launchctl kickstart -k gui/$(id -u)/com.claude-telegram-ts && echo "Restarted"'
-alias cbot-logs='tail -f /tmp/claude-telegram-bot-ts.log'
+alias soma='launchctl list | grep ai.2lab.soma'
+alias soma-stop='launchctl bootout gui/$(id -u)/ai.2lab.soma 2>/dev/null && echo "Stopped"'
+alias soma-start='launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.2lab.soma.plist 2>/dev/null && echo "Started"'
+alias soma-restart='launchctl kickstart -k gui/$(id -u)/ai.2lab.soma && echo "Restarted"'
+alias soma-logs='tail -f /tmp/soma.log'
 ```
 
 ## Development
@@ -193,7 +193,7 @@ Multiple layers protect against misuse:
 3. **Path validation** - File access restricted to `ALLOWED_PATHS`
 4. **Command safety** - Destructive patterns like `rm -rf /` are blocked
 5. **Rate limiting** - Prevents runaway usage
-6. **Audit logging** - All interactions logged to `/tmp/claude-telegram-audit.log`
+6. **Audit logging** - All interactions logged to `/tmp/soma-audit.log`
 
 ## Troubleshooting
 
@@ -201,7 +201,7 @@ Multiple layers protect against misuse:
 
 - Verify your user ID is in `TELEGRAM_ALLOWED_USERS`
 - Check the bot token is correct
-- Look at logs: `tail -f /tmp/claude-telegram-bot-ts.err`
+- Look at logs: `tail -f /tmp/soma.err`
 - Ensure the bot process is running
 
 **Claude authentication issues**

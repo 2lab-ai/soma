@@ -4,10 +4,14 @@
 UNAME_S := $(shell uname -s)
 IS_WSL := $(shell if [ -f /proc/version ] && grep -qi microsoft /proc/version; then echo 1; else echo 0; fi)
 
+# Environment file - can be overridden: ENV=~/path/.env make up
+ENV ?= .env
+ENV_EXPANDED := $(shell echo $(ENV))
+
 # Service configuration - reads SERVICE_NAME from .env or uses directory name
--include .env
+-include $(ENV_EXPANDED)
 SERVICE_NAME ?= $(notdir $(shell pwd))
-MACOS_PLIST = ~/Library/LaunchAgents/com.$(SERVICE_NAME).plist
+MACOS_PLIST = ~/Library/LaunchAgents/ai.2lab.$(SERVICE_NAME).plist
 SYSTEMD_SERVICE = ~/.config/systemd/user/$(SERVICE_NAME).service
 PIDFILE = /tmp/$(SERVICE_NAME).pid
 LOGFILE = /tmp/$(SERVICE_NAME).log
@@ -36,9 +40,10 @@ up: install build preflight
 		fi \
 	elif [ "$(IS_WSL)" = "1" ]; then \
 		echo "   Updating service file..."; \
+		echo "   Using env file: $(ENV_EXPANDED)"; \
 		$(SYSTEMCTL) unmask $(SERVICE_NAME) 2>/dev/null || true; \
 		mkdir -p ~/.config/systemd/user; \
-		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
+		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nEnvironmentFile=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(ENV_EXPANDED)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
 		$(SYSTEMCTL) daemon-reload; \
 		$(SYSTEMCTL) enable $(SERVICE_NAME) 2>/dev/null || true; \
 		echo "   Restarting service (will kill current process)..."; \
@@ -61,9 +66,10 @@ up-force: install build
 		fi \
 	elif [ "$(IS_WSL)" = "1" ]; then \
 		echo "   Updating service file..."; \
+		echo "   Using env file: $(ENV_EXPANDED)"; \
 		$(SYSTEMCTL) unmask $(SERVICE_NAME) 2>/dev/null || true; \
 		mkdir -p ~/.config/systemd/user; \
-		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
+		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nEnvironmentFile=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(ENV_EXPANDED)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
 		$(SYSTEMCTL) daemon-reload; \
 		$(SYSTEMCTL) enable $(SERVICE_NAME) 2>/dev/null || true; \
 		echo "   Restarting service (will kill current process)..."; \
@@ -131,7 +137,7 @@ start:
 	@echo "🚀 Starting..."
 	@if [ "$(UNAME_S)" = "Darwin" ] && [ -f $(MACOS_PLIST) ]; then \
 		launchctl load $(MACOS_PLIST); sleep 1; \
-		launchctl list | grep com.claude-telegram-ts && echo "   macOS service running" || echo "   ⚠️  Failed to start"; \
+		launchctl list | grep ai.2lab.$(SERVICE_NAME) && echo "   macOS service running" || echo "   ⚠️  Failed to start"; \
 	elif [ "$(IS_WSL)" = "1" ] && $(SYSTEMCTL) is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
 		$(SYSTEMCTL) start $(SERVICE_NAME); sleep 1; \
 		$(SYSTEMCTL) is-active $(SERVICE_NAME) && echo "   systemd service running" || echo "   ⚠️  Failed to start"; \
@@ -154,15 +160,17 @@ restart: stop
 # Install service (one-time setup)
 install-service:
 	@echo "📝 Installing service..."
+	@echo "   Using env file: $(ENV_EXPANDED)"
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		echo "macOS: Please manually configure launchagent/com.claude-telegram-ts.plist.template"; \
-		echo "       Then copy it to ~/Library/LaunchAgents/com.claude-telegram-ts.plist"; \
+		echo "macOS: Please manually configure launchagent/ai.2lab.soma.plist.template"; \
+		echo "       Then copy it to ~/Library/LaunchAgents/ai.2lab.$(SERVICE_NAME).plist"; \
 	elif [ "$(IS_WSL)" = "1" ]; then \
 		mkdir -p ~/.config/systemd/user; \
-		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
+		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nEnvironmentFile=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(ENV_EXPANDED)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
 		$(SYSTEMCTL) daemon-reload; \
 		$(SYSTEMCTL) enable $(SERVICE_NAME); \
 		echo "✅ WSL systemd service installed ($(SERVICE_NAME))"; \
+		echo "   Env file: $(ENV_EXPANDED)"; \
 		echo "   Start with: make start"; \
 	else \
 		echo "⚠️  Unsupported platform"; \
@@ -208,7 +216,7 @@ errors:
 status:
 	@echo "📊 Status:"
 	@if [ "$(UNAME_S)" = "Darwin" ] && [ -f $(MACOS_PLIST) ]; then \
-		launchctl list | grep com.claude-telegram-ts || echo "   macOS service not running"; \
+		launchctl list | grep ai.2lab.$(SERVICE_NAME) || echo "   macOS service not running"; \
 	elif [ "$(IS_WSL)" = "1" ] && $(SYSTEMCTL) is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
 		$(SYSTEMCTL) status $(SERVICE_NAME) --no-pager || echo "   systemd service not running"; \
 	elif [ -f $(PIDFILE) ] && kill -0 $$(cat $(PIDFILE)) 2>/dev/null; then \

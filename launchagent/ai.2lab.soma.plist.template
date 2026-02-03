@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.claude-telegram-ts</string>
+    <string>ai.2lab.soma</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -11,12 +11,12 @@
         <string>/Users/USERNAME/.bun/bin/bun</string>
         <string>run</string>
         <!-- Update this path to your bot installation -->
-        <string>/Users/USERNAME/Dev/claude-telegram-bot-ts/src/index.ts</string>
+        <string>/Users/USERNAME/Dev/soma/src/index.ts</string>
     </array>
 
     <key>WorkingDirectory</key>
     <!-- Update this path to your bot installation -->
-    <string>/Users/USERNAME/Dev/claude-telegram-bot-ts</string>
+    <string>/Users/USERNAME/Dev/soma</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -69,8 +69,8 @@
 
     <!-- Log output -->
     <key>StandardOutPath</key>
-    <string>/tmp/claude-telegram-bot.log</string>
+    <string>/tmp/soma.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/claude-telegram-bot.err</string>
+    <string>/tmp/soma.err</string>
 </dict>
 </plist>

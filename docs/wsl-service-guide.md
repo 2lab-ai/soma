@@ -9,7 +9,7 @@
 
 ### 원인
 1. **DBUS 환경변수 누락**: `systemctl --user` 명령이 제대로 동작하지 않음
-2. **서비스 파일 중복**: `claude-telegram-bot.service`와 `elon-bot.service` 둘 다 같은 디렉토리를 가리킴
+2. **서비스 파일 중복**: `soma.service`와 `elon-bot.service` 둘 다 같은 디렉토리를 가리킴
 3. **Restart=always**: 서비스가 죽어도 systemd가 계속 재시작
 4. **서비스 마스킹 안 됨**: `disable`만으로는 이미 로드된 서비스 중지 불가
 
@@ -19,9 +19,9 @@
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus
 
 # 서비스 중지 + 비활성화 + 마스킹
-systemctl --user stop claude-telegram-bot
-systemctl --user disable claude-telegram-bot
-systemctl --user mask claude-telegram-bot  # /dev/null로 링크 → 절대 시작 안 됨
+systemctl --user stop soma
+systemctl --user disable soma
+systemctl --user mask soma  # /dev/null로 링크 → 절대 시작 안 됨
 ```
 
 ---
@@ -33,7 +33,7 @@ systemctl --user mask claude-telegram-bot  # /dev/null로 링크 → 절대 시�
 ~/.config/systemd/user/
 ├── chaewon-bot.service      # 채원봇
 ├── elon-bot.service         # 엘론봇 (마스킹됨)
-├── claude-telegram-bot.service  # (마스킹됨)
+├── soma.service  # (마스킹됨)
 └── user-sshd.service        # SSH 데몬
 ```
 
@@ -60,7 +60,7 @@ journalctl --user -u chaewon-bot -f
 SERVICE_NAME=elon-bot
 ```
 
-없으면 디렉토리 이름 사용 (예: `claude-telegram-bot.p9`)
+없으면 디렉토리 이름 사용 (예: `soma.p9`)
 
 ### 서비스 파일 (자동 생성됨)
 ```ini
@@ -71,7 +71,7 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/zhugehyuk/2lab.ai/claude-telegram-bot.p9
+WorkingDirectory=/home/zhugehyuk/2lab.ai/soma.p9
 ExecStart=/home/zhugehyuk/.bun/bin/bun run start
 Restart=always
 RestartSec=10
@@ -223,8 +223,8 @@ pkill -f "telegram-bot.p9"
 journalctl --user -u elon-bot -f
 
 # 또는 파일 로그
-tail -f /tmp/claude-telegram-bot.log
-tail -f /tmp/claude-telegram-bot.err
+tail -f /tmp/soma.log
+tail -f /tmp/soma.err
 ```
 
 ---

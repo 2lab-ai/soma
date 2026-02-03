@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-cd /Users/linuz90/Dev/claude-telegram-bot-ts
+cd /Users/USERNAME/Dev/soma
 
 # Source environment variables
 if [ -f .env ]; then
@@ -11,4 +11,4 @@ if [ -f .env ]; then
 fi
 
 # Run the bot
-exec /Users/linuz90/.bun/bin/bun run src/index.ts
+exec /Users/USERNAME/.bun/bin/bun run src/index.ts

@@ -6,9 +6,14 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
-import { ALLOWED_USERS, TEMP_DIR } from "../config";
-import { isAuthorized, rateLimiter } from "../security";
+import { sessionManager } from "../session-manager";
+import { TEMP_DIR } from "../config";
+import {
+  type ChatType,
+  isAuthorizedForChat,
+  rateLimiter,
+  shouldRespond,
+} from "../security";
 import {
   addTimestamp,
   auditLog,
@@ -17,6 +22,7 @@ import {
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
+import { botUsername } from "./text";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -211,8 +217,10 @@ async function processArchive(
   caption: string | undefined,
   userId: number,
   username: string,
-  chatId: number
+  chatId: number,
+  threadId?: number
 ): Promise<void> {
+  const session = sessionManager.getSession(chatId, threadId);
   const stopProcessing = session.startProcessing();
   const typing = startTypingIndicator(ctx);
   const state = new StreamingState();
@@ -302,8 +310,12 @@ async function processDocuments(
   caption: string | undefined,
   userId: number,
   username: string,
-  chatId: number
+  chatId: number,
+  threadId?: number
 ): Promise<void> {
+  // Get session for this chat/thread
+  const session = sessionManager.getSession(chatId, threadId);
+
   // Mark processing started
   const stopProcessing = session.startProcessing();
 
@@ -348,7 +360,7 @@ async function processDocuments(
       response
     );
   } catch (error) {
-    await handleProcessingError(ctx, error, state.toolMessages);
+    await handleProcessingError(ctx, error, state.toolMessages, chatId, threadId);
   } finally {
     state.cleanup();
     stopProcessing();
@@ -365,7 +377,8 @@ async function processDocumentPaths(
   caption: string | undefined,
   userId: number,
   username: string,
-  chatId: number
+  chatId: number,
+  threadId?: number
 ): Promise<void> {
   // Extract text from all documents
   const documents: Array<{ path: string; name: string; content: string }> = [];
@@ -385,7 +398,7 @@ async function processDocumentPaths(
     return;
   }
 
-  await processDocuments(ctx, documents, caption, userId, username, chatId);
+  await processDocuments(ctx, documents, caption, userId, username, chatId, threadId);
 }
 
 /**
@@ -395,16 +408,30 @@ export async function handleDocument(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
   const doc = ctx.message?.document;
   const mediaGroupId = ctx.message?.media_group_id;
+  const caption = ctx.message?.caption;
 
   if (!userId || !chatId || !doc) {
     return;
   }
 
-  // 1. Authorization check
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+  // 1. Authorization check (per-chat)
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    }
+    return;
+  }
+
+  // 1.1. Check if bot should respond (for groups - check caption for @mention)
+  const isReplyToBot = Boolean(
+    ctx.message?.reply_to_message?.from?.is_bot &&
+    ctx.message?.reply_to_message?.from?.username === botUsername
+  );
+  if (!shouldRespond(chatType, caption, botUsername, isReplyToBot)) {
     return;
   }
 
@@ -465,10 +492,11 @@ export async function handleDocument(ctx: Context): Promise<void> {
       ctx,
       docPath,
       fileName,
-      ctx.message?.caption,
+      caption,
       userId,
       username,
-      chatId
+      chatId,
+      threadId
     );
     return;
   }
@@ -491,10 +519,11 @@ export async function handleDocument(ctx: Context): Promise<void> {
       await processDocuments(
         ctx,
         [{ path: docPath, name: fileName, content }],
-        ctx.message?.caption,
+        caption,
         userId,
         username,
-        chatId
+        chatId,
+        threadId
       );
     } catch (error) {
       console.error("Failed to extract document:", error);
@@ -510,6 +539,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
     ctx,
     userId,
     username,
-    processDocumentPaths
+    processDocumentPaths,
+    threadId
   );
 }

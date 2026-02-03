@@ -6,9 +6,8 @@
 
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
-import { session } from "../session";
-import { ALLOWED_USERS } from "../config";
-import { isAuthorized } from "../security";
+import { sessionManager } from "../session-manager";
+import { type ChatType, isAuthorizedForChat } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 
@@ -19,6 +18,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  // Callback queries don't have message_thread_id directly, use from message if available
+  const threadId = (
+    ctx.callbackQuery?.message as { message_thread_id?: number } | undefined
+  )?.message_thread_id;
   const callbackData = ctx.callbackQuery?.data;
 
   if (!userId || !chatId || !callbackData) {
@@ -26,8 +30,8 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  // 1. Authorization check
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
+  // 1. Authorization check (per-chat)
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
     await ctx.answerCallbackQuery({ text: "Unauthorized" });
     return;
   }
@@ -95,6 +99,9 @@ export async function handleCallback(ctx: Context): Promise<void> {
   // 8. Send the choice to Claude as a message
   const message = selectedOption;
 
+  // Get session for this chat/thread
+  const session = sessionManager.getSession(chatId, threadId);
+
   // Interrupt any running query - button responses are always immediate
   if (session.isRunning) {
     console.log("Interrupting current query for button response");
@@ -133,7 +140,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
     }
 
     if (String(error).includes("abort") || String(error).includes("cancel")) {
-      // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
+      // Only show "Query stopped" if it was an explicit stop, not an interrupt
       const wasInterrupt = session.consumeInterruptFlag();
       if (!wasInterrupt) {
         await ctx.reply("🛑 Query stopped.");

@@ -43,3 +43,6 @@ mcp-config.ts
 # Rust (workspace under ./rust)
 rust/target
 rust/**/target
+
+# bv (beads viewer) local config and caches
+.bv/

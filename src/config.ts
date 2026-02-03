@@ -40,6 +40,16 @@ export const ALLOWED_USERS: number[] = (process.env.TELEGRAM_ALLOWED_USERS || ""
   .map((x) => parseInt(x.trim(), 10))
   .filter((x) => !isNaN(x));
 
+export const ALLOWED_GROUPS: number[] = (process.env.TELEGRAM_ALLOWED_GROUPS || "")
+  .split(",")
+  .filter((x) => x.trim())
+  .map((x) => parseInt(x.trim(), 10))
+  .filter((x) => !isNaN(x));
+
+// Group response mode: if false, only respond to @mentions in groups
+export const RESPOND_WITHOUT_MENTION =
+  (process.env.RESPOND_WITHOUT_MENTION || "false").toLowerCase() === "true";
+
 export const WORKING_DIR = process.env.CLAUDE_WORKING_DIR || HOME;
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
@@ -217,8 +227,7 @@ export const BUTTON_LABEL_MAX_LENGTH = 30; // Max chars for inline button labels
 
 // ============== Audit Logging ==============
 
-export const AUDIT_LOG_PATH =
-  process.env.AUDIT_LOG_PATH || "/tmp/claude-telegram-audit.log";
+export const AUDIT_LOG_PATH = process.env.AUDIT_LOG_PATH || "/tmp/soma-audit.log";
 export const AUDIT_LOG_JSON =
   (process.env.AUDIT_LOG_JSON || "false").toLowerCase() === "true";
 
@@ -234,9 +243,9 @@ export const RATE_LIMIT_WINDOW = parseInt(process.env.RATE_LIMIT_WINDOW || "60",
 
 // ============== File Paths ==============
 
-export const SESSION_FILE = "/tmp/claude-telegram-session.json";
-export const RESTART_FILE = "/tmp/claude-telegram-restart.json";
-export const TEMP_DIR = "/tmp/telegram-bot";
+export const SESSION_FILE = "/tmp/soma-session.json";
+export const RESTART_FILE = "/tmp/soma-restart.json";
+export const TEMP_DIR = "/tmp/soma";
 
 // Temp paths that are always allowed for bot operations
 export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];

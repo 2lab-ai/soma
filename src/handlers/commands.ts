@@ -5,9 +5,9 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
+import { sessionManager } from "../session-manager";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
-import { isAuthorized } from "../security";
+import { type ChatType, isAuthorizedForChat } from "../security";
 import { getSchedulerStatus, reloadScheduler } from "../scheduler";
 import { fetchAllUsage } from "../usage";
 import type { ClaudeUsage, CodexUsage, GeminiUsage } from "../types";
@@ -103,18 +103,25 @@ function formatGeminiUsage(usage: GeminiUsage): string[] {
  */
 export async function handleStart(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    }
     return;
   }
 
+  const session = sessionManager.getSession(chatId!, threadId);
   const status = session.isActive ? "Active session" : "No active session";
   const workDir = WORKING_DIR;
+  const chatInfo = chatType !== "private" ? `\nChat: ${chatId}` : "";
 
   await ctx.reply(
     `🤖 <b>Claude Telegram Bot</b>\n\n` +
-      `Status: ${status}\n` +
+      `Status: ${status}${chatInfo}\n` +
       `Working directory: <code>${workDir}</code>\n\n` +
       `Type /help to see all available commands.`,
     { parse_mode: "HTML" }
@@ -126,9 +133,13 @@ export async function handleStart(ctx: Context): Promise<void> {
  */
 export async function handleHelp(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
     return;
   }
 
@@ -180,65 +191,70 @@ export async function handleHelp(ctx: Context): Promise<void> {
 }
 
 /**
- * /new - Start a fresh session.
+ * /new - Start a fresh session for this chat.
  */
 export async function handleNew(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
     return;
   }
 
-  // Stop any running query
-  if (session.isRunning) {
-    const result = await session.stop();
-    if (result) {
-      await Bun.sleep(100);
-      session.clearStopRequested();
-    }
-  }
-
-  // Clear session
-  await session.kill();
+  // Kill session for this chat
+  await sessionManager.killSession(chatId!, threadId);
 
   await ctx.reply("🆕 Session cleared. Next message starts fresh.");
 }
 
 /**
- * /stop - Stop the current query (silently).
+ * /stop - Stop the current query (silently) for this chat.
  */
 export async function handleStop(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
     return;
   }
 
+  const session = sessionManager.getSession(chatId!, threadId);
   if (session.isRunning) {
     const result = await session.stop();
     if (result) {
-      // Wait for the abort to be processed, then clear stopRequested so next message can proceed
       await Bun.sleep(100);
       session.clearStopRequested();
     }
-    // Silent stop - no message shown
   }
-  // If nothing running, also stay silent
 }
 
 /**
- * /status - Show detailed status.
+ * /status - Show detailed status for this chat.
  */
 export async function handleStatus(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
     return;
   }
 
+  const session = sessionManager.getSession(chatId!, threadId);
   const lines: string[] = ["📊 <b>Bot Status</b>\n"];
 
   // Session status
@@ -306,38 +322,45 @@ export async function handleStatus(ctx: Context): Promise<void> {
 }
 
 /**
- * /resume - Resume the last session.
+ * /resume - Resume the last session for this chat.
  */
 export async function handleResume(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
     return;
   }
 
+  const session = sessionManager.getSession(chatId!, threadId);
   if (session.isActive) {
     await ctx.reply("Session already active. Use /new to start fresh first.");
     return;
   }
 
-  const [success, message] = session.resumeLast();
-  if (success) {
-    await ctx.reply(`✅ ${message}`);
+  // Try to load persisted session for this chat
+  if (sessionManager.hasSession(chatId!, threadId)) {
+    await ctx.reply(`✅ Session resumed for this chat.`);
   } else {
-    await ctx.reply(`❌ ${message}`);
+    await ctx.reply(`❌ No saved session found for this chat.`);
   }
 }
 
 /**
- * /restart - Restart the bot process.
+ * /restart - Restart the bot process (admin only).
  */
 export async function handleRestart(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const chatId = ctx.chat?.id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  // Restart is admin-only (must be in ALLOWED_USERS)
+  if (!userId || !ALLOWED_USERS.includes(userId)) {
+    await ctx.reply("Unauthorized. Only admins can restart the bot.");
     return;
   }
 
@@ -367,13 +390,14 @@ export async function handleRestart(ctx: Context): Promise<void> {
 }
 
 /**
- * /cron - Show cron scheduler status or reload.
+ * /cron - Show cron scheduler status or reload (admin only).
  */
 export async function handleCron(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  // Cron is admin-only
+  if (!userId || !ALLOWED_USERS.includes(userId)) {
+    await ctx.reply("Unauthorized. Only admins can manage cron.");
     return;
   }
 
@@ -398,16 +422,22 @@ export async function handleCron(ctx: Context): Promise<void> {
 }
 
 /**
- * /stats - Show comprehensive token usage and cost statistics.
+ * /stats - Show comprehensive token usage and cost statistics for this chat.
  */
 export async function handleStats(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
     return;
   }
 
+  const session = sessionManager.getSession(chatId!, threadId);
   const lines: string[] = ["📊 <b>Session Statistics</b>\n"];
 
   // Session info
@@ -505,15 +535,22 @@ export async function handleStats(ctx: Context): Promise<void> {
 }
 
 /**
- * /retry - Retry the last message (resume session and re-send).
+ * /retry - Retry the last message (resume session and re-send) for this chat.
  */
 export async function handleRetry(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
     return;
   }
+
+  const session = sessionManager.getSession(chatId!, threadId);
 
   // Check if there's a message to retry
   if (!session.lastMessage) {
@@ -555,22 +592,69 @@ export async function handleRetry(ctx: Context): Promise<void> {
 }
 
 /**
- * /context - Display context window utilization against 200K input token limit.
+ * /sessions - List all active sessions (admin only).
+ */
+export async function handleSessions(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+
+  if (!userId || !ALLOWED_USERS.includes(userId)) {
+    await ctx.reply("Unauthorized. Only admins can view all sessions.");
+    return;
+  }
+
+  const stats = sessionManager.getGlobalStats();
+  const lines: string[] = ["📋 <b>Active Sessions</b>\n"];
+
+  lines.push(
+    `Total: ${stats.totalSessions} session${stats.totalSessions !== 1 ? "s" : ""}`
+  );
+  lines.push(`Queries: ${stats.totalQueries}`);
+  lines.push(
+    `Tokens: ${stats.totalInputTokens.toLocaleString()} in / ${stats.totalOutputTokens.toLocaleString()} out\n`
+  );
+
+  if (stats.sessions.length === 0) {
+    lines.push("<i>No active sessions</i>");
+  } else {
+    for (const s of stats.sessions.slice(0, 20)) {
+      const ago = Math.floor((Date.now() - s.lastActivity.getTime()) / 1000);
+      const status = s.isRunning ? "🔄" : s.isActive ? "✅" : "⚪";
+      lines.push(
+        `${status} <code>${s.sessionKey}</code>: ${s.queries} queries, ${ago}s ago`
+      );
+    }
+    if (stats.sessions.length > 20) {
+      lines.push(`\n<i>...and ${stats.sessions.length - 20} more</i>`);
+    }
+  }
+
+  await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+}
+
+/**
+ * /context - Display context window utilization against the current model's input token limit (default 200K).
  * Shows current input tokens (which count toward context) vs output tokens (which don't).
  */
 export async function handleContext(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
 
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized.");
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
     return;
   }
 
   try {
-    // Use cumulative context from session (accurate even after restart/resume)
-    const CONTEXT_LIMIT = 200_000;
-    const contextUsed = session.currentContextTokens; // totalInputTokens + totalOutputTokens
-    const percentage = ((contextUsed / CONTEXT_LIMIT) * 100).toFixed(1);
+    const session = sessionManager.getSession(chatId!, threadId);
+
+    // Use last-known context usage snapshot (updated after each query, persisted across restarts)
+    const contextLimit = session.contextWindowSize || 200_000;
+    const contextUsed = session.currentContextTokens;
+    const percentage = ((contextUsed / contextLimit) * 100).toFixed(1);
 
     // Format numbers with commas for readability
     const formatNumber = (n: number): string => n.toLocaleString("en-US");
@@ -591,7 +675,7 @@ export async function handleContext(ctx: Context): Promise<void> {
 
     await ctx.reply(
       `⚙️ <b>Context Window Usage</b>\n\n` +
-        `📊 <code>${formatNumber(contextUsed)} / ${formatNumber(CONTEXT_LIMIT)}</code> tokens (<b>${percentage}%</b>)` +
+        `📊 <code>${formatNumber(contextUsed)} / ${formatNumber(contextLimit)}</code> tokens (<b>${percentage}%</b>)` +
         breakdown,
       { parse_mode: "HTML" }
     );

@@ -11,7 +11,7 @@ import type { PendingMediaGroup } from "../types";
 import { MEDIA_GROUP_TIMEOUT } from "../config";
 import { rateLimiter } from "../security";
 import { auditLogRateLimit } from "../utils";
-import { session } from "../session";
+import { sessionManager } from "../session-manager";
 
 /**
  * Configuration for a media group handler.
@@ -34,7 +34,8 @@ export type ProcessGroupCallback = (
   caption: string | undefined,
   userId: number,
   username: string,
-  chatId: number
+  chatId: number,
+  threadId?: number
 ) => Promise<void>;
 
 /**
@@ -50,7 +51,8 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
    */
   async function processGroup(
     groupId: string,
-    processCallback: ProcessGroupCallback
+    processCallback: ProcessGroupCallback,
+    threadId?: number
   ): Promise<void> {
     const group = pendingGroups.get(groupId);
     if (!group) return;
@@ -86,7 +88,8 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       group.caption,
       userId,
       username,
-      chatId
+      chatId,
+      threadId
     );
 
     // Delete status message
@@ -113,7 +116,8 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
     ctx: Context,
     userId: number,
     username: string,
-    processCallback: ProcessGroupCallback
+    processCallback: ProcessGroupCallback,
+    threadId?: number
   ): Promise<boolean> {
     if (!pendingGroups.has(mediaGroupId)) {
       // Rate limit on first item only
@@ -138,7 +142,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
         caption: ctx.message?.caption,
         statusMsg,
         timeout: setTimeout(
-          () => processGroup(mediaGroupId, processCallback),
+          () => processGroup(mediaGroupId, processCallback, threadId),
           MEDIA_GROUP_TIMEOUT
         ),
       });
@@ -155,7 +159,7 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
       // Reset timeout
       clearTimeout(group.timeout);
       group.timeout = setTimeout(
-        () => processGroup(mediaGroupId, processCallback),
+        () => processGroup(mediaGroupId, processCallback, threadId),
         MEDIA_GROUP_TIMEOUT
       );
     }
@@ -178,7 +182,9 @@ export function createMediaGroupBuffer(config: MediaGroupConfig) {
 export async function handleProcessingError(
   ctx: Context,
   error: unknown,
-  toolMessages: Message[]
+  toolMessages: Message[],
+  chatId?: number,
+  threadId?: number
 ): Promise<void> {
   console.error("Error processing media:", error);
 
@@ -194,9 +200,14 @@ export async function handleProcessingError(
   // Send error message
   const errorStr = String(error);
   if (errorStr.includes("abort") || errorStr.includes("cancel")) {
-    // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
-    const wasInterrupt = session.consumeInterruptFlag();
-    if (!wasInterrupt) {
+    // Only show "Query stopped" if it was an explicit stop, not an interrupt
+    if (chatId) {
+      const session = sessionManager.getSession(chatId, threadId);
+      const wasInterrupt = session.consumeInterruptFlag();
+      if (!wasInterrupt) {
+        await ctx.reply("🛑 Query stopped.");
+      }
+    } else {
       await ctx.reply("🛑 Query stopped.");
     }
   } else {

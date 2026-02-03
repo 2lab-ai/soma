@@ -107,9 +107,9 @@ MCP servers defined in `mcp-config.ts`.
 
 ### Runtime Files
 
-- `/tmp/claude-telegram-session.json` - Session persistence for `/resume`
-- `/tmp/telegram-bot/` - Downloaded photos/documents
-- `/tmp/claude-telegram-audit.log` - Audit log
+- `/tmp/soma-session.json` - Session persistence for `/resume`
+- `/tmp/soma/` - Downloaded photos/documents
+- `/tmp/soma-audit.log` - Audit log
 - `cron.yaml` - Cron scheduler config (in working directory)
 
 ## Patterns
@@ -122,7 +122,7 @@ MCP servers defined in `mcp-config.ts`.
 
 **Type checking**: Run `bun run typecheck` periodically while editing TypeScript files. Fix any type errors before committing.
 
-**After code changes**: Restart the bot so changes can be tested. Use `launchctl kickstart -k gui/$(id -u)/com.claude-telegram-ts` if running as a service, or `bun run start` for manual runs.
+**After code changes**: Restart the bot so changes can be tested. Use `launchctl kickstart -k gui/$(id -u)/ai.2lab.soma` if running as a service, or `bun run start` for manual runs.
 
 ## Standalone Build
 
@@ -219,13 +219,13 @@ Commits should include Claude Code footer and Co-Authored-By trailer as shown in
 ## Running as Service (macOS)
 
 ```bash
-cp launchagent/com.claude-telegram-ts.plist.template ~/Library/LaunchAgents/com.claude-telegram-ts.plist
+cp launchagent/ai.2lab.soma.plist.template ~/Library/LaunchAgents/ai.2lab.soma.plist
 # Edit plist with your paths
-launchctl load ~/Library/LaunchAgents/com.claude-telegram-ts.plist
+launchctl load ~/Library/LaunchAgents/ai.2lab.soma.plist
 
 # Logs
-tail -f /tmp/claude-telegram-bot-ts.log
-tail -f /tmp/claude-telegram-bot-ts.err
+tail -f /tmp/soma.log
+tail -f /tmp/soma.err
 ```
 
 ## Landing the Plane (Session Completion)
