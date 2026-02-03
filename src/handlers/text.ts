@@ -125,7 +125,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 7. Create streaming state and callback
   let state = new StreamingState();
-  let statusCallback = await createStatusCallback(ctx, state);
+  let statusCallback = await createStatusCallback(ctx, state, session);
 
   // 8. Send to Claude with retry logic for crashes
   const MAX_RETRIES = 1;
@@ -269,7 +269,7 @@ export async function handleText(ctx: Context): Promise<void> {
         state.cleanup();
         // Reset state for retry
         state = new StreamingState();
-        statusCallback = await createStatusCallback(ctx, state);
+        statusCallback = await createStatusCallback(ctx, state, session);
         continue;
       }
 
