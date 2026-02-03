@@ -1,10 +1,3 @@
-/**
- * Session management for Claude Telegram Bot.
- *
- * ClaudeSession class manages Claude Code sessions using the Agent SDK V1.
- * V1 supports full options (cwd, mcpServers, settingSources, etc.)
- */
-
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "fs";
 import type { Context } from "grammy";
@@ -18,6 +11,7 @@ import {
   TEMP_PATHS,
   THINKING_DEEP_KEYWORDS,
   THINKING_KEYWORDS,
+  UI_ASKUSER_INSTRUCTIONS,
   WORKING_DIR,
 } from "./config";
 import { formatToolStatus } from "./formatting";
@@ -25,101 +19,72 @@ import { checkPendingAskUserRequests } from "./handlers/streaming";
 import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import type { SessionData, StatusCallback, TokenUsage } from "./types";
+import type { ChoiceState, DirectInputState } from "./types/user-choice";
 
 type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
 
-/**
- * Determine thinking token budget based on message keywords.
- * Returns DEFAULT_THINKING_TOKENS if no keywords match.
- */
 function getThinkingLevel(message: string): number {
   const msgLower = message.toLowerCase();
-
-  // Check deep thinking triggers first (more specific)
-  if (THINKING_DEEP_KEYWORDS.some((k) => msgLower.includes(k))) {
-    return 50000;
-  }
-
-  // Check normal thinking triggers
-  if (THINKING_KEYWORDS.some((k) => msgLower.includes(k))) {
-    return 10000;
-  }
-
-  // Default: use configured default (0 if not set)
+  if (THINKING_DEEP_KEYWORDS.some((k) => msgLower.includes(k))) return 50000;
+  if (THINKING_KEYWORDS.some((k) => msgLower.includes(k))) return 10000;
   return DEFAULT_THINKING_TOKENS;
 }
 
-type ClaudeCodeContextWindow = {
+interface ClaudeCodeContextWindow {
   current_usage?: {
     input_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
   };
   context_window_size?: number;
-};
+}
 
 function mergeLatestUsage(
   prev: TokenUsage | null,
   update: Partial<TokenUsage>
 ): TokenUsage {
-  const base: TokenUsage = {
-    input_tokens: prev?.input_tokens ?? 0,
-    output_tokens: prev?.output_tokens ?? 0,
-    cache_read_input_tokens: prev?.cache_read_input_tokens ?? 0,
-    cache_creation_input_tokens: prev?.cache_creation_input_tokens ?? 0,
-  };
+  function pick(updateVal: number | undefined, prevVal: number): number {
+    return typeof updateVal === "number" && updateVal > 0 ? updateVal : prevVal;
+  }
 
+  const base = prev ?? {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  };
   return {
-    input_tokens:
-      typeof update.input_tokens === "number" && update.input_tokens > 0
-        ? update.input_tokens
-        : base.input_tokens,
+    input_tokens: pick(update.input_tokens, base.input_tokens),
     output_tokens:
       typeof update.output_tokens === "number"
         ? update.output_tokens
         : base.output_tokens,
-    cache_read_input_tokens:
-      typeof update.cache_read_input_tokens === "number" &&
-      update.cache_read_input_tokens > 0
-        ? update.cache_read_input_tokens
-        : base.cache_read_input_tokens,
-    cache_creation_input_tokens:
-      typeof update.cache_creation_input_tokens === "number" &&
-      update.cache_creation_input_tokens > 0
-        ? update.cache_creation_input_tokens
-        : base.cache_creation_input_tokens,
+    cache_read_input_tokens: pick(
+      update.cache_read_input_tokens,
+      base.cache_read_input_tokens ?? 0
+    ),
+    cache_creation_input_tokens: pick(
+      update.cache_creation_input_tokens,
+      base.cache_creation_input_tokens ?? 0
+    ),
   };
 }
 
 function isClaudeCodeContextWindow(value: unknown): value is ClaudeCodeContextWindow {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  if (
-    "current_usage" in v &&
-    v.current_usage !== undefined &&
-    v.current_usage !== null &&
-    typeof v.current_usage !== "object"
-  ) {
-    return false;
-  }
-  if (
-    "context_window_size" in v &&
-    v.context_window_size !== undefined &&
-    typeof v.context_window_size !== "number"
-  ) {
-    return false;
-  }
+  const cu = v.current_usage;
+  if (cu !== undefined && cu !== null && typeof cu !== "object") return false;
+  const cws = v.context_window_size;
+  if (cws !== undefined && typeof cws !== "number") return false;
   return true;
 }
 
 function getClaudeProjectsDir(): string | null {
-  const home = process.env.HOME;
-  if (!home) return null;
-  return `${home}/.claude/projects`;
+  return process.env.HOME ? `${process.env.HOME}/.claude/projects` : null;
 }
 
 function getClaudeProjectSlug(workingDir: string): string {
-  // Matches Claude Code project dir naming: non-alphanumerics become '-'.
   return workingDir.replace(/[^A-Za-z0-9]/g, "-");
 }
 
@@ -187,9 +152,6 @@ function extractMainAssistantContextUsageFromTranscriptLine(
   }
 }
 
-/**
- * Manages Claude Code sessions using the Agent SDK V1.
- */
 export class ClaudeSession {
   readonly sessionKey: string;
   readonly workingDir: string;
@@ -225,23 +187,23 @@ export class ClaudeSession {
     this.workingDir = WORKING_DIR;
   }
 
-  // Context limit tracking
-  contextLimitWarned = false; // Only warn once per session (90% threshold)
-  warned70 = false; // 70% threshold warning
-  warned85 = false; // 85% threshold warning
-  warned95 = false; // 95% threshold warning
-  recentlyRestored = false; // Cooldown after /load
-  messagesSinceRestore = 0; // Count messages since /load
+  contextLimitWarned = false;
+  warned70 = false;
+  warned85 = false;
+  warned95 = false;
+  recentlyRestored = false;
+  messagesSinceRestore = 0;
 
   private abortController: AbortController | null = null;
   private isQueryRunning = false;
   private stopRequested = false;
   private _isProcessing = false;
   private _wasInterruptedByNewMessage = false;
-
-  // Real-time steering buffer
   private steeringBuffer: string[] = [];
   private steeringMessageIds: number[] = [];
+
+  choiceState: ChoiceState | null = null;
+  pendingDirectInput: DirectInputState | null = null;
 
   private getTranscriptJsonlPath(): string | null {
     if (!this.sessionId) return null;
@@ -254,14 +216,12 @@ export class ClaudeSession {
   private tryGetLatestMainAssistantContextUsageFromTranscript(
     minTimestampMs: number
   ): ContextWindowUsage | null {
-    const sessionId = this.sessionId;
-    if (!sessionId) return null;
+    if (!this.sessionId) return null;
 
     const transcriptPath = this.getTranscriptJsonlPath();
     if (!transcriptPath || !existsSync(transcriptPath)) return null;
 
-    // Read a tail chunk and scan backwards for the most recent main (non-sidechain) assistant usage.
-    const tail = readFileTail(transcriptPath, 1024 * 1024); // 1MB
+    const tail = readFileTail(transcriptPath, 1024 * 1024);
     if (!tail) return null;
 
     const lines = tail.trimEnd().split(/\r?\n/);
@@ -271,19 +231,17 @@ export class ClaudeSession {
 
       const usage = extractMainAssistantContextUsageFromTranscriptLine(
         line,
-        sessionId,
+        this.sessionId,
         minTimestampMs
       );
       if (usage) return usage;
     }
-
     return null;
   }
 
   private async refreshContextWindowUsageFromTranscript(
     minTimestampMs: number
   ): Promise<boolean> {
-    // Claude Code may flush transcript JSONL slightly after the SDK result event.
     for (let attempt = 0; attempt < 3; attempt++) {
       const usage =
         this.tryGetLatestMainAssistantContextUsageFromTranscript(minTimestampMs);
@@ -291,9 +249,7 @@ export class ClaudeSession {
         this.contextWindowUsage = usage;
         return true;
       }
-      if (attempt < 2) {
-        await Bun.sleep(50);
-      }
+      if (attempt < 2) await Bun.sleep(50);
     }
     return false;
   }
@@ -306,18 +262,6 @@ export class ClaudeSession {
     return this.isQueryRunning || this._isProcessing;
   }
 
-  /**
-   * Current context window usage (Claude dashboard style).
-   * Prefers API-reported usage snapshot over cumulative totals.
-   *
-   * Returns: input + cache_creation + cache_read tokens
-   *
-   * Primary source: contextWindowUsage (latest API snapshot, can decrease via caching)
-   * Fallback: totalInputTokens + totalCacheCreateTokens (overestimates but reliable)
-   *
-   * Note: Fallback grows monotonically and will exceed actual context over long sessions.
-   * Use for relative comparisons only when contextWindowUsage unavailable.
-   */
   get currentContextTokens(): number {
     return (
       this.getContextTokensFromSnapshot() ?? this.getContextTokensFromCumulatives()
@@ -325,14 +269,13 @@ export class ClaudeSession {
   }
 
   private getContextTokensFromSnapshot(): number | null {
-    const usage = this.contextWindowUsage;
-    if (!usage) return null;
-
-    const total =
-      (usage.input_tokens ?? 0) +
-      (usage.cache_creation_input_tokens ?? 0) +
-      (usage.cache_read_input_tokens ?? 0);
-
+    if (!this.contextWindowUsage) return null;
+    const {
+      input_tokens = 0,
+      cache_creation_input_tokens = 0,
+      cache_read_input_tokens = 0,
+    } = this.contextWindowUsage;
+    const total = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
     return total > 0 ? total : null;
   }
 
@@ -360,90 +303,59 @@ export class ClaudeSession {
     return this._isProcessing;
   }
 
-  /**
-   * Check if the last stop was triggered by a new message interrupt (! prefix).
-   * Resets the flag when called. Also clears stopRequested so new messages can proceed.
-   */
   consumeInterruptFlag(): boolean {
     const was = this._wasInterruptedByNewMessage;
     this._wasInterruptedByNewMessage = false;
-    if (was) {
-      // Clear stopRequested so the new message can proceed
-      this.stopRequested = false;
-    }
+    if (was) this.stopRequested = false;
     return was;
   }
 
-  /**
-   * Mark that this stop is from a new message interrupt.
-   */
   markInterrupt(): void {
     this._wasInterruptedByNewMessage = true;
   }
 
-  /**
-   * Clear the stopRequested flag (used after interrupt to allow new message to proceed).
-   */
   clearStopRequested(): void {
     this.stopRequested = false;
   }
 
-  /**
-   * Clear warning flags after displaying warnings (one-time notification).
-   */
   clearWarning70(): void {
     this.warned70 = false;
   }
-
   clearWarning85(): void {
     this.warned85 = false;
   }
-
   clearWarning95(): void {
     this.warned95 = false;
   }
-
-  /**
-   * Add a steering message to the buffer (user message sent during Claude execution).
-   */
-  addSteering(message: string, messageId?: number): void {
-    this.steeringBuffer.push(message);
-    if (messageId) {
-      this.steeringMessageIds.push(messageId);
-    }
+  clearChoiceState(): void {
+    this.choiceState = null;
+  }
+  clearDirectInput(): void {
+    this.pendingDirectInput = null;
   }
 
-  /**
-   * Consume all buffered steering messages and return as combined string.
-   * Clears the buffer after consumption.
-   */
+  addSteering(message: string, messageId?: number): void {
+    this.steeringBuffer.push(message);
+    if (messageId) this.steeringMessageIds.push(messageId);
+  }
+
   consumeSteering(): string | null {
-    if (this.steeringBuffer.length === 0) {
-      return null;
-    }
+    if (!this.steeringBuffer.length) return null;
     const combined = this.steeringBuffer.join("\n---\n");
     this.steeringBuffer = [];
     this.steeringMessageIds = [];
     return combined;
   }
 
-  /**
-   * Check if there are any buffered steering messages.
-   */
   hasSteeringMessages(): boolean {
     return this.steeringBuffer.length > 0;
   }
 
-  /**
-   * Mark processing as started.
-   * Returns a cleanup function to call when done.
-   */
   startProcessing(): () => void {
     this._isProcessing = true;
     return () => {
       this._isProcessing = false;
-      // Clear any unconsumed steering messages
-      if (this.steeringBuffer.length > 0) {
+      if (this.steeringBuffer.length) {
         console.log(
           `[STEERING] Clearing ${this.steeringBuffer.length} unconsumed messages`
         );
@@ -453,12 +365,7 @@ export class ClaudeSession {
     };
   }
 
-  /**
-   * Stop the currently running query or mark for cancellation.
-   * Returns: "stopped" if query was aborted, "pending" if processing will be cancelled, false if nothing running
-   */
   async stop(): Promise<"stopped" | "pending" | false> {
-    // If a query is actively running, abort it
     if (this.isQueryRunning && this.abortController) {
       this.stopRequested = true;
       this.abortController.abort();
@@ -466,7 +373,6 @@ export class ClaudeSession {
       return "stopped";
     }
 
-    // If processing but query not started yet
     if (this._isProcessing) {
       this.stopRequested = true;
       console.log("Stop requested - will cancel before query starts");
@@ -476,11 +382,6 @@ export class ClaudeSession {
     return false;
   }
 
-  /**
-   * Send a message to Claude with streaming updates via callback.
-   *
-   * @param ctx - grammY context for ask_user button display
-   */
   async sendMessageStreaming(
     message: string,
     username: string,
@@ -489,18 +390,14 @@ export class ClaudeSession {
     chatId?: number,
     ctx?: Context
   ): Promise<string> {
-    // Set chat context for ask_user MCP tool
-    if (chatId) {
-      process.env.TELEGRAM_CHAT_ID = String(chatId);
-    }
+    if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);
 
     const isNewSession = !this.isActive;
     const thinkingTokens = getThinkingLevel(message);
     const thinkingLabel =
-      { 0: "off", 10000: "normal", 50000: "deep" }[thinkingTokens] ||
+      { 0: "off", 10000: "normal", 50000: "deep" }[thinkingTokens] ??
       String(thinkingTokens);
 
-    // Inject current date/time at session start so Claude doesn't need to call a tool for it
     let messageToSend = message;
     if (isNewSession) {
       const now = new Date();
@@ -516,7 +413,6 @@ export class ClaudeSession {
       messageToSend = datePrefix + message;
     }
 
-    // Build SDK V1 options - supports all features
     const options: Options = {
       model: "claude-sonnet-4-5",
       cwd: WORKING_DIR,
@@ -525,12 +421,11 @@ export class ClaudeSession {
       allowDangerouslySkipPermissions: true,
       // Needed to observe per-API-call usage (message_start/message_delta) for accurate context usage.
       includePartialMessages: true,
-      systemPrompt: SAFETY_PROMPT,
+      systemPrompt: `${SAFETY_PROMPT}\n\n${UI_ASKUSER_INSTRUCTIONS}`,
       mcpServers: MCP_SERVERS,
       maxThinkingTokens: thinkingTokens,
       additionalDirectories: ALLOWED_PATHS,
       resume: this.sessionId || undefined,
-      // Real-time steering: inject buffered user messages before tool execution
       hooks: {
         PreToolUse: [
           {
@@ -553,7 +448,6 @@ export class ClaudeSession {
       },
     };
 
-    // Add Claude Code executable path if set (required for standalone builds)
     if (process.env.CLAUDE_CODE_PATH) {
       options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_PATH;
     }
@@ -567,16 +461,12 @@ export class ClaudeSession {
       this.sessionId = null;
     }
 
-    // Check if stop was requested during processing phase
     if (this.stopRequested) {
-      console.log(
-        "Query cancelled before starting (stop was requested during processing)"
-      );
+      console.log("Query cancelled before starting");
       this.stopRequested = false;
       throw new Error("Query cancelled");
     }
 
-    // Create abort controller for cancellation
     this.abortController = new AbortController();
     this.isQueryRunning = true;
     this.stopRequested = false;
@@ -584,18 +474,15 @@ export class ClaudeSession {
     const queryStartedMs = this.queryStarted.getTime();
     this.currentTool = null;
 
-    // Response tracking
     const responseParts: string[] = [];
     let currentSegmentId = 0;
     let currentSegmentText = "";
     let lastTextUpdate = 0;
     let queryCompleted = false;
     let askUserTriggered = false;
-    // Claude dashboard "current_usage" equivalent: usage for the most recent underlying API call.
     let lastCallUsage: TokenUsage | null = null;
 
     try {
-      // Use V1 query() API - supports all options including cwd, mcpServers, etc.
       const queryInstance = query({
         prompt: messageToSend,
         options: {
@@ -604,16 +491,12 @@ export class ClaudeSession {
         },
       }) as AsyncGenerator<SDKMessage>;
 
-      // Process streaming response
       for await (const event of queryInstance) {
-        // Check for abort
         if (this.stopRequested) {
           console.log("Query aborted by user");
           break;
         }
 
-        // Track raw per-API-call usage so /context matches Claude dashboard.
-        // Agent SDK result usage is cumulative across calls; Claude dashboard shows the latest call.
         if (event.type === "stream_event") {
           const raw = event.event;
           const usage: unknown =
@@ -638,24 +521,17 @@ export class ClaudeSession {
           this.saveSession();
         }
 
-        // Handle different message types
         if (event.type === "assistant") {
           for (const block of event.message.content) {
-            // Thinking blocks
-            if (block.type === "thinking") {
-              const thinkingText = block.thinking;
-              if (thinkingText) {
-                console.log(`THINKING BLOCK: ${thinkingText.slice(0, 100)}...`);
-                await statusCallback("thinking", thinkingText);
-              }
+            if (block.type === "thinking" && block.thinking) {
+              console.log(`THINKING BLOCK: ${block.thinking.slice(0, 100)}...`);
+              await statusCallback("thinking", block.thinking);
             }
 
-            // Tool use blocks
             if (block.type === "tool_use") {
               const toolName = block.name;
               const toolInput = block.input as Record<string, unknown>;
 
-              // Safety check for Bash commands
               if (toolName === "Bash") {
                 const command = String(toolInput.command || "");
                 const [isSafe, reason] = checkCommandSafety(command);
@@ -666,11 +542,9 @@ export class ClaudeSession {
                 }
               }
 
-              // Safety check for file operations
               if (["Read", "Write", "Edit"].includes(toolName)) {
                 const filePath = String(toolInput.file_path || "");
                 if (filePath) {
-                  // Allow reads from temp paths and .claude directories
                   const isTmpRead =
                     toolName === "Read" &&
                     (TEMP_PATHS.some((p) => filePath.startsWith(p)) ||
@@ -686,7 +560,6 @@ export class ClaudeSession {
                 }
               }
 
-              // Segment ends when tool starts
               if (currentSegmentText) {
                 await statusCallback(
                   "segment_end",
@@ -697,42 +570,32 @@ export class ClaudeSession {
                 currentSegmentText = "";
               }
 
-              // Format and show tool status
               const toolDisplay = formatToolStatus(toolName, toolInput);
               this.currentTool = toolDisplay;
               this.lastTool = toolDisplay;
               console.log(`Tool: ${toolDisplay}`);
 
-              // Don't show tool status for ask_user - the buttons are self-explanatory
               if (!toolName.startsWith("mcp__ask-user")) {
                 await statusCallback("tool", toolDisplay);
               }
 
-              // Check for pending ask_user requests after ask-user MCP tool
               if (toolName.startsWith("mcp__ask-user") && ctx && chatId) {
-                // Small delay to let MCP server write the file
-                await new Promise((resolve) => setTimeout(resolve, 200));
-
-                // Retry a few times in case of timing issues
+                await new Promise((r) => setTimeout(r, 200));
                 for (let attempt = 0; attempt < 3; attempt++) {
                   const buttonsSent = await checkPendingAskUserRequests(ctx, chatId);
                   if (buttonsSent) {
                     askUserTriggered = true;
                     break;
                   }
-                  if (attempt < 2) {
-                    await new Promise((resolve) => setTimeout(resolve, 100));
-                  }
+                  if (attempt < 2) await new Promise((r) => setTimeout(r, 100));
                 }
               }
             }
 
-            // Text content
             if (block.type === "text") {
               responseParts.push(block.text);
               currentSegmentText += block.text;
 
-              // Stream text updates (throttled)
               const now = Date.now();
               if (
                 now - lastTextUpdate > STREAMING_THROTTLE_MS &&
@@ -744,50 +607,37 @@ export class ClaudeSession {
             }
           }
 
-          // Break out of event loop if ask_user was triggered
-          if (askUserTriggered) {
-            break;
-          }
+          if (askUserTriggered) break;
         }
 
-        // Result message
         if (event.type === "result") {
           console.log("Response complete");
           queryCompleted = true;
 
-          // Context window tracking
-          // Claude dashboard shows "current_usage" (latest underlying API call), not total query usage.
-          // Agent SDK result `usage` is cumulative across calls, so we prefer stream_event usage when available.
           const contextWindowFromClaudeCode = (() => {
             const cw = (event as unknown as { context_window?: unknown })
               .context_window;
             if (!isClaudeCodeContextWindow(cw) || !cw.current_usage) return null;
 
+            const cu = cw.current_usage;
             const usage = {
-              input_tokens:
-                typeof cw.current_usage.input_tokens === "number"
-                  ? cw.current_usage.input_tokens
-                  : 0,
+              input_tokens: typeof cu.input_tokens === "number" ? cu.input_tokens : 0,
               cache_creation_input_tokens:
-                typeof cw.current_usage.cache_creation_input_tokens === "number"
-                  ? cw.current_usage.cache_creation_input_tokens
+                typeof cu.cache_creation_input_tokens === "number"
+                  ? cu.cache_creation_input_tokens
                   : 0,
               cache_read_input_tokens:
-                typeof cw.current_usage.cache_read_input_tokens === "number"
-                  ? cw.current_usage.cache_read_input_tokens
+                typeof cu.cache_read_input_tokens === "number"
+                  ? cu.cache_read_input_tokens
                   : 0,
             };
             const used =
               usage.input_tokens +
               usage.cache_creation_input_tokens +
               usage.cache_read_input_tokens;
-            // Some SDK versions may include an empty `context_window.current_usage: {}`; treat that as missing.
             if (used <= 0) return null;
 
-            return {
-              usage,
-              size: cw.context_window_size || null,
-            };
+            return { usage, size: cw.context_window_size || null };
           })();
 
           if (contextWindowFromClaudeCode) {
@@ -805,11 +655,12 @@ export class ClaudeSession {
                 lastCallUsage.cache_creation_input_tokens || 0,
               cache_read_input_tokens: lastCallUsage.cache_read_input_tokens || 0,
             };
-            const used =
+            if (
               usage.input_tokens +
-              usage.cache_creation_input_tokens +
-              usage.cache_read_input_tokens;
-            if (used > 0) {
+                usage.cache_creation_input_tokens +
+                usage.cache_read_input_tokens >
+              0
+            ) {
               this.contextWindowUsage = usage;
             }
           } else if ("usage" in event && event.usage) {
@@ -819,39 +670,34 @@ export class ClaudeSession {
               cache_creation_input_tokens: u.cache_creation_input_tokens || 0,
               cache_read_input_tokens: u.cache_read_input_tokens || 0,
             };
-            const used =
+            if (
               usage.input_tokens +
-              usage.cache_creation_input_tokens +
-              usage.cache_read_input_tokens;
-            if (used > 0) {
+                usage.cache_creation_input_tokens +
+                usage.cache_read_input_tokens >
+              0
+            ) {
               this.contextWindowUsage = usage;
             }
           }
 
-          // Best-effort: derive the current context window snapshot from Claude Code's transcript JSONL.
-          // This tends to match the in-product "/context" display better than SDK cumulative query usage,
-          // and avoids mixing sidechain/tool-call usage into the main context estimate.
           await this.refreshContextWindowUsageFromTranscript(queryStartedMs);
 
-          // Try modelUsage for cumulative tracking
           if ("modelUsage" in event && event.modelUsage) {
-            const modelUsage = event.modelUsage as Record<
-              string,
-              {
-                inputTokens: number;
-                outputTokens: number;
-                cacheReadInputTokens: number;
-                cacheCreationInputTokens: number;
-                contextWindow: number;
-              }
-            >;
+            type ModelUsageEntry = {
+              inputTokens: number;
+              outputTokens: number;
+              cacheReadInputTokens: number;
+              cacheCreationInputTokens: number;
+              contextWindow: number;
+            };
+            const modelUsage = event.modelUsage as Record<string, ModelUsageEntry>;
             let detectedContextWindow = 0;
             let totalIn = 0,
               totalOut = 0,
               totalCacheRead = 0,
               totalCacheCreate = 0;
-            for (const model of Object.keys(modelUsage)) {
-              const mu = modelUsage[model];
+
+            for (const mu of Object.values(modelUsage)) {
               if (!mu) continue;
               if (
                 typeof mu.contextWindow === "number" &&
@@ -864,17 +710,17 @@ export class ClaudeSession {
               totalCacheRead += mu.cacheReadInputTokens || 0;
               totalCacheCreate += mu.cacheCreationInputTokens || 0;
             }
-            if (detectedContextWindow > 0) {
+
+            if (detectedContextWindow > 0)
               this.contextWindowSize = detectedContextWindow;
-            }
+
             this.lastUsage = {
               input_tokens: totalIn,
               output_tokens: totalOut,
               cache_read_input_tokens: totalCacheRead,
               cache_creation_input_tokens: totalCacheCreate,
             };
-            // Fallback: if we couldn't capture per-call context usage (e.g., missing/empty context_window),
-            // use cumulative modelUsage so /context is never stuck at 0.
+
             if (
               this.currentContextTokens <= 0 &&
               (totalIn > 0 || totalCacheRead > 0 || totalCacheCreate > 0)
@@ -887,15 +733,17 @@ export class ClaudeSession {
             }
             this.accumulateUsage(this.lastUsage);
           } else if ("usage" in event && event.usage) {
-            // Fallback to usage field
             this.lastUsage = event.usage as TokenUsage;
             this.accumulateUsage(this.lastUsage);
           }
 
           if (this.contextWindowUsage) {
+            const pct = (
+              (this.currentContextTokens / this.contextWindowSize) *
+              100
+            ).toFixed(1);
             console.log(
-              `Context: ${this.currentContextTokens}/${this.contextWindowSize} ` +
-                `(${((this.currentContextTokens / this.contextWindowSize) * 100).toFixed(1)}%)`
+              `Context: ${this.currentContextTokens}/${this.contextWindowSize} (${pct}%)`
             );
           }
         }
@@ -925,71 +773,52 @@ export class ClaudeSession {
     this.lastError = null;
     this.lastErrorTime = null;
 
-    // If ask_user was triggered, return early - user will respond via button
     if (askUserTriggered) {
       await statusCallback("done", "");
       return "[Waiting for user selection]";
     }
 
-    // Emit final segment
     if (currentSegmentText) {
       await statusCallback("segment_end", currentSegmentText, currentSegmentId);
     }
 
     await statusCallback("done", "");
-
-    // Process any queued cron jobs now that session is complete
-    processQueuedJobs().catch((err) => {
-      console.error("[CRON] Failed to process queued jobs:", err);
-    });
+    processQueuedJobs().catch((err) =>
+      console.error("[CRON] Failed to process queued jobs:", err)
+    );
 
     return responseParts.join("") || "No response from Claude.";
   }
 
-  /**
-   * Kill the current session (clear session_id).
-   */
   async kill(): Promise<void> {
     this.sessionId = null;
     this.lastActivity = null;
-
-    // Reset cumulative stats
     this.sessionStartTime = null;
     this.totalInputTokens = 0;
     this.totalOutputTokens = 0;
     this.totalCacheReadTokens = 0;
     this.totalCacheCreateTokens = 0;
     this.totalQueries = 0;
+    this.resetWarningFlags();
+    console.log("Session cleared");
+  }
 
-    // Reset warning flags
+  markRestored(): void {
+    this.recentlyRestored = true;
+    this.messagesSinceRestore = 0;
+    this.resetWarningFlags();
+    console.log("Context restored - cooldown activated (50 messages)");
+  }
+
+  private resetWarningFlags(): void {
     this.contextLimitWarned = false;
     this.warned70 = false;
     this.warned85 = false;
     this.warned95 = false;
     this.recentlyRestored = false;
     this.messagesSinceRestore = 0;
-
-    console.log("Session cleared");
   }
 
-  /**
-   * Mark that context was just restored (activate cooldown).
-   * Called after /load skill execution.
-   */
-  markRestored(): void {
-    this.recentlyRestored = true;
-    this.messagesSinceRestore = 0;
-    this.contextLimitWarned = false;
-    this.warned70 = false;
-    this.warned85 = false;
-    this.warned95 = false;
-    console.log("Context restored - cooldown activated (50 messages)");
-  }
-
-  /**
-   * Restore session state from persisted data.
-   * Used by SessionManager when loading sessions from disk.
-   */
   restoreFromData(data: SessionData): void {
     this.sessionId = data.session_id;
     this.lastActivity = new Date();
@@ -999,13 +828,10 @@ export class ClaudeSession {
     this.sessionStartTime = data.sessionStartTime
       ? new Date(data.sessionStartTime)
       : null;
-
-    if (data.contextWindowUsage !== undefined) {
+    if (data.contextWindowUsage !== undefined)
       this.contextWindowUsage = data.contextWindowUsage || null;
-    }
-    if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0) {
+    if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0)
       this.contextWindowSize = data.contextWindowSize;
-    }
   }
 
   private accumulateUsage(u: TokenUsage): void {
@@ -1018,113 +844,73 @@ export class ClaudeSession {
     this.totalQueries++;
 
     console.log(
-      `Usage: in=${u.input_tokens} out=${u.output_tokens} ` +
-        `cache_read=${u.cache_read_input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0} ` +
-        `cumulative=${this.currentContextTokens}`
+      `Usage: in=${u.input_tokens} out=${u.output_tokens} cache_read=${u.cache_read_input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0} cumulative=${this.currentContextTokens}`
     );
 
-    // Context limit monitoring (Oracle critical)
     const CONTEXT_LIMIT = this.contextWindowSize || 200_000;
-    const SAVE_THRESHOLD = Math.floor(CONTEXT_LIMIT * 0.9); // Trigger at 90%
-    const COOLDOWN_MESSAGES = 50; // Don't re-trigger for 50 messages after /load
-
-    // Use getter for consistent calculation (includes cache tokens)
+    const COOLDOWN_MESSAGES = 50;
     const currentContext = this.currentContextTokens;
 
-    // Increment message counter
     if (this.recentlyRestored) {
       this.messagesSinceRestore++;
       if (this.messagesSinceRestore >= COOLDOWN_MESSAGES) {
         console.log("Cooldown period complete, re-enabling context limit monitoring");
-        this.recentlyRestored = false;
-        this.contextLimitWarned = false;
-        this.warned70 = false;
-        this.warned85 = false;
-        this.warned95 = false;
+        this.resetWarningFlags();
       }
     }
 
-    // Multi-threshold warning system (70%, 85%, 95%)
-    const THRESHOLD_70 = Math.floor(CONTEXT_LIMIT * 0.7);
-    const THRESHOLD_85 = Math.floor(CONTEXT_LIMIT * 0.85);
-    const THRESHOLD_95 = Math.floor(CONTEXT_LIMIT * 0.95);
+    this.checkThreshold(currentContext, CONTEXT_LIMIT, 0.7, "warned70", "70% reached");
+    this.checkThreshold(currentContext, CONTEXT_LIMIT, 0.85, "warned85", "85% reached");
+    this.checkThreshold(
+      currentContext,
+      CONTEXT_LIMIT,
+      0.95,
+      "warned95",
+      "95% CRITICAL"
+    );
 
-    if (currentContext >= THRESHOLD_70 && !this.warned70 && !this.recentlyRestored) {
-      this.warned70 = true;
-      const percentage = ((currentContext / CONTEXT_LIMIT) * 100).toFixed(1);
-      const tokensRemaining = CONTEXT_LIMIT - currentContext;
-      console.log(`[TELEMETRY] context_threshold_70`, {
-        sessionId: this.sessionId?.slice(0, 8),
-        currentContext,
-        threshold: THRESHOLD_70,
-        tokensRemaining,
-        percentage,
-        timestamp: new Date().toISOString(),
-      });
-      console.warn(
-        `⚠️  Context: ${currentContext}/${CONTEXT_LIMIT} (${percentage}%) - 70% reached`
-      );
-    }
-
-    if (currentContext >= THRESHOLD_85 && !this.warned85 && !this.recentlyRestored) {
-      this.warned85 = true;
-      const percentage = ((currentContext / CONTEXT_LIMIT) * 100).toFixed(1);
-      const tokensRemaining = CONTEXT_LIMIT - currentContext;
-      console.log(`[TELEMETRY] context_threshold_85`, {
-        sessionId: this.sessionId?.slice(0, 8),
-        currentContext,
-        threshold: THRESHOLD_85,
-        tokensRemaining,
-        percentage,
-        timestamp: new Date().toISOString(),
-      });
-      console.warn(
-        `⚠️  Context: ${currentContext}/${CONTEXT_LIMIT} (${percentage}%) - 85% reached`
-      );
-    }
-
-    if (currentContext >= THRESHOLD_95 && !this.warned95 && !this.recentlyRestored) {
-      this.warned95 = true;
-      const percentage = ((currentContext / CONTEXT_LIMIT) * 100).toFixed(1);
-      const tokensRemaining = CONTEXT_LIMIT - currentContext;
-      console.log(`[TELEMETRY] context_threshold_95`, {
-        sessionId: this.sessionId?.slice(0, 8),
-        currentContext,
-        threshold: THRESHOLD_95,
-        tokensRemaining,
-        percentage,
-        timestamp: new Date().toISOString(),
-      });
-      console.warn(
-        `⚠️  Context: ${currentContext}/${CONTEXT_LIMIT} (${percentage}%) - 95% CRITICAL`
-      );
-    }
-
-    // Check if we should trigger save (180k threshold)
     if (
-      currentContext >= SAVE_THRESHOLD &&
+      currentContext >= CONTEXT_LIMIT * 0.9 &&
       !this.contextLimitWarned &&
       !this.recentlyRestored
     ) {
       this.contextLimitWarned = true;
-      const percentage = ((currentContext / CONTEXT_LIMIT) * 100).toFixed(1);
-
-      // ORACLE: Add telemetry
+      const pct = ((currentContext / CONTEXT_LIMIT) * 100).toFixed(1);
       console.log("[TELEMETRY] context_limit_approaching", {
         currentContext,
-        threshold: SAVE_THRESHOLD,
-        percentage,
+        threshold: CONTEXT_LIMIT * 0.9,
+        percentage: pct,
         timestamp: new Date().toISOString(),
       });
-
       console.warn(
-        `⚠️  CONTEXT LIMIT APPROACHING: ${currentContext}/${CONTEXT_LIMIT} tokens ` +
-          `(${percentage}%) - SAVE REQUIRED`
+        `⚠️  CONTEXT LIMIT APPROACHING: ${currentContext}/${CONTEXT_LIMIT} tokens (${pct}%) - SAVE REQUIRED`
       );
     }
 
-    // Save session after every usage update to persist token counters
     this.saveSession();
+  }
+
+  private checkThreshold(
+    current: number,
+    limit: number,
+    pct: number,
+    flag: "warned70" | "warned85" | "warned95",
+    label: string
+  ): void {
+    const threshold = Math.floor(limit * pct);
+    if (current >= threshold && !this[flag] && !this.recentlyRestored) {
+      this[flag] = true;
+      const percentage = ((current / limit) * 100).toFixed(1);
+      console.log(`[TELEMETRY] context_threshold_${Math.floor(pct * 100)}`, {
+        sessionId: this.sessionId?.slice(0, 8),
+        currentContext: current,
+        threshold,
+        tokensRemaining: limit - current,
+        percentage,
+        timestamp: new Date().toISOString(),
+      });
+      console.warn(`⚠️  Context: ${current}/${limit} (${percentage}%) - ${label}`);
+    }
   }
 
   private saveSession(): void {
@@ -1143,18 +929,12 @@ export class ClaudeSession {
         sessionStartTime: this.sessionStartTime?.toISOString(),
       };
 
-      // Determine save path based on session key
-      let savePath: string;
-      if (this.sessionKey === "default") {
-        savePath = SESSION_FILE;
-      } else {
+      let savePath = SESSION_FILE;
+      if (this.sessionKey !== "default") {
         const { mkdirSync, existsSync } = require("fs");
         const sessionsDir = "/tmp/soma-sessions";
-        if (!existsSync(sessionsDir)) {
-          mkdirSync(sessionsDir, { recursive: true });
-        }
-        const safeKey = this.sessionKey.replace(/:/g, "_");
-        savePath = `${sessionsDir}/${safeKey}.json`;
+        if (!existsSync(sessionsDir)) mkdirSync(sessionsDir, { recursive: true });
+        savePath = `${sessionsDir}/${this.sessionKey.replace(/:/g, "_")}.json`;
       }
 
       Bun.write(savePath, JSON.stringify(data));
@@ -1166,45 +946,29 @@ export class ClaudeSession {
     }
   }
 
-  /**
-   * Resume the last persisted session.
-   */
   resumeLast(): [success: boolean, message: string] {
     try {
       const file = Bun.file(SESSION_FILE);
-      if (!file.size) {
-        return [false, "No saved session found"];
-      }
+      if (!file.size) return [false, "No saved session found"];
 
-      const text = readFileSync(SESSION_FILE, "utf-8");
-      const data: SessionData = JSON.parse(text);
-
-      if (!data.session_id) {
-        return [false, "Saved session file is empty"];
-      }
-
+      const data: SessionData = JSON.parse(readFileSync(SESSION_FILE, "utf-8"));
+      if (!data.session_id) return [false, "Saved session file is empty"];
       if (data.working_dir && data.working_dir !== WORKING_DIR) {
         return [false, `Session was for different directory: ${data.working_dir}`];
       }
 
       this.sessionId = data.session_id;
       this.lastActivity = new Date();
-
-      // Restore token counters for context tracking (backward compatible)
       this.totalInputTokens = data.totalInputTokens || 0;
       this.totalOutputTokens = data.totalOutputTokens || 0;
       this.totalQueries = data.totalQueries || 0;
       this.sessionStartTime = data.sessionStartTime
         ? new Date(data.sessionStartTime)
         : null;
-
-      // Restore last-known context window snapshot (if available)
-      if (data.contextWindowUsage !== undefined) {
+      if (data.contextWindowUsage !== undefined)
         this.contextWindowUsage = data.contextWindowUsage || null;
-      }
-      if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0) {
+      if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0)
         this.contextWindowSize = data.contextWindowSize;
-      }
 
       const contextTokens = this.totalInputTokens + this.totalOutputTokens;
       console.log(
@@ -1212,9 +976,7 @@ export class ClaudeSession {
       );
       return [
         true,
-        `Resumed session \`${data.session_id.slice(0, 8)}...\` (saved at ${
-          data.saved_at
-        })`,
+        `Resumed session \`${data.session_id.slice(0, 8)}...\` (saved at ${data.saved_at})`,
       ];
     } catch (error) {
       console.error(`Failed to resume session: ${error}`);
