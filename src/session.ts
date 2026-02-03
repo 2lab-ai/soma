@@ -763,15 +763,18 @@ export class ClaudeSession {
         }
       }
     } catch (error) {
-      const errorStr = String(error).toLowerCase();
-      const isCleanupError = errorStr.includes("cancel") || errorStr.includes("abort");
-      const shouldSuppress =
-        isCleanupError && (queryCompleted || askUserTriggered || this.stopRequested);
+      const isAbortError =
+        error instanceof Error &&
+        (error.name === "AbortError" || /abort/i.test(error.message));
+      const isExpectedAbort =
+        isAbortError && (queryCompleted || askUserTriggered || this.stopRequested);
 
-      if (shouldSuppress) {
-        console.warn(`Suppressed post-completion error: ${error}`);
+      if (isExpectedAbort) {
+        console.warn(
+          `Suppressed expected abort (completed: ${queryCompleted}, askUser: ${askUserTriggered})`
+        );
       } else {
-        console.error(`Error in query: ${error}`);
+        console.error("Error in query:", error);
         this.lastError = String(error).slice(0, 100);
         this.lastErrorTime = new Date();
         throw error;
