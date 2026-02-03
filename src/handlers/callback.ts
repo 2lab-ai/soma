@@ -6,6 +6,7 @@ import { type ChatType, isAuthorizedForChat } from "../security";
 import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
+import { isAbortError } from "../utils/error-classification";
 
 type CallbackMessage = {
   message_id?: number;
@@ -90,13 +91,13 @@ async function sendMessageToClaude(
       }
     }
 
-    const errorStr = String(error);
-    if (errorStr.includes("abort") || errorStr.includes("cancel")) {
+    if (isAbortError(error)) {
       const wasInterrupt = session.consumeInterruptFlag();
       if (!wasInterrupt) {
         await ctx.reply("🛑 Query stopped.");
       }
     } else {
+      const errorStr = String(error);
       const guidance = getErrorGuidance(errorStr);
       await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}\n\n${guidance}`);
     }
@@ -146,16 +147,13 @@ async function handleChoiceCallback(
   }
 
   // Validate callback is for current choice message
-  // Multi-form skips this: all questions belong to the same logical set
   const callbackMessageId = getCallbackMessage(ctx)?.message_id;
-  const isSingleChoiceMismatch =
-    callbackMessageId &&
-    session.choiceState.type === "single" &&
-    session.choiceState.messageId !== callbackMessageId;
+  const isMessageMismatch =
+    callbackMessageId && !session.choiceState.messageIds.includes(callbackMessageId);
 
-  if (isSingleChoiceMismatch) {
+  if (isMessageMismatch) {
     await ctx.answerCallbackQuery({ text: "This choice is outdated." });
-    await removeKeyboardSilently(ctx, "outdated single choice");
+    await removeKeyboardSilently(ctx, "outdated choice");
     return;
   }
 
@@ -167,7 +165,7 @@ async function handleChoiceCallback(
       type: session.choiceState.type,
       formId: session.choiceState.formId,
       questionId,
-      messageId: session.choiceState.messageId,
+      messageId: callbackMessageId!, // The specific question message
     };
     await ctx.answerCallbackQuery({ text: "Type your answer:" });
     await ctx.editMessageText("✏️ Waiting for your input...");

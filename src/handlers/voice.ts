@@ -21,6 +21,7 @@ import {
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { botUsername } from "./text";
+import { handleAbortError } from "../utils/error-classification";
 
 /**
  * Handle incoming voice messages.
@@ -137,12 +138,8 @@ export async function handleVoice(ctx: Context): Promise<void> {
   } catch (error) {
     console.error("Error processing voice:", error);
 
-    if (String(error).includes("abort") || String(error).includes("cancel")) {
-      // Only show "Query stopped" if it was an explicit stop, not an interrupt from a new message
-      const wasInterrupt = session.consumeInterruptFlag();
-      if (!wasInterrupt) {
-        await ctx.reply("🛑 Query stopped.");
-      }
+    if (await handleAbortError(ctx, error, session)) {
+      // Abort handled
     } else {
       await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
     }

@@ -1,0 +1,9 @@
+{
+  "id": "20260203-162741",
+  "timestamp": "2026-02-03T16:27:41+09:00",
+  "project": "soma",
+  "session_type": "do-work",
+  "status": "completed",
+  "tasks_completed": ["soma-9oa", "soma-0ex"],
+  "commit": "e334821"
+}

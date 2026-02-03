@@ -17,21 +17,21 @@ describe("ClaudeSession - choiceState", () => {
   test("can set and track single choice state", () => {
     const choiceState: ChoiceState = {
       type: "single",
-      messageId: 12345,
+      messageIds: [12345],
     };
 
     session.choiceState = choiceState;
 
     expect(session.choiceState).not.toBeNull();
     expect(session.choiceState?.type).toBe("single");
-    expect(session.choiceState?.messageId).toBe(12345);
+    expect(session.choiceState?.messageIds).toEqual([12345]);
   });
 
   test("can set and track multi-form choice state", () => {
     const choiceState: ChoiceState = {
       type: "multi",
       formId: "form-abc",
-      messageId: 67890,
+      messageIds: [67890, 67891, 67892],
       selections: {
         q1: { choiceId: "1", label: "Option A" },
         q2: { choiceId: "2", label: "Option B" },
@@ -49,7 +49,7 @@ describe("ClaudeSession - choiceState", () => {
   test("clearChoiceState() sets choiceState to null", () => {
     session.choiceState = {
       type: "single",
-      messageId: 123,
+      messageIds: [123],
     };
 
     expect(session.choiceState).not.toBeNull();
@@ -103,7 +103,7 @@ describe("ClaudeSession - choiceState", () => {
   test("choiceState and directInput are independent", () => {
     session.choiceState = {
       type: "single",
-      messageId: 111,
+      messageIds: [111],
     };
 
     session.pendingDirectInput = {
@@ -111,7 +111,7 @@ describe("ClaudeSession - choiceState", () => {
       messageId: 222,
     };
 
-    expect(session.choiceState?.messageId).toBe(111);
+    expect(session.choiceState?.messageIds).toEqual([111]);
     expect(session.pendingDirectInput?.messageId).toBe(222);
 
     session.clearChoiceState();

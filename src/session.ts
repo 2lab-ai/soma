@@ -20,6 +20,7 @@ import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import type { SessionData, StatusCallback, TokenUsage } from "./types";
 import type { ChoiceState, DirectInputState } from "./types/user-choice";
+import { isAbortError } from "./utils/error-classification";
 
 export type ActivityState = "idle" | "working" | "waiting";
 
@@ -763,11 +764,9 @@ export class ClaudeSession {
         }
       }
     } catch (error) {
-      const isAbortError =
-        error instanceof Error &&
-        (error.name === "AbortError" || /abort/i.test(error.message));
       const isExpectedAbort =
-        isAbortError && (queryCompleted || askUserTriggered || this.stopRequested);
+        isAbortError(error) &&
+        (queryCompleted || askUserTriggered || this.stopRequested);
 
       if (isExpectedAbort) {
         console.warn(

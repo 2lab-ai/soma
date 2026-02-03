@@ -425,7 +425,7 @@ export async function createStatusCallback(
                 });
                 session.choiceState = {
                   type: "single",
-                  messageId: msg.message_id,
+                  messageIds: [msg.message_id],
                   extractedChoice: state.extractedChoice,
                 };
                 session.setActivityState("waiting");
@@ -462,7 +462,7 @@ export async function createStatusCallback(
 
                 session.choiceState = {
                   type: "multi",
-                  messageId: questionMsgs[0]!.message_id,
+                  messageIds: questionMsgs.map((m) => m.message_id),
                   extractedChoices: state.extractedChoices,
                   selections: {},
                 };

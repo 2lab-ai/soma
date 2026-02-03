@@ -12,6 +12,7 @@ import { MEDIA_GROUP_TIMEOUT } from "../config";
 import { rateLimiter } from "../security";
 import { auditLogRateLimit } from "../utils";
 import { sessionManager } from "../session-manager";
+import { isAbortError, handleAbortError } from "../utils/error-classification";
 
 /**
  * Configuration for a media group handler.
@@ -198,19 +199,18 @@ export async function handleProcessingError(
   }
 
   // Send error message
-  const errorStr = String(error);
-  if (errorStr.includes("abort") || errorStr.includes("cancel")) {
-    // Only show "Query stopped" if it was an explicit stop, not an interrupt
-    if (chatId) {
-      const session = sessionManager.getSession(chatId, threadId);
-      const wasInterrupt = session.consumeInterruptFlag();
-      if (!wasInterrupt) {
-        await ctx.reply("🛑 Query stopped.");
-      }
-    } else {
-      await ctx.reply("🛑 Query stopped.");
+  if (chatId) {
+    const session = sessionManager.getSession(chatId, threadId);
+    if (await handleAbortError(ctx, error, session)) {
+      // Abort handled
+      return;
     }
-  } else {
-    await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
+  } else if (isAbortError(error)) {
+    // No session available, show generic message
+    await ctx.reply("🛑 Query stopped.");
+    return;
   }
+
+  const errorStr = String(error);
+  await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
 }
