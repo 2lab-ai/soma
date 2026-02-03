@@ -1,5 +1,5 @@
 {
-  "name": "claude-telegram-bot-ts",
+  "name": "soma",
   "module": "src/index.ts",
   "type": "module",
   "private": true,

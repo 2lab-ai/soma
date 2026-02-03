@@ -4,9 +4,14 @@
 
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
-import { session } from "../session";
-import { ALLOWED_USERS, TEMP_DIR, TRANSCRIPTION_AVAILABLE } from "../config";
-import { isAuthorized, rateLimiter } from "../security";
+import { sessionManager } from "../session-manager";
+import { TEMP_DIR, TRANSCRIPTION_AVAILABLE } from "../config";
+import {
+  type ChatType,
+  isAuthorizedForChat,
+  rateLimiter,
+  shouldRespond,
+} from "../security";
 import {
   addTimestamp,
   auditLog,
@@ -15,6 +20,7 @@ import {
   startTypingIndicator,
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
+import { botUsername } from "./text";
 
 /**
  * Handle incoming voice messages.
@@ -23,15 +29,28 @@ export async function handleVoice(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
   const voice = ctx.message?.voice;
 
   if (!userId || !voice || !chatId) {
     return;
   }
 
-  // 1. Authorization check
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+  // 1. Authorization check (per-chat)
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    }
+    return;
+  }
+
+  // 1.1. Check if bot should respond (for groups - voice replies are always directed)
+  const isReplyToBot = Boolean(
+    ctx.message?.reply_to_message?.from?.is_bot &&
+    ctx.message?.reply_to_message?.from?.username === botUsername
+  );
+  if (!shouldRespond(chatType, undefined, botUsername, isReplyToBot)) {
     return;
   }
 
@@ -41,6 +60,9 @@ export async function handleVoice(ctx: Context): Promise<void> {
   } catch (error) {
     console.debug("Failed to add reaction to user message:", error);
   }
+
+  // Get session for this chat/thread
+  const session = sessionManager.getSession(chatId, threadId);
 
   // 2. Check if transcription is available
   if (!TRANSCRIPTION_AVAILABLE) {

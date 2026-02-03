@@ -5,9 +5,14 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
-import { ALLOWED_USERS, TEMP_DIR } from "../config";
-import { isAuthorized, rateLimiter } from "../security";
+import { sessionManager } from "../session-manager";
+import { TEMP_DIR } from "../config";
+import {
+  type ChatType,
+  isAuthorizedForChat,
+  rateLimiter,
+  shouldRespond,
+} from "../security";
 import {
   addTimestamp,
   auditLog,
@@ -16,6 +21,7 @@ import {
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
+import { botUsername } from "./text";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -59,8 +65,12 @@ async function processPhotos(
   caption: string | undefined,
   userId: number,
   username: string,
-  chatId: number
+  chatId: number,
+  threadId?: number
 ): Promise<void> {
+  // Get session for this chat/thread
+  const session = sessionManager.getSession(chatId, threadId);
+
   // Mark processing started
   const stopProcessing = session.startProcessing();
 
@@ -96,7 +106,7 @@ async function processPhotos(
 
     await auditLog(userId, username, "PHOTO", prompt, response);
   } catch (error) {
-    await handleProcessingError(ctx, error, state.toolMessages);
+    await handleProcessingError(ctx, error, state.toolMessages, chatId, threadId);
   } finally {
     state.cleanup();
     stopProcessing();
@@ -111,15 +121,29 @@ export async function handlePhoto(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
   const mediaGroupId = ctx.message?.media_group_id;
+  const caption = ctx.message?.caption;
 
   if (!userId || !chatId) {
     return;
   }
 
-  // 1. Authorization check
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+  // 1. Authorization check (per-chat)
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    }
+    return;
+  }
+
+  // 1.1. Check if bot should respond (for groups - check caption for @mention)
+  const isReplyToBot = Boolean(
+    ctx.message?.reply_to_message?.from?.is_bot &&
+    ctx.message?.reply_to_message?.from?.username === botUsername
+  );
+  if (!shouldRespond(chatType, caption, botUsername, isReplyToBot)) {
     return;
   }
 
@@ -173,14 +197,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
 
   // 4. Single photo - process immediately
   if (!mediaGroupId && statusMsg) {
-    await processPhotos(
-      ctx,
-      [photoPath],
-      ctx.message?.caption,
-      userId,
-      username,
-      chatId
-    );
+    await processPhotos(ctx, [photoPath], caption, userId, username, chatId, threadId);
 
     // Clean up status message
     try {
@@ -200,6 +217,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     ctx,
     userId,
     username,
-    processPhotos
+    processPhotos,
+    threadId
   );
 }

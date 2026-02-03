@@ -30,14 +30,16 @@ import {
   handleRestart,
   handleRetry,
   handleCron,
+  handleSessions,
   handleText,
+  setBotUsername,
   handleVoice,
   handlePhoto,
   handleDocument,
   handleCallback,
 } from "./handlers";
 import { initScheduler, startScheduler, stopScheduler } from "./scheduler";
-import { session } from "./session";
+import { sessionManager } from "./session-manager";
 import { escapeHtml } from "./formatting";
 
 // Create bot instance
@@ -119,6 +121,7 @@ await bot.api.setMyCommands([
   { command: "restart", description: "Restart the bot process" },
   { command: "retry", description: "Retry last message" },
   { command: "cron", description: "Scheduled jobs status/reload" },
+  { command: "sessions", description: "List all active sessions (admin)" },
 ]);
 
 bot.command("start", handleStart);
@@ -132,6 +135,7 @@ bot.command("resume", handleResume);
 bot.command("restart", handleRestart);
 bot.command("retry", handleRetry);
 bot.command("cron", handleCron);
+bot.command("sessions", handleSessions);
 
 // ============== Message Handlers ==============
 
@@ -170,13 +174,12 @@ console.log("Starting bot...");
 const botInfo = await bot.api.getMe();
 console.log(`Bot started: @${botInfo.username}`);
 
-// Auto-resume previous session if available
-const [resumed, resumeMsg] = session.resumeLast();
-if (resumed) {
-  console.log(`Auto-resumed: ${resumeMsg}`);
-} else {
-  console.log("No previous session to resume");
+// Set bot username for @mention detection in handlers
+if (botInfo.username) {
+  setBotUsername(botInfo.username);
 }
+
+// Load any persisted sessions (lazy - loaded on demand by sessionManager)
 
 // Initialize and start cron scheduler
 initScheduler(bot.api);
@@ -210,6 +213,7 @@ if (ALLOWED_USERS.length > 0) {
   setTimeout(async () => {
     try {
       const statusCallback = async () => {};
+      const session = sessionManager.getSession(userId);
 
       // PRIORITY 1: Check for .last-save-id (auto-load mechanism)
       const saveIdFile = `${WORKING_DIR}/.last-save-id`;
@@ -228,7 +232,7 @@ if (ALLOWED_USERS.length > 0) {
 
           // Send /load command to Claude
           await bot.api.sendMessage(
-            ALLOWED_USERS[0]!,
+            userId,
             `🔄 **Auto-restoring context**\n\nSave ID: \`${saveId}\`\n\nExecuting /load...`,
             { parse_mode: "Markdown" }
           );
@@ -261,7 +265,7 @@ if (ALLOWED_USERS.length > 0) {
           unlinkSync(saveIdFile);
 
           await bot.api.sendMessage(
-            ALLOWED_USERS[0]!,
+            userId,
             `✅ **Context Restored**\n\nResumed from save: \`${saveId}\``,
             { parse_mode: "Markdown" }
           );
@@ -279,7 +283,7 @@ if (ALLOWED_USERS.length > 0) {
           );
 
           await bot.api.sendMessage(
-            ALLOWED_USERS[0]!,
+            userId,
             `🚨 **Auto-load Failed**\n\n` +
               `Error: ${sanitized.slice(0, 300)}\n\n` +
               `⚠️ Starting fresh session. Check logs for recovery.`,
@@ -317,13 +321,13 @@ if (ALLOWED_USERS.length > 0) {
       let startupType = "";
       if (contextMessage.includes("restart-context")) {
         startupType = "🔄 **SIGTERM Restart** (graceful shutdown via make up)";
-      } else if (resumed) {
+      } else if (session.isActive) {
         startupType = "♻️ **Session Resumed** (no saved context found)";
       } else {
         startupType = "🆕 **Fresh Start** (new session)";
       }
 
-      const startupPrompt = resumed
+      const startupPrompt = session.isActive
         ? `${startupType}\n\nBot restarted. Session ID: ${session.sessionId?.slice(0, 8)}...\n\n현재 시간과 함께 간단히 상태를 알려주세요.${contextMessage}`
         : `${startupType}\n\nBot restarted. New session starting.\n\n현재 시간과 함께 간단한 인사말을 써주세요.${contextMessage}`;
 
@@ -347,6 +351,7 @@ if (ALLOWED_USERS.length > 0) {
 // Graceful shutdown
 const stopRunner = () => {
   stopScheduler();
+  sessionManager.saveAllSessions();
   if (runner.isRunning()) {
     console.log("Stopping bot...");
     runner.stop();
@@ -365,17 +370,15 @@ function saveShutdownContext(): void {
     const saveFile = `${saveDir}/restart-context-${timestamp}.md`;
 
     const now = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
-    const sessionInfo =
-      session.isActive && session.sessionId
-        ? `Session ID: ${session.sessionId.slice(0, 8)}...`
-        : "Session ID: none";
+    const stats = sessionManager.getGlobalStats();
+    const sessionInfo = `Active sessions: ${stats.totalSessions}`;
 
     const content = [
       `# Restart Context - ${now}`,
       ``,
       `## Message from Previous Session`,
       ``,
-      `Gracefully shut down via make up. Session will be restored automatically.`,
+      `Gracefully shut down via make up. Sessions will be restored automatically.`,
       ``,
       sessionInfo,
       ``,

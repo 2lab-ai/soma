@@ -8,11 +8,14 @@ import { resolve, normalize } from "path";
 import { realpathSync } from "fs";
 import type { RateLimitBucket } from "./types";
 import {
+  ALLOWED_GROUPS,
   ALLOWED_PATHS,
+  ALLOWED_USERS,
   BLOCKED_PATTERNS,
   RATE_LIMIT_ENABLED,
   RATE_LIMIT_REQUESTS,
   RATE_LIMIT_WINDOW,
+  RESPOND_WITHOUT_MENTION,
   TEMP_PATHS,
 } from "./config";
 
@@ -156,4 +159,79 @@ export function isAuthorized(
   if (!userId) return false;
   if (allowedUsers.length === 0) return false;
   return allowedUsers.includes(userId);
+}
+
+export type ChatType = "private" | "group" | "supergroup" | "channel";
+
+/**
+ * Check if a user is authorized to use the bot in a specific chat.
+ *
+ * Rules:
+ * - Private chat: user must be in ALLOWED_USERS
+ * - Group/Supergroup: group must be in ALLOWED_GROUPS AND user must be in ALLOWED_USERS
+ * - Channel: not supported
+ */
+export function isAuthorizedForChat(
+  userId: number | undefined,
+  chatId: number | undefined,
+  chatType: ChatType | undefined
+): boolean {
+  if (!userId || !chatId || !chatType) return false;
+
+  // Private chat: user must be allowed
+  if (chatType === "private") {
+    return ALLOWED_USERS.includes(userId);
+  }
+
+  // Group/Supergroup: group must be allowed AND user must be allowed
+  if (chatType === "group" || chatType === "supergroup") {
+    if (!ALLOWED_GROUPS.includes(chatId)) return false;
+    return ALLOWED_USERS.includes(userId);
+  }
+
+  // Channels not supported
+  return false;
+}
+
+/**
+ * Check if the bot should respond to a message.
+ *
+ * Rules:
+ * - Private chat: always respond (if authorized)
+ * - Group/Supergroup: respond if @mentioned OR replying to bot OR RESPOND_WITHOUT_MENTION is true
+ *
+ * @param chatType - The type of chat
+ * @param messageText - The message text (including caption for photos)
+ * @param botUsername - The bot's username (without @)
+ * @param isReplyToBot - Whether the message is a reply to one of the bot's messages
+ */
+export function shouldRespond(
+  chatType: ChatType | undefined,
+  messageText: string | undefined,
+  botUsername: string,
+  isReplyToBot: boolean
+): boolean {
+  // Always respond in private chats
+  if (chatType === "private") {
+    return true;
+  }
+
+  // Groups/Supergroups: check mention or reply
+  if (chatType === "group" || chatType === "supergroup") {
+    // Always respond to @mentions
+    if (messageText && messageText.includes(`@${botUsername}`)) {
+      return true;
+    }
+
+    // Always respond to replies to bot's messages
+    if (isReplyToBot) {
+      return true;
+    }
+
+    // Otherwise, check if RESPOND_WITHOUT_MENTION is enabled
+    return RESPOND_WITHOUT_MENTION;
+  }
+
+  // Channels: never respond
+  return false;
 }

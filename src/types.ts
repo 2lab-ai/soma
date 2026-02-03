@@ -23,6 +23,13 @@ export interface SessionData {
   session_id: string;
   saved_at: string;
   working_dir: string;
+  // Best-effort context window snapshot (matches Claude dashboard "current_usage" semantics)
+  contextWindowUsage?: {
+    input_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+  } | null;
+  contextWindowSize?: number;
   // Token tracking (for context window usage)
   totalInputTokens?: number;
   totalOutputTokens?: number;

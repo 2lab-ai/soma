@@ -6,7 +6,7 @@
  */
 
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { readFileSync } from "fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "fs";
 import type { Context } from "grammy";
 import {
   ALLOWED_PATHS,
@@ -25,6 +25,8 @@ import { checkPendingAskUserRequests } from "./handlers/streaming";
 import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import type { SessionData, StatusCallback, TokenUsage } from "./types";
+
+type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
 
 /**
  * Determine thinking token budget based on message keywords.
@@ -56,6 +58,39 @@ type ClaudeCodeContextWindow = {
   context_window_size?: number;
 };
 
+function mergeLatestUsage(
+  prev: TokenUsage | null,
+  update: Partial<TokenUsage>
+): TokenUsage {
+  const base: TokenUsage = {
+    input_tokens: prev?.input_tokens ?? 0,
+    output_tokens: prev?.output_tokens ?? 0,
+    cache_read_input_tokens: prev?.cache_read_input_tokens ?? 0,
+    cache_creation_input_tokens: prev?.cache_creation_input_tokens ?? 0,
+  };
+
+  return {
+    input_tokens:
+      typeof update.input_tokens === "number" && update.input_tokens > 0
+        ? update.input_tokens
+        : base.input_tokens,
+    output_tokens:
+      typeof update.output_tokens === "number"
+        ? update.output_tokens
+        : base.output_tokens,
+    cache_read_input_tokens:
+      typeof update.cache_read_input_tokens === "number" &&
+      update.cache_read_input_tokens > 0
+        ? update.cache_read_input_tokens
+        : base.cache_read_input_tokens,
+    cache_creation_input_tokens:
+      typeof update.cache_creation_input_tokens === "number" &&
+      update.cache_creation_input_tokens > 0
+        ? update.cache_creation_input_tokens
+        : base.cache_creation_input_tokens,
+  };
+}
+
 function isClaudeCodeContextWindow(value: unknown): value is ClaudeCodeContextWindow {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
@@ -75,6 +110,81 @@ function isClaudeCodeContextWindow(value: unknown): value is ClaudeCodeContextWi
     return false;
   }
   return true;
+}
+
+function getClaudeProjectsDir(): string | null {
+  const home = process.env.HOME;
+  if (!home) return null;
+  return `${home}/.claude/projects`;
+}
+
+function getClaudeProjectSlug(workingDir: string): string {
+  // Matches Claude Code project dir naming: non-alphanumerics become '-'.
+  return workingDir.replace(/[^A-Za-z0-9]/g, "-");
+}
+
+function readFileTail(path: string, maxBytes: number): string | null {
+  try {
+    const stats = statSync(path);
+    const size = stats.size;
+    const start = Math.max(0, size - maxBytes);
+    const length = size - start;
+
+    const fd = openSync(path, "r");
+    try {
+      const buffer = Buffer.alloc(length);
+      const read = readSync(fd, buffer, 0, length, start);
+      if (read <= 0) return null;
+      return buffer.subarray(0, read).toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function extractMainAssistantContextUsageFromTranscriptLine(
+  line: string,
+  sessionId: string,
+  minTimestampMs: number
+): ContextWindowUsage | null {
+  try {
+    const parsed: unknown = JSON.parse(line);
+    if (!parsed || typeof parsed !== "object") return null;
+    const rec = parsed as Record<string, unknown>;
+
+    if (rec.type !== "assistant") return null;
+    if (rec.sessionId !== sessionId) return null;
+    if ("isSidechain" in rec && rec.isSidechain !== false) return null;
+
+    const timestampStr = typeof rec.timestamp === "string" ? rec.timestamp : null;
+    if (timestampStr) {
+      const ts = Date.parse(timestampStr);
+      if (!Number.isNaN(ts) && ts < minTimestampMs) return null;
+    }
+
+    const msg = rec.message;
+    if (!msg || typeof msg !== "object") return null;
+    const usage = (msg as Record<string, unknown>).usage;
+    if (!usage || typeof usage !== "object") return null;
+
+    const u = usage as Record<string, unknown>;
+    const input_tokens = typeof u.input_tokens === "number" ? u.input_tokens : 0;
+    const cache_creation_input_tokens =
+      typeof u.cache_creation_input_tokens === "number"
+        ? u.cache_creation_input_tokens
+        : 0;
+    const cache_read_input_tokens =
+      typeof u.cache_read_input_tokens === "number" ? u.cache_read_input_tokens : 0;
+
+    const used = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
+    if (used <= 0) return null;
+
+    return { input_tokens, cache_creation_input_tokens, cache_read_input_tokens };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -133,6 +243,61 @@ export class ClaudeSession {
   private steeringBuffer: string[] = [];
   private steeringMessageIds: number[] = [];
 
+  private getTranscriptJsonlPath(): string | null {
+    if (!this.sessionId) return null;
+    const projectsDir = getClaudeProjectsDir();
+    if (!projectsDir) return null;
+    const slug = getClaudeProjectSlug(this.workingDir);
+    return `${projectsDir}/${slug}/${this.sessionId}.jsonl`;
+  }
+
+  private tryGetLatestMainAssistantContextUsageFromTranscript(
+    minTimestampMs: number
+  ): ContextWindowUsage | null {
+    const sessionId = this.sessionId;
+    if (!sessionId) return null;
+
+    const transcriptPath = this.getTranscriptJsonlPath();
+    if (!transcriptPath || !existsSync(transcriptPath)) return null;
+
+    // Read a tail chunk and scan backwards for the most recent main (non-sidechain) assistant usage.
+    const tail = readFileTail(transcriptPath, 1024 * 1024); // 1MB
+    if (!tail) return null;
+
+    const lines = tail.trimEnd().split(/\r?\n/);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]?.trim();
+      if (!line) continue;
+
+      const usage = extractMainAssistantContextUsageFromTranscriptLine(
+        line,
+        sessionId,
+        minTimestampMs
+      );
+      if (usage) return usage;
+    }
+
+    return null;
+  }
+
+  private async refreshContextWindowUsageFromTranscript(
+    minTimestampMs: number
+  ): Promise<boolean> {
+    // Claude Code may flush transcript JSONL slightly after the SDK result event.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const usage =
+        this.tryGetLatestMainAssistantContextUsageFromTranscript(minTimestampMs);
+      if (usage) {
+        this.contextWindowUsage = usage;
+        return true;
+      }
+      if (attempt < 2) {
+        await Bun.sleep(50);
+      }
+    }
+    return false;
+  }
+
   get isActive(): boolean {
     return this.sessionId !== null;
   }
@@ -154,7 +319,9 @@ export class ClaudeSession {
    * Use for relative comparisons only when contextWindowUsage unavailable.
    */
   get currentContextTokens(): number {
-    return this.getContextTokensFromSnapshot() ?? this.getContextTokensFromCumulatives();
+    return (
+      this.getContextTokensFromSnapshot() ?? this.getContextTokensFromCumulatives()
+    );
   }
 
   private getContextTokensFromSnapshot(): number | null {
@@ -414,6 +581,7 @@ export class ClaudeSession {
     this.isQueryRunning = true;
     this.stopRequested = false;
     this.queryStarted = new Date();
+    const queryStartedMs = this.queryStarted.getTime();
     this.currentTool = null;
 
     // Response tracking
@@ -456,22 +624,10 @@ export class ClaudeSession {
                 : null;
 
           if (usage && typeof usage === "object") {
-            const u = usage as Partial<TokenUsage>;
-            if (typeof u.input_tokens === "number" && u.input_tokens > 0) {
-              lastCallUsage = {
-                input_tokens: u.input_tokens,
-                output_tokens:
-                  typeof u.output_tokens === "number" ? u.output_tokens : 0,
-                cache_read_input_tokens:
-                  typeof u.cache_read_input_tokens === "number"
-                    ? u.cache_read_input_tokens
-                    : 0,
-                cache_creation_input_tokens:
-                  typeof u.cache_creation_input_tokens === "number"
-                    ? u.cache_creation_input_tokens
-                    : 0,
-              };
-            }
+            lastCallUsage = mergeLatestUsage(
+              lastCallUsage,
+              usage as Partial<TokenUsage>
+            );
           }
         }
 
@@ -607,13 +763,29 @@ export class ClaudeSession {
               .context_window;
             if (!isClaudeCodeContextWindow(cw) || !cw.current_usage) return null;
 
+            const usage = {
+              input_tokens:
+                typeof cw.current_usage.input_tokens === "number"
+                  ? cw.current_usage.input_tokens
+                  : 0,
+              cache_creation_input_tokens:
+                typeof cw.current_usage.cache_creation_input_tokens === "number"
+                  ? cw.current_usage.cache_creation_input_tokens
+                  : 0,
+              cache_read_input_tokens:
+                typeof cw.current_usage.cache_read_input_tokens === "number"
+                  ? cw.current_usage.cache_read_input_tokens
+                  : 0,
+            };
+            const used =
+              usage.input_tokens +
+              usage.cache_creation_input_tokens +
+              usage.cache_read_input_tokens;
+            // Some SDK versions may include an empty `context_window.current_usage: {}`; treat that as missing.
+            if (used <= 0) return null;
+
             return {
-              usage: {
-                input_tokens: cw.current_usage.input_tokens || 0,
-                cache_creation_input_tokens:
-                  cw.current_usage.cache_creation_input_tokens || 0,
-                cache_read_input_tokens: cw.current_usage.cache_read_input_tokens || 0,
-              },
+              usage,
               size: cw.context_window_size || null,
             };
           })();
@@ -627,20 +799,39 @@ export class ClaudeSession {
               this.contextWindowSize = contextWindowFromClaudeCode.size;
             }
           } else if (lastCallUsage) {
-            this.contextWindowUsage = {
+            const usage = {
               input_tokens: lastCallUsage.input_tokens || 0,
               cache_creation_input_tokens:
                 lastCallUsage.cache_creation_input_tokens || 0,
               cache_read_input_tokens: lastCallUsage.cache_read_input_tokens || 0,
             };
+            const used =
+              usage.input_tokens +
+              usage.cache_creation_input_tokens +
+              usage.cache_read_input_tokens;
+            if (used > 0) {
+              this.contextWindowUsage = usage;
+            }
           } else if ("usage" in event && event.usage) {
             const u = event.usage as unknown as TokenUsage;
-            this.contextWindowUsage = {
+            const usage = {
               input_tokens: u.input_tokens || 0,
               cache_creation_input_tokens: u.cache_creation_input_tokens || 0,
               cache_read_input_tokens: u.cache_read_input_tokens || 0,
             };
+            const used =
+              usage.input_tokens +
+              usage.cache_creation_input_tokens +
+              usage.cache_read_input_tokens;
+            if (used > 0) {
+              this.contextWindowUsage = usage;
+            }
           }
+
+          // Best-effort: derive the current context window snapshot from Claude Code's transcript JSONL.
+          // This tends to match the in-product "/context" display better than SDK cumulative query usage,
+          // and avoids mixing sidechain/tool-call usage into the main context estimate.
+          await this.refreshContextWindowUsageFromTranscript(queryStartedMs);
 
           // Try modelUsage for cumulative tracking
           if ("modelUsage" in event && event.modelUsage) {
@@ -682,6 +873,18 @@ export class ClaudeSession {
               cache_read_input_tokens: totalCacheRead,
               cache_creation_input_tokens: totalCacheCreate,
             };
+            // Fallback: if we couldn't capture per-call context usage (e.g., missing/empty context_window),
+            // use cumulative modelUsage so /context is never stuck at 0.
+            if (
+              this.currentContextTokens <= 0 &&
+              (totalIn > 0 || totalCacheRead > 0 || totalCacheCreate > 0)
+            ) {
+              this.contextWindowUsage = {
+                input_tokens: totalIn,
+                cache_creation_input_tokens: totalCacheCreate,
+                cache_read_input_tokens: totalCacheRead,
+              };
+            }
             this.accumulateUsage(this.lastUsage);
           } else if ("usage" in event && event.usage) {
             // Fallback to usage field

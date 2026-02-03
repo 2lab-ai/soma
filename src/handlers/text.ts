@@ -3,9 +3,14 @@
  */
 
 import type { Context } from "grammy";
-import { session } from "../session";
-import { ALLOWED_USERS, WORKING_DIR } from "../config";
-import { isAuthorized, rateLimiter } from "../security";
+import { sessionManager } from "../session-manager";
+import { WORKING_DIR } from "../config";
+import {
+  type ChatType,
+  isAuthorizedForChat,
+  rateLimiter,
+  shouldRespond,
+} from "../security";
 import { writeFileSync, existsSync, readFileSync } from "fs";
 import {
   addTimestamp,
@@ -16,6 +21,12 @@ import {
 } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 
+// Bot username (set by index.ts after bot info is fetched)
+export let botUsername = "";
+export function setBotUsername(username: string): void {
+  botUsername = username;
+}
+
 /**
  * Handle incoming text messages.
  */
@@ -23,15 +34,29 @@ export async function handleText(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+  const threadId = ctx.message?.message_thread_id;
   let message = ctx.message?.text;
 
   if (!userId || !message || !chatId) {
     return;
   }
 
-  // 1. Authorization check
-  if (!isAuthorized(userId, ALLOWED_USERS)) {
-    await ctx.reply("Unauthorized. Contact the bot owner for access.");
+  // 1. Authorization check (per-chat)
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    // Only reply in private chats to avoid spam
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized. Contact the bot owner for access.");
+    }
+    return;
+  }
+
+  // 1.1. Check if bot should respond (for groups)
+  const isReplyToBot = Boolean(
+    ctx.message?.reply_to_message?.from?.is_bot &&
+    ctx.message?.reply_to_message?.from?.username === botUsername
+  );
+  if (!shouldRespond(chatType, message, botUsername, isReplyToBot)) {
     return;
   }
 
@@ -42,11 +67,19 @@ export async function handleText(ctx: Context): Promise<void> {
     console.debug("Failed to add reaction to user message:", error);
   }
 
+  // Get session for this chat/thread
+  const session = sessionManager.getSession(chatId, threadId);
+
   // 2. Check for interrupt prefix
   const wasInterrupt = message.startsWith("!");
   message = await checkInterrupt(message);
   if (!message.trim()) {
     return;
+  }
+
+  // Strip @mention from message if present (cleaner input for Claude)
+  if (botUsername && message.includes(`@${botUsername}`)) {
+    message = message.replace(new RegExp(`@${botUsername}\\s*`, "g"), "").trim();
   }
 
   // 2.5. Real-time steering: buffer message if Claude is currently executing
@@ -225,12 +258,13 @@ export async function handleText(ctx: Context): Promise<void> {
       }
 
       // Retry on Claude Code crash (not user cancellation)
+      // Common cause: stale session ID from previous run
       if (isClaudeCodeCrash && attempt < MAX_RETRIES) {
         console.log(
-          `Claude Code crashed, retrying (attempt ${attempt + 2}/${MAX_RETRIES + 1})...`
+          `Session expired or crashed, reconnecting (attempt ${attempt + 2}/${MAX_RETRIES + 1})...`
         );
         await session.kill(); // Clear corrupted session
-        await ctx.reply(`⚠️ Claude crashed, retrying...`);
+        await ctx.reply(`⚠️ Session expired, reconnecting...`);
         // Clean up old state before retry
         state.cleanup();
         // Reset state for retry
