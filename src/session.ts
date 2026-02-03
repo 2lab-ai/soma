@@ -214,6 +214,25 @@ export class ClaudeSession {
   parseTextChoiceState: ParseTextChoiceState | null = null;
   private _activityState: ActivityState = "idle";
 
+  private readonly preToolUseHook = async (
+    input: unknown,
+    _toolUseId: unknown,
+    _context: unknown
+  ): Promise<Record<string, unknown>> => {
+    const toolName = (input as { tool_name?: string }).tool_name || "unknown";
+    console.log(`[HOOK] PreToolUse fired for: ${toolName}`);
+
+    const steering = this.consumeSteering();
+    if (!steering) {
+      return {};
+    }
+
+    console.log(`[STEERING] Injecting ${steering.split("\n---\n").length} message(s) before ${toolName}`);
+    return {
+      systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
+    };
+  };
+
   get activityState(): ActivityState {
     return this._activityState;
   }
@@ -468,25 +487,7 @@ export class ClaudeSession {
       hooks: {
         PreToolUse: [
           {
-            hooks: [
-              async (input, _toolUseId, _context) => {
-                const toolName =
-                  (input as { tool_name?: string }).tool_name || "unknown";
-                console.log(`[HOOK] PreToolUse fired for: ${toolName}`);
-
-                const steering = this.consumeSteering();
-                if (!steering) {
-                  return {};
-                }
-
-                console.log(
-                  `[STEERING] Injecting ${steering.split("\n---\n").length} message(s) before ${toolName}`
-                );
-                return {
-                  systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
-                };
-              },
-            ],
+            hooks: [this.preToolUseHook],
           },
         ],
       },
