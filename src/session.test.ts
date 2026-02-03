@@ -370,13 +370,8 @@ describe("ClaudeSession - activityState coordination", () => {
   });
 
   test("choiceState cleared when transitioning waiting → working", () => {
-    session.choiceState = {
-      type: "single",
-      messageIds: [100],
-    };
+    session.choiceState = { type: "single", messageIds: [100] };
     session.setActivityState("waiting");
-
-    // Simulate user selection
     session.clearChoiceState();
     session.setActivityState("working");
 
@@ -391,11 +386,10 @@ describe("ClaudeSession - activityState coordination", () => {
       createdAt: Date.now(),
     };
     session.setActivityState("waiting");
-
     session.clearDirectInput();
 
     expect(session.pendingDirectInput).toBeNull();
-    expect(session.activityState).toBe("waiting"); // State unchanged
+    expect(session.activityState).toBe("waiting");
   });
 
   test("parseTextChoice cleared independently of activityState", () => {
@@ -405,11 +399,10 @@ describe("ClaudeSession - activityState coordination", () => {
       createdAt: Date.now(),
     };
     session.setActivityState("waiting");
-
     session.clearParseTextChoice();
 
     expect(session.parseTextChoiceState).toBeNull();
-    expect(session.activityState).toBe("waiting"); // State unchanged
+    expect(session.activityState).toBe("waiting");
   });
 
   test("multi-form completion: choiceState cleared, state transitions working", () => {
@@ -422,12 +415,6 @@ describe("ClaudeSession - activityState coordination", () => {
       },
     };
     session.setActivityState("waiting");
-
-    // Simulate all questions answered
-    const allAnswered =
-      Object.keys(session.choiceState.selections!).length === 2;
-    expect(allAnswered).toBe(true);
-
     session.clearChoiceState();
     session.setActivityState("working");
 
@@ -445,8 +432,6 @@ describe("ClaudeSession - activityState error handling", () => {
 
   test("error during working: resets to idle", () => {
     session.setActivityState("working");
-
-    // Simulate error handling (what sendDirectInputToClaude does)
     try {
       throw new Error("Test error");
     } catch {
@@ -457,10 +442,7 @@ describe("ClaudeSession - activityState error handling", () => {
   });
 
   test("finally block guard: only resets if not already idle", () => {
-    // Already idle
     expect(session.activityState).toBe("idle");
-
-    // Simulate finally block logic from session.ts:814
     if (session.activityState !== "idle") {
       session.setActivityState("idle");
     }
@@ -468,42 +450,36 @@ describe("ClaudeSession - activityState error handling", () => {
     expect(session.activityState).toBe("idle");
   });
 
-  test("expiration cleanup: directInput cleared, state can be set separately", () => {
+  test("expiration cleanup: directInput cleared independently", () => {
+    const expiredTime = Date.now() - 6 * 60 * 1000;
+
     session.pendingDirectInput = {
       type: "single",
       messageId: 100,
-      createdAt: Date.now() - 6 * 60 * 1000, // Expired (> 5 min)
+      createdAt: expiredTime,
     };
     session.choiceState = { type: "single", messageIds: [100] };
     session.setActivityState("waiting");
 
-    // Simulate expiration handler (text.ts:61-65)
-    const FIVE_MINUTES = 5 * 60 * 1000;
-    const expired = Date.now() - session.pendingDirectInput.createdAt > FIVE_MINUTES;
-    expect(expired).toBe(true);
+    expect(Date.now() - session.pendingDirectInput.createdAt > 5 * 60 * 1000).toBe(true);
 
     session.clearDirectInput();
     session.clearChoiceState();
 
     expect(session.pendingDirectInput).toBeNull();
     expect(session.choiceState).toBeNull();
-    // Activity state unchanged by cleanup (would be set by handler)
     expect(session.activityState).toBe("waiting");
   });
 
-  test("parseTextChoice expiration: state cleared independently", () => {
+  test("parseTextChoice expiration: cleared independently", () => {
+    const expiredTime = Date.now() - 6 * 60 * 1000;
+
     session.parseTextChoiceState = {
       type: "single",
       messageId: 100,
-      createdAt: Date.now() - 6 * 60 * 1000, // Expired
+      createdAt: expiredTime,
     };
     session.setActivityState("waiting");
-
-    // Simulate expiration check (text.ts:288-291)
-    const FIVE_MINUTES = 5 * 60 * 1000;
-    const expired = Date.now() - session.parseTextChoiceState.createdAt > FIVE_MINUTES;
-    expect(expired).toBe(true);
-
     session.clearParseTextChoice();
 
     expect(session.parseTextChoiceState).toBeNull();
@@ -511,32 +487,20 @@ describe("ClaudeSession - activityState error handling", () => {
   });
 
   test("concurrent button clicks: state remains consistent", () => {
-    // Setup: User clicks button, keyboard displayed, waiting state
-    session.choiceState = {
-      type: "single",
-      messageIds: [100],
-    };
+    session.choiceState = { type: "single", messageIds: [100] };
     session.setActivityState("waiting");
 
-    // Simulate: User clicks button again before first handler completes
-    const initialState = session.activityState;
-    expect(initialState).toBe("waiting");
+    expect(session.activityState).toBe("waiting");
 
-    // Rapid state transitions (simulating concurrent callbacks)
-    session.setActivityState("working"); // First click handler
-    session.setActivityState("working"); // Second click (should be idempotent)
+    session.setActivityState("working");
+    session.setActivityState("working");
 
-    // Verify: State consistent, no corruption
     expect(session.activityState).toBe("working");
-    expect(session.choiceState).not.toBeNull(); // Not cleared yet
+    expect(session.choiceState).not.toBeNull();
   });
 
   test("interrupt during waiting state: transitions cleanly", () => {
-    // Setup: Keyboard displayed, user in waiting state
-    session.choiceState = {
-      type: "single",
-      messageIds: [200],
-    };
+    session.choiceState = { type: "single", messageIds: [200] };
     session.pendingDirectInput = {
       type: "single",
       messageId: 200,
@@ -544,16 +508,10 @@ describe("ClaudeSession - activityState error handling", () => {
     };
     session.setActivityState("waiting");
 
-    expect(session.activityState).toBe("waiting");
-    expect(session.pendingDirectInput).not.toBeNull();
-
-    // Simulate: User sends interrupt message (text.ts handles with checkInterrupt)
-    // Interrupt should clear pending state and transition to working
     session.clearDirectInput();
     session.clearChoiceState();
     session.setActivityState("working");
 
-    // Verify: Clean transition, no orphaned state
     expect(session.activityState).toBe("working");
     expect(session.pendingDirectInput).toBeNull();
     expect(session.choiceState).toBeNull();
@@ -562,27 +520,22 @@ describe("ClaudeSession - activityState error handling", () => {
   test("finally block race condition: concurrent setActivityState calls", () => {
     session.setActivityState("working");
 
-    // Simulate race: Handler still running while finally block executes
     let finallyExecuted = false;
     let errorHandlerExecuted = false;
 
     try {
-      // Main handler sets working
       session.setActivityState("working");
       throw new Error("Simulated error");
     } catch {
-      // Error handler tries to set idle
       errorHandlerExecuted = true;
       session.setActivityState("idle");
     } finally {
-      // Finally block guard (session.ts:814-816 pattern)
       finallyExecuted = true;
       if (session.activityState !== "idle") {
         session.setActivityState("idle");
       }
     }
 
-    // Verify: Both handlers executed, state is idle, no corruption
     expect(errorHandlerExecuted).toBe(true);
     expect(finallyExecuted).toBe(true);
     expect(session.activityState).toBe("idle");
