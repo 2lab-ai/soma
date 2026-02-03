@@ -7,6 +7,26 @@ import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 
+type CallbackMessage = {
+  message_id?: number;
+  message_thread_id?: number;
+};
+
+function getCallbackMessage(ctx: Context): CallbackMessage | undefined {
+  return ctx.callbackQuery?.message as CallbackMessage | undefined;
+}
+
+async function removeKeyboardSilently(ctx: Context, context: string): Promise<void> {
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+  } catch (error) {
+    console.warn(
+      `Failed to remove keyboard (${context}, messageId: ${getCallbackMessage(ctx)?.message_id}):`,
+      error
+    );
+  }
+}
+
 async function sendMessageToClaude(
   ctx: Context,
   session: ClaudeSession,
@@ -42,8 +62,8 @@ async function sendMessageToClaude(
     for (const toolMsg of state.toolMessages) {
       try {
         await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
-      } catch {
-        // Tool message already deleted
+      } catch (error) {
+        console.warn(`Failed to delete tool message ${toolMsg.message_id}:`, error);
       }
     }
 
@@ -86,39 +106,32 @@ async function handleChoiceCallback(
   const expectedKey = TelegramChoiceBuilder.compressSessionKey(sessionKey);
 
   if (compressedKey !== expectedKey) {
-    await ctx.answerCallbackQuery({ text: "Selection expired. Please ask again." });
-    try {
-      await ctx.editMessageReplyMarkup({ reply_markup: undefined });
-    } catch {
-      // Message too old to edit
-    }
+    await ctx.answerCallbackQuery({
+      text: "Selection expired. Please ask again.",
+    });
+    await removeKeyboardSilently(ctx, "expired session");
     return;
   }
 
-  // Check if choiceState exists
   if (!session.choiceState) {
     await ctx.answerCallbackQuery({
       text: "Session expired. Type your choice directly.",
     });
-    try {
-      await ctx.editMessageReplyMarkup({ reply_markup: undefined });
-    } catch {
-      // Message too old to edit
-    }
+    await removeKeyboardSilently(ctx, "no choiceState");
     return;
   }
 
-  // Validate that callback is for the current choice message
-  const callbackMessageId = (
-    ctx.callbackQuery?.message as { message_id?: number } | undefined
-  )?.message_id;
-  if (callbackMessageId && session.choiceState.messageId !== callbackMessageId) {
+  // Validate callback is for current choice message
+  // Multi-form skips this: all questions belong to the same logical set
+  const callbackMessageId = getCallbackMessage(ctx)?.message_id;
+  const isSingleChoiceMismatch =
+    callbackMessageId &&
+    session.choiceState.type === "single" &&
+    session.choiceState.messageId !== callbackMessageId;
+
+  if (isSingleChoiceMismatch) {
     await ctx.answerCallbackQuery({ text: "This choice is outdated." });
-    try {
-      await ctx.editMessageReplyMarkup({ reply_markup: undefined });
-    } catch {
-      // Message too old to edit
-    }
+    await removeKeyboardSilently(ctx, "outdated single choice");
     return;
   }
 
@@ -226,11 +239,13 @@ async function handleChoiceCallback(
   session.clearChoiceState();
   session.setActivityState("working");
 
-  // Update message to show selection
   try {
     await ctx.editMessageText(`✓ ${selectedLabel}`);
   } catch (error) {
-    console.debug("Failed to edit callback message:", error);
+    console.warn(
+      `Failed to update choice message (messageId: ${getCallbackMessage(ctx)?.message_id}):`,
+      error
+    );
   }
 
   await ctx.answerCallbackQuery({
@@ -253,10 +268,7 @@ export async function handleCallback(ctx: Context): Promise<void> {
   const username = ctx.from?.username || "unknown";
   const chatId = ctx.chat?.id;
   const chatType = ctx.chat?.type as ChatType | undefined;
-  // Callback queries don't have message_thread_id directly, use from message if available
-  const threadId = (
-    ctx.callbackQuery?.message as { message_thread_id?: number } | undefined
-  )?.message_thread_id;
+  const threadId = getCallbackMessage(ctx)?.message_thread_id;
   const callbackData = ctx.callbackQuery?.data;
 
   if (!userId || !chatId || !callbackData) {
@@ -308,16 +320,22 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
   try {
     await ctx.editMessageText(`✓ ${selectedOption}`);
-  } catch {
-    // Message may already be edited
+  } catch (error) {
+    console.warn(
+      `Failed to update ask-user message (messageId: ${getCallbackMessage(ctx)?.message_id}):`,
+      error
+    );
   }
 
   await ctx.answerCallbackQuery({ text: `Selected: ${selectedOption.slice(0, 50)}` });
 
   try {
     unlinkSync(requestFile);
-  } catch {
-    // Request file already deleted
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== "ENOENT") {
+      console.error(`Failed to delete request file ${requestFile}:`, error);
+    }
   }
 
   const session = sessionManager.getSession(chatId, threadId);
