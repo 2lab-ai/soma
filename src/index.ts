@@ -41,6 +41,7 @@ import {
 import { initScheduler, startScheduler, stopScheduler } from "./scheduler";
 import { sessionManager } from "./session-manager";
 import { escapeHtml } from "./formatting";
+import { PendingFormStore } from "./stores/pending-form-store";
 
 // Create bot instance
 const bot = new Bot(TELEGRAM_TOKEN);
@@ -184,6 +185,13 @@ if (botInfo.username) {
 // Initialize and start cron scheduler
 initScheduler(bot.api);
 startScheduler();
+
+// Initialize pending form store and load persisted forms
+export const formStore = new PendingFormStore();
+(async () => {
+  const loaded = await formStore.loadForms();
+  console.log(`[Startup] Loaded ${loaded} pending forms`);
+})();
 
 // Check for pending restart message to update
 if (existsSync(RESTART_FILE)) {
