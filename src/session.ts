@@ -15,7 +15,6 @@ import {
   WORKING_DIR,
 } from "./config";
 import { formatToolStatus } from "./formatting";
-import { checkPendingAskUserRequests } from "./handlers/streaming";
 import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import { createSteeringMessage } from "./types";
@@ -228,7 +227,9 @@ export class ClaudeSession {
       return {};
     }
 
-    console.log(`[STEERING] Injecting ${steering.split("\n---\n").length} message(s) before ${toolName}`);
+    console.log(
+      `[STEERING] Injecting ${steering.split("\n---\n").length} message(s) before ${toolName}`
+    );
     return {
       systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
     };
@@ -375,7 +376,11 @@ export class ClaudeSession {
     this.parseTextChoiceState = null;
   }
 
-  addSteering(message: string, messageId: number, receivedDuringTool?: string): boolean {
+  addSteering(
+    message: string,
+    messageId: number,
+    receivedDuringTool?: string
+  ): boolean {
     let evicted = false;
     if (this.steeringBuffer.length >= this.MAX_STEERING_MESSAGES) {
       console.warn("[STEERING] Buffer full, evicting oldest message");
@@ -383,7 +388,11 @@ export class ClaudeSession {
       evicted = true;
     }
     // Use factory function for validation and creation
-    const steeringMessage = createSteeringMessage(message, messageId, receivedDuringTool);
+    const steeringMessage = createSteeringMessage(
+      message,
+      messageId,
+      receivedDuringTool
+    );
     this.steeringBuffer.push(steeringMessage);
     return evicted;
   }
@@ -392,8 +401,12 @@ export class ClaudeSession {
     if (!this.steeringBuffer.length) return null;
     const formatted = this.steeringBuffer
       .map((msg) => {
-        const ts = new Date(msg.timestamp).toLocaleTimeString("en-US", { hour12: false });
-        const tool = msg.receivedDuringTool ? ` (during ${msg.receivedDuringTool})` : "";
+        const ts = new Date(msg.timestamp).toLocaleTimeString("en-US", {
+          hour12: false,
+        });
+        const tool = msg.receivedDuringTool
+          ? ` (during ${msg.receivedDuringTool})`
+          : "";
         return `[${ts}${tool}] ${msg.content}`;
       })
       .join("\n---\n");
@@ -536,7 +549,6 @@ export class ClaudeSession {
     let currentSegmentText = "";
     let lastTextUpdate = 0;
     let queryCompleted = false;
-    let askUserTriggered = false;
     let lastCallUsage: TokenUsage | null = null;
 
     try {
@@ -631,23 +643,7 @@ export class ClaudeSession {
               this.currentTool = toolDisplay;
               this.lastTool = toolDisplay;
               console.log(`Tool: ${toolDisplay}`);
-
-              if (!toolName.startsWith("mcp__ask-user")) {
-                await statusCallback("tool", toolDisplay);
-              }
-
-              if (toolName.startsWith("mcp__ask-user") && ctx && chatId) {
-                await new Promise((r) => setTimeout(r, 200));
-                for (let attempt = 0; attempt < 3; attempt++) {
-                  const buttonsSent = await checkPendingAskUserRequests(ctx, chatId);
-                  if (buttonsSent) {
-                    askUserTriggered = true;
-                    this.setActivityState("waiting");
-                    break;
-                  }
-                  if (attempt < 2) await new Promise((r) => setTimeout(r, 100));
-                }
-              }
+              await statusCallback("tool", toolDisplay);
             }
 
             if (block.type === "text") {
@@ -664,8 +660,6 @@ export class ClaudeSession {
               }
             }
           }
-
-          if (askUserTriggered) break;
         }
 
         if (event.type === "result") {
@@ -809,11 +803,11 @@ export class ClaudeSession {
     } catch (error) {
       const isExpectedAbort =
         isAbortError(error) &&
-        (queryCompleted || askUserTriggered || this.stopRequested);
+        (queryCompleted || this.stopRequested);
 
       if (isExpectedAbort) {
         console.warn(
-          `Suppressed expected abort (completed: ${queryCompleted}, askUser: ${askUserTriggered})`
+          `Suppressed expected abort (completed: ${queryCompleted})`
         );
       } else {
         console.error("Error in query:", error);
@@ -834,11 +828,6 @@ export class ClaudeSession {
     this.lastActivity = new Date();
     this.lastError = null;
     this.lastErrorTime = null;
-
-    if (askUserTriggered) {
-      await statusCallback("done", "");
-      return "[Waiting for user selection]";
-    }
 
     if (currentSegmentText) {
       await statusCallback("segment_end", currentSegmentText, currentSegmentId);

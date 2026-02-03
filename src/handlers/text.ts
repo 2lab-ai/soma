@@ -328,7 +328,9 @@ export async function handleText(ctx: Context): Promise<void> {
     } else {
       // Multi-form not fully supported in text fallback yet
       // For now, treat as single-question text input
-      await ctx.reply("⚠️ Multi-form text fallback not yet supported. Please try again.");
+      await ctx.reply(
+        "⚠️ Multi-form text fallback not yet supported. Please try again."
+      );
       return;
     }
   }
@@ -365,18 +367,27 @@ export async function handleText(ctx: Context): Promise<void> {
         messageId,
         currentTool: session.currentTool,
         hasSteeringMessages: session.hasSteeringMessages(),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
 
       if (messageId === undefined) {
-        console.error("[STEERING] CRITICAL: Missing message_id, cannot buffer steering", {
-          ...steeringContext,
-          messagePreview: message.slice(0, 100)
-        });
+        console.error(
+          "[STEERING] CRITICAL: Missing message_id, cannot buffer steering",
+          {
+            ...steeringContext,
+            messagePreview: message.slice(0, 100),
+          }
+        );
         try {
-          await ctx.reply("⚠️ Unable to queue message (technical issue: missing message ID). Please try sending again.");
+          await ctx.reply(
+            "⚠️ Unable to queue message (technical issue: missing message ID). Please try sending again."
+          );
         } catch (replyError) {
-          console.error("Failed to notify user of missing message_id:", replyError, steeringContext);
+          console.error(
+            "Failed to notify user of missing message_id:",
+            replyError,
+            steeringContext
+          );
           // Final fallback: attempt reaction
           try {
             await ctx.react("❌");
@@ -385,19 +396,25 @@ export async function handleText(ctx: Context): Promise<void> {
         return;
       }
 
-      const evicted = session.addSteering(message, messageId, session.currentTool || undefined);
+      const evicted = session.addSteering(
+        message,
+        messageId,
+        session.currentTool || undefined
+      );
 
       if (evicted) {
         console.warn("[STEERING] Buffer full, oldest message evicted", {
           ...steeringContext,
-          bufferSize: 20
+          bufferSize: 20,
         });
 
         let notified = false;
 
         // Try reply first
         try {
-          await ctx.reply("⚠️ **Message Queue Full**\n\nYour oldest queued message was dropped because Claude is very busy. Please wait for current task to complete.");
+          await ctx.reply(
+            "⚠️ **Message Queue Full**\n\nYour oldest queued message was dropped because Claude is very busy. Please wait for current task to complete."
+          );
           notified = true;
         } catch (replyError) {
           console.error("Failed to notify via reply:", replyError, steeringContext);
@@ -407,15 +424,25 @@ export async function handleText(ctx: Context): Promise<void> {
             await ctx.react("🤔");
             notified = true;
           } catch (reactError) {
-            console.error("Failed to notify via reaction:", reactError, steeringContext);
+            console.error(
+              "Failed to notify via reaction:",
+              reactError,
+              steeringContext
+            );
           }
         }
 
         if (!notified) {
-          console.error("[STEERING] CRITICAL: Could not notify user of message eviction", steeringContext);
+          console.error(
+            "[STEERING] CRITICAL: Could not notify user of message eviction",
+            steeringContext
+          );
         }
       } else {
-        console.log("[STEERING] Buffered user message during execution", steeringContext);
+        console.log(
+          "[STEERING] Buffered user message during execution",
+          steeringContext
+        );
         try {
           await ctx.react("👌");
         } catch (error) {

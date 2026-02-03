@@ -12,9 +12,7 @@ const makeChoice = (overrides?: Partial<UserChoice>): UserChoice => ({
   ...overrides,
 });
 
-const makeMultiChoices = (
-  overrides?: Partial<UserChoices>
-): UserChoices => ({
+const makeMultiChoices = (overrides?: Partial<UserChoices>): UserChoices => ({
   type: "user_choices",
   questions: [
     {
@@ -220,9 +218,9 @@ describe("TelegramChoiceBuilder", () => {
     });
 
     test("decompressSessionKey always throws", () => {
-      expect(() =>
-        TelegramChoiceBuilder.decompressSessionKey("a1b2c3d4")
-      ).toThrow("not supported");
+      expect(() => TelegramChoiceBuilder.decompressSessionKey("a1b2c3d4")).toThrow(
+        "not supported"
+      );
     });
   });
 });

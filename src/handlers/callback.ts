@@ -302,66 +302,6 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
-  if (!callbackData.startsWith("askuser:")) {
-    await ctx.answerCallbackQuery();
-    return;
-  }
-
-  const parts = callbackData.split(":");
-  if (parts.length !== 3) {
-    await ctx.answerCallbackQuery({ text: "Invalid callback data" });
-    return;
-  }
-
-  const requestId = parts[1]!;
-  const optionIndex = parseInt(parts[2]!, 10);
-  const requestFile = `/tmp/ask-user-${requestId}.json`;
-
-  let requestData: { question: string; options: string[]; status: string };
-  try {
-    const file = Bun.file(requestFile);
-    requestData = JSON.parse(await file.text());
-  } catch (error) {
-    console.error(`Failed to load ask-user request ${requestId}:`, error);
-    await ctx.answerCallbackQuery({ text: "Request expired or invalid" });
-    return;
-  }
-
-  if (optionIndex < 0 || optionIndex >= requestData.options.length) {
-    await ctx.answerCallbackQuery({ text: "Invalid option" });
-    return;
-  }
-
-  const selectedOption = requestData.options[optionIndex]!;
-
-  try {
-    await ctx.editMessageText(`✓ ${selectedOption}`);
-  } catch (error) {
-    console.warn(
-      `Failed to update ask-user message (messageId: ${getCallbackMessage(ctx)?.message_id}):`,
-      error
-    );
-  }
-
-  await ctx.answerCallbackQuery({ text: `Selected: ${selectedOption.slice(0, 50)}` });
-
-  try {
-    unlinkSync(requestFile);
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code !== "ENOENT") {
-      console.error(`Failed to delete request file ${requestFile}:`, error);
-    }
-  }
-
-  const session = sessionManager.getSession(chatId, threadId);
-  await sendMessageToClaude(
-    ctx,
-    session,
-    selectedOption,
-    userId,
-    username,
-    chatId,
-    "CALLBACK"
-  );
+  // Unknown callback format
+  await ctx.answerCallbackQuery();
 }

@@ -38,7 +38,9 @@ describe("ClaudeSession - steering", () => {
 
     const result = session.consumeSteering();
 
-    expect(result).toMatch(/^\[\d{2}:\d{2}:\d{2}\] first\n---\n\[\d{2}:\d{2}:\d{2}\] second\n---\n\[\d{2}:\d{2}:\d{2}\] third$/);
+    expect(result).toMatch(
+      /^\[\d{2}:\d{2}:\d{2}\] first\n---\n\[\d{2}:\d{2}:\d{2}\] second\n---\n\[\d{2}:\d{2}:\d{2}\] third$/
+    );
     expect(session.hasSteeringMessages()).toBe(false);
   });
 
@@ -83,7 +85,9 @@ describe("ClaudeSession - steering", () => {
 
     // getPendingSteering retrieves and clears
     const pending = session.getPendingSteering();
-    expect(pending).toMatch(/^\[\d{2}:\d{2}:\d{2}\] pending 1\n---\n\[\d{2}:\d{2}:\d{2}\] pending 2$/);
+    expect(pending).toMatch(
+      /^\[\d{2}:\d{2}:\d{2}\] pending 1\n---\n\[\d{2}:\d{2}:\d{2}\] pending 2$/
+    );
     expect(session.hasSteeringMessages()).toBe(false);
   });
 
@@ -97,7 +101,9 @@ describe("ClaudeSession - steering", () => {
 
     // Simulating PreToolUse consuming the steering
     const consumed = session.consumeSteering();
-    expect(consumed).toMatch(/^\[\d{2}:\d{2}:\d{2}\] during processing 1\n---\n\[\d{2}:\d{2}:\d{2}\] during processing 2$/);
+    expect(consumed).toMatch(
+      /^\[\d{2}:\d{2}:\d{2}\] during processing 1\n---\n\[\d{2}:\d{2}:\d{2}\] during processing 2$/
+    );
 
     stopProcessing();
     // Nothing left after consumption
@@ -119,7 +125,9 @@ describe("ClaudeSession - steering", () => {
     // Both messages should be kept
     expect(session.hasSteeringMessages()).toBe(true);
     const pending = session.getPendingSteering();
-    expect(pending).toMatch(/^\[\d{2}:\d{2}:\d{2}\] msg 1\n---\n\[\d{2}:\d{2}:\d{2}\] msg 2$/);
+    expect(pending).toMatch(
+      /^\[\d{2}:\d{2}:\d{2}\] msg 1\n---\n\[\d{2}:\d{2}:\d{2}\] msg 2$/
+    );
   });
 
   test("addSteering evicts oldest when MAX_STEERING_MESSAGES reached", () => {
@@ -154,7 +162,9 @@ describe("ClaudeSession - steering", () => {
     const result = session.consumeSteering();
 
     expect(result).toMatch(/\(during Bash\)/);
-    expect(result).toMatch(/^\[\d{2}:\d{2}:\d{2} \(during Bash\)\] message during tool$/);
+    expect(result).toMatch(
+      /^\[\d{2}:\d{2}:\d{2} \(during Bash\)\] message during tool$/
+    );
   });
 
   test("consumeSteering handles messages with and without receivedDuringTool", () => {
@@ -545,7 +555,9 @@ describe("ClaudeSession - activityState error handling", () => {
     session.choiceState = { type: "single", messageIds: [100] };
     session.setActivityState("waiting");
 
-    expect(Date.now() - session.pendingDirectInput.createdAt > 5 * 60 * 1000).toBe(true);
+    expect(Date.now() - session.pendingDirectInput.createdAt > 5 * 60 * 1000).toBe(
+      true
+    );
 
     session.clearDirectInput();
     session.clearChoiceState();

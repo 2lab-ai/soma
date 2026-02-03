@@ -15,7 +15,7 @@ Claude Telegram Bot은 **Anthropic Claude Code를 Telegram에서 원격으로 �
 - 🔄 Session persistence: 재시작 후에도 대화 이어가기 가능
 - 📨 Message queuing: Claude 실행 중에도 메시지 큐잉
 - 🧠 Extended thinking: "think", "reason" 키워드로 추론 과정 표시
-- 🔘 Interactive buttons: MCP ask_user 툴로 인라인 버튼 제공
+- 🔘 Interactive buttons: UIAskUserQuestion JSON choice system
 - 🔐 Defense-in-depth security: 6단계 보안 계층
 
 ### Tech Stack
@@ -180,7 +180,7 @@ export const SAFETY_PROMPT = buildSafetyPrompt(ALLOWED_PATHS);
 - **Extended thinking**: Dynamic token budget (0, 10K, 50K) based on keywords
 - **Abort control**: Graceful cancellation with `AbortController`
 - **Safety checks**: Real-time validation of Bash commands and file paths
-- **MCP integration**: ask_user tool with inline button support
+- **Choice system**: UIAskUserQuestion JSON format with inline keyboards
 - **Retry logic**: Auto-retry on Claude Code crashes
 
 **State Machine**:
@@ -336,24 +336,40 @@ interface RateLimitBucket {
 }
 ```
 
-### 3.8 Built-in MCP Server - ask_user
-**Location**: `ask_user_mcp/server.ts`
+### 3.8 UIAskUserQuestion - Interactive Choice System
+**Implementation**: `src/types/user-choice.ts`, `src/utils/telegram-choice-builder.ts`, `src/handlers/callback.ts`
 
-**Purpose**: Let Claude present options as Telegram inline keyboard buttons
+**Purpose**: Let Claude present options as Telegram inline keyboard buttons via JSON emission
 
 **How it works**:
-1. Claude calls `mcp__ask-user__ask_question` tool
-2. MCP server writes question to `/tmp/ask_user_pending_{chatId}.json`
-3. `streaming.ts` detects file and sends inline keyboard
-4. User clicks button → `callback.ts` handles response
-5. Response sent back to Claude in next message
+1. Claude emits JSON choice object in response (see `UI_ASKUSER_INSTRUCTIONS` in `config.ts`)
+2. Text handler detects JSON, parses into `UserChoice` or `UserChoices` type
+3. `TelegramChoiceBuilder` creates inline keyboard with callback data format `c:{sessionKey}:{optionId}`
+4. Bot sends keyboard to user and transitions to "waiting" activity state
+5. User clicks button → `callback.ts` handles via `handleChoiceCallback()`
+6. Response sent to Claude as new message with "CALLBACK" source
 
-**JSON Format**:
+**JSON Format** (Single Choice):
 ```json
 {
-  "chat_id": 123456789,
-  "question": "Choose an option:",
-  "options": ["Option A", "Option B", "Option C"]
+  "type": "user_choice",
+  "question": "Which approach do you prefer?",
+  "choices": [
+    {"id": "a", "label": "Option A", "description": "Details about A"},
+    {"id": "b", "label": "Option B", "description": "Details about B"}
+  ]
+}
+```
+
+**JSON Format** (Multi-Question):
+```json
+{
+  "type": "user_choices",
+  "title": "Configuration",
+  "questions": [
+    {"id": "q1", "question": "Database?", "choices": [...]},
+    {"id": "q2", "question": "Caching?", "choices": [...]}
+  ]
 }
 ```
 
@@ -446,21 +462,29 @@ pdftotext -layout document.pdf - # Streams to stdout
 - Total ZIP content: 1MB
 
 ### 4.6 `handlers/callback.ts` - Inline Button Handler
-**Purpose**: Handle ask_user button clicks
+**Purpose**: Handle UIAskUserQuestion inline keyboard button clicks
+
+**Callback Data Format**: `c:{compressedSessionKey}:{optionId}` or `c:{compressedSessionKey}:{questionId}:{optionId}`
 
 **Flow**:
-1. User clicks button
-2. Answer callback query (remove loading state)
-3. Delete inline keyboard message
-4. Send user's selection back to Claude
-5. Process response with streaming
+1. User clicks button (callback data format: `c:...`)
+2. `handleChoiceCallback()` processes:
+   - Validates authorization
+   - Looks up pending choice in activity state
+   - Updates selected option
+   - Transitions activity state if form complete
+3. Answer callback query (remove loading state)
+4. Update message to show selection
+5. If form complete: Send selection back to Claude
+6. Process response with streaming
 
 **Example**:
 ```
-Claude: "Choose database: PostgreSQL | MySQL | MongoDB"
-[Inline buttons appear]
+Claude: [Emits JSON user_choice]
+Bot: "Choose database:" [PostgreSQL] [MySQL] [MongoDB]
 User clicks "PostgreSQL"
-→ Message: "PostgreSQL"
+→ Activity state updated with selection
+→ Message updated: "✓ PostgreSQL"
 → Claude receives and continues
 ```
 
@@ -679,15 +703,6 @@ export const MCP_SERVERS: Record<string, McpServerConfig> = {
 };
 ```
 
-**Built-in Server**:
-```typescript
-"ask-user": {
-  command: "bun",
-  args: ["run", "./ask_user_mcp/server.ts"],
-  env: { TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID }
-}
-```
-
 ---
 
 ## 7. Runtime Behavior
@@ -747,7 +762,6 @@ Conversation continues
 | `/tmp/soma-restart.json` | Restart message update | JSON |
 | `/tmp/soma-audit.log` | Audit log | Text/JSON |
 | `/tmp/telegram-bot/*.{jpg,png,pdf}` | Downloaded media | Binary |
-| `/tmp/ask_user_pending_{chatId}.json` | Pending button questions | JSON |
 
 ---
 
@@ -922,7 +936,7 @@ bun run typecheck
 - [ ] Session persistence (`/new`, `/resume`)
 - [ ] Interrupt mechanism (`!` prefix, `/stop`)
 - [ ] Extended thinking keywords
-- [ ] ask_user inline buttons
+- [ ] UIAskUserQuestion inline keyboards (JSON choice format)
 - [ ] Bot restart (`/restart`)
 
 ### 11.3 Debugging Tips
@@ -941,12 +955,6 @@ tail -f /tmp/soma-audit.log
 **Check session file**:
 ```bash
 cat /tmp/soma-session.json
-```
-
-**Check pending ask_user**:
-```bash
-ls -la /tmp/ask_user_pending_*.json
-cat /tmp/ask_user_pending_123456789.json
 ```
 
 **Test rate limiter**:
@@ -1084,7 +1092,7 @@ isPathAllowed("/etc/passwd")   // Should be false
 - Streaming responses
 - Defense-in-depth security
 - MCP integration
-- ask_user inline buttons
+- UIAskUserQuestion inline keyboards (JSON choice system)
 - Extended thinking support
 - macOS LaunchAgent support
 - Audit logging
@@ -1100,7 +1108,7 @@ isPathAllowed("/etc/passwd")   // Should be false
 | **Session** | Persistent conversation context with Claude |
 | **Streaming** | Real-time response updates as Claude generates |
 | **Thinking** | Extended reasoning mode with token budget |
-| **ask_user** | MCP tool for presenting options as buttons |
+| **UIAskUserQuestion** | JSON choice system for interactive inline keyboards |
 | **Sequentialize** | Process messages one at a time per chat |
 | **Token Bucket** | Rate limiting algorithm |
 | **Bypass Mode** | No permission prompts for tool execution |

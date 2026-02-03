@@ -83,7 +83,7 @@ Each message type has a dedicated async handler:
 - **`voice.ts`** - Voice→text via OpenAI, then same flow as text
 - **`photo.ts`** - Image analysis with media group buffering (1s timeout for albums)
 - **`document.ts`** - PDF extraction (pdftotext CLI) and text file processing
-- **`callback.ts`** - Inline keyboard button handling for ask_user MCP
+- **`callback.ts`** - Inline keyboard button handling for UIAskUserQuestion choice system
 - **`streaming.ts`** - Shared `StreamingState` and status callback factory
 
 ### Security Layers
