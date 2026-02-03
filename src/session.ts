@@ -18,7 +18,8 @@ import { formatToolStatus } from "./formatting";
 import { checkPendingAskUserRequests } from "./handlers/streaming";
 import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
-import type { SessionData, StatusCallback, TokenUsage } from "./types";
+import { createSteeringMessage } from "./types";
+import type { SessionData, StatusCallback, SteeringMessage, TokenUsage } from "./types";
 import type {
   ChoiceState,
   DirectInputState,
@@ -206,8 +207,8 @@ export class ClaudeSession {
   private stopRequested = false;
   private _isProcessing = false;
   private _wasInterruptedByNewMessage = false;
-  private steeringBuffer: string[] = [];
-  private steeringMessageIds: number[] = [];
+  private readonly MAX_STEERING_MESSAGES = 20;
+  private steeringBuffer: SteeringMessage[] = [];
 
   choiceState: ChoiceState | null = null;
   pendingDirectInput: DirectInputState | null = null;
@@ -374,17 +375,30 @@ export class ClaudeSession {
     this.parseTextChoiceState = null;
   }
 
-  addSteering(message: string, messageId?: number): void {
-    this.steeringBuffer.push(message);
-    if (messageId) this.steeringMessageIds.push(messageId);
+  addSteering(message: string, messageId: number, receivedDuringTool?: string): boolean {
+    let evicted = false;
+    if (this.steeringBuffer.length >= this.MAX_STEERING_MESSAGES) {
+      console.warn("[STEERING] Buffer full, evicting oldest message");
+      this.steeringBuffer.shift();
+      evicted = true;
+    }
+    // Use factory function for validation and creation
+    const steeringMessage = createSteeringMessage(message, messageId, receivedDuringTool);
+    this.steeringBuffer.push(steeringMessage);
+    return evicted;
   }
 
   consumeSteering(): string | null {
     if (!this.steeringBuffer.length) return null;
-    const combined = this.steeringBuffer.join("\n---\n");
+    const formatted = this.steeringBuffer
+      .map((msg) => {
+        const ts = new Date(msg.timestamp).toLocaleTimeString("en-US", { hour12: false });
+        const tool = msg.receivedDuringTool ? ` (during ${msg.receivedDuringTool})` : "";
+        return `[${ts}${tool}] ${msg.content}`;
+      })
+      .join("\n---\n");
     this.steeringBuffer = [];
-    this.steeringMessageIds = [];
-    return combined;
+    return formatted;
   }
 
   hasSteeringMessages(): boolean {
@@ -406,11 +420,8 @@ export class ClaudeSession {
   }
 
   getPendingSteering(): string | null {
-    if (!this.steeringBuffer.length) return null;
-    const combined = this.steeringBuffer.join("\n---\n");
-    this.steeringBuffer = [];
-    this.steeringMessageIds = [];
-    return combined;
+    // Alias for consumeSteering - identical functionality
+    return this.consumeSteering();
   }
 
   async stop(): Promise<"stopped" | "pending" | false> {
@@ -850,6 +861,7 @@ export class ClaudeSession {
     this.totalCacheReadTokens = 0;
     this.totalCacheCreateTokens = 0;
     this.totalQueries = 0;
+    this.steeringBuffer = [];
     this.resetWarningFlags();
     console.log("Session cleared");
   }
@@ -883,6 +895,7 @@ export class ClaudeSession {
       this.contextWindowUsage = data.contextWindowUsage || null;
     if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0)
       this.contextWindowSize = data.contextWindowSize;
+    this.steeringBuffer = [];
   }
 
   private accumulateUsage(u: TokenUsage): void {
