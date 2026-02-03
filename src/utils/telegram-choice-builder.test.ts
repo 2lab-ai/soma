@@ -161,6 +161,240 @@ describe("TelegramChoiceBuilder", () => {
     });
   });
 
+  describe("buildMultiFormKeyboard", () => {
+    test("shows first question options when no selections", () => {
+      const choices = makeMultiChoices();
+      const keyboard = TelegramChoiceBuilder.buildMultiFormKeyboard(
+        choices,
+        "session-123",
+        "form-abc",
+        {}
+      );
+
+      const inlineKeyboard = (keyboard as any).inline_keyboard;
+
+      // Should show options for first question (q1)
+      expect(inlineKeyboard[0][0].text).toBe("Option A");
+      expect(inlineKeyboard[0][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:q1:a$/);
+      expect(inlineKeyboard[1][0].text).toBe("Option B");
+      expect(inlineKeyboard[1][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:q1:b$/);
+
+      // Should have direct input button
+      expect(inlineKeyboard[2][0].text).toBe("✏️ Direct input");
+      expect(inlineKeyboard[2][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:q1:__direct$/);
+    });
+
+    test("shows second question after first answered", () => {
+      const choices = makeMultiChoices();
+      const selections = {
+        q1: { choiceId: "a", label: "Option A" },
+      };
+
+      const keyboard = TelegramChoiceBuilder.buildMultiFormKeyboard(
+        choices,
+        "session-123",
+        "form-abc",
+        selections
+      );
+
+      const inlineKeyboard = (keyboard as any).inline_keyboard;
+
+      // Should show options for second question (q2)
+      expect(inlineKeyboard[0][0].text).toBe("Option C");
+      expect(inlineKeyboard[0][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:q2:c$/);
+      expect(inlineKeyboard[1][0].text).toBe("Option D");
+
+      // Should have change button for q1
+      const changeButton = inlineKeyboard.find((row: any) =>
+        row[0]?.text?.includes("🔄 Change")
+      );
+      expect(changeButton).toBeDefined();
+      expect(changeButton[0].text).toContain("Option A");
+    });
+
+    test("shows submit/reset when all answered", () => {
+      const choices = makeMultiChoices();
+      const selections = {
+        q1: { choiceId: "a", label: "Option A" },
+        q2: { choiceId: "c", label: "Option C" },
+      };
+
+      const keyboard = TelegramChoiceBuilder.buildMultiFormKeyboard(
+        choices,
+        "session-123",
+        "form-abc",
+        selections
+      );
+
+      const inlineKeyboard = (keyboard as any).inline_keyboard;
+
+      // Should show submit button
+      expect(inlineKeyboard[0][0].text).toBe("🚀 Submit");
+      expect(inlineKeyboard[0][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:__submit$/);
+
+      // Should show reset button
+      expect(inlineKeyboard[1][0].text).toBe("🗑️ Reset");
+      expect(inlineKeyboard[1][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:__reset$/);
+    });
+
+    test("throws when choices is empty", () => {
+      const choices = makeMultiChoices({ questions: [] });
+
+      expect(() =>
+        TelegramChoiceBuilder.buildMultiFormKeyboard(
+          choices,
+          "session-123",
+          "form-abc",
+          {}
+        )
+      ).toThrow("at least one question");
+    });
+
+    test("handles 3 questions with partial completion", () => {
+      const choices: UserChoices = {
+        type: "user_choices",
+        questions: [
+          {
+            id: "q1",
+            question: "Question 1",
+            choices: [{ id: "a", label: "A" }],
+          },
+          {
+            id: "q2",
+            question: "Question 2",
+            choices: [{ id: "b", label: "B" }],
+          },
+          {
+            id: "q3",
+            question: "Question 3",
+            choices: [{ id: "c", label: "C" }],
+          },
+        ],
+      };
+
+      const selections = {
+        q1: { choiceId: "a", label: "A" },
+      };
+
+      const keyboard = TelegramChoiceBuilder.buildMultiFormKeyboard(
+        choices,
+        "session-123",
+        "form-abc",
+        selections
+      );
+
+      const inlineKeyboard = (keyboard as any).inline_keyboard;
+
+      // Should show q2 options (first unanswered)
+      expect(inlineKeyboard[0][0].text).toBe("B");
+
+      // Should have change button for q1
+      const changeButton = inlineKeyboard.find((row: any) =>
+        row[0]?.text?.includes("🔄 Change")
+      );
+      expect(changeButton).toBeDefined();
+    });
+
+    test("callback data stays under 64 bytes", () => {
+      const longFormId = "form-with-very-long-identifier";
+      const choices = makeMultiChoices();
+
+      const keyboard = TelegramChoiceBuilder.buildMultiFormKeyboard(
+        choices,
+        "session-123",
+        longFormId,
+        {}
+      );
+
+      const inlineKeyboard = (keyboard as any).inline_keyboard;
+
+      // Check all callback data lengths
+      for (const row of inlineKeyboard) {
+        for (const button of row) {
+          expect(button.callback_data.length).toBeLessThan(64);
+        }
+      }
+    });
+
+    test("truncates long labels in change buttons", () => {
+      const longLabel = "This is a very long option label that exceeds thirty characters";
+      const choices: UserChoices = {
+        type: "user_choices",
+        questions: [
+          {
+            id: "q1",
+            question: "Question 1",
+            choices: [{ id: "a", label: longLabel }],
+          },
+          {
+            id: "q2",
+            question: "Question 2",
+            choices: [{ id: "b", label: "B" }],
+          },
+        ],
+      };
+
+      const selections = {
+        q1: { choiceId: "a", label: longLabel },
+      };
+
+      const keyboard = TelegramChoiceBuilder.buildMultiFormKeyboard(
+        choices,
+        "session-123",
+        "form-abc",
+        selections
+      );
+
+      const inlineKeyboard = (keyboard as any).inline_keyboard;
+
+      // Find change button
+      const changeButton = inlineKeyboard.find((row: any) =>
+        row[0]?.text?.includes("🔄 Change")
+      );
+
+      // Change button text should be truncated
+      expect(changeButton[0].text).toContain("...");
+      expect(changeButton[0].text.length).toBeLessThanOrEqual(45); // "🔄 Change \"" + 30 + "\""
+    });
+
+    test("limits change buttons to 3 max", () => {
+      const choices: UserChoices = {
+        type: "user_choices",
+        questions: [
+          { id: "q1", question: "Q1", choices: [{ id: "a", label: "A" }] },
+          { id: "q2", question: "Q2", choices: [{ id: "b", label: "B" }] },
+          { id: "q3", question: "Q3", choices: [{ id: "c", label: "C" }] },
+          { id: "q4", question: "Q4", choices: [{ id: "d", label: "D" }] },
+          { id: "q5", question: "Q5", choices: [{ id: "e", label: "E" }] },
+        ],
+      };
+
+      // Answer first 4 questions
+      const selections = {
+        q1: { choiceId: "a", label: "A" },
+        q2: { choiceId: "b", label: "B" },
+        q3: { choiceId: "c", label: "C" },
+        q4: { choiceId: "d", label: "D" },
+      };
+
+      const keyboard = TelegramChoiceBuilder.buildMultiFormKeyboard(
+        choices,
+        "session-123",
+        "form-abc",
+        selections
+      );
+
+      const inlineKeyboard = (keyboard as any).inline_keyboard;
+
+      // Count change buttons
+      const changeButtons = inlineKeyboard.filter((row: any) =>
+        row[0]?.text?.includes("🔄 Change")
+      );
+
+      expect(changeButtons.length).toBeLessThanOrEqual(3);
+    });
+  });
+
   describe("helpers", () => {
     test("sanitizeId removes special characters", () => {
       const choice = makeChoice({
