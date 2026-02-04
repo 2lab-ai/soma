@@ -241,6 +241,17 @@ export class ClaudeSession {
   ): Promise<Record<string, unknown>> => {
     const toolName = (input as { tool_name?: string }).tool_name || "unknown";
     console.log(`[HOOK] PreToolUse fired for: ${toolName}`);
+    // Steering injection moved to PostToolUse for immediate processing
+    return {};
+  };
+
+  private readonly postToolUseHook = async (
+    input: unknown,
+    _toolUseId: unknown,
+    _context: unknown
+  ): Promise<Record<string, unknown>> => {
+    const toolName = (input as { tool_name?: string }).tool_name || "unknown";
+    console.log(`[HOOK] PostToolUse fired for: ${toolName}`);
 
     const steering = this.consumeSteering();
     if (!steering) {
@@ -248,7 +259,7 @@ export class ClaudeSession {
     }
 
     console.log(
-      `[STEERING] Injecting ${steering.split("\n---\n").length} message(s) before ${toolName}`
+      `[STEERING] Injecting ${steering.split("\n---\n").length} message(s) after ${toolName}`
     );
     return {
       systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
@@ -587,6 +598,11 @@ export class ClaudeSession {
         PreToolUse: [
           {
             hooks: [this.preToolUseHook],
+          },
+        ],
+        PostToolUse: [
+          {
+            hooks: [this.postToolUseHook],
           },
         ],
       },
