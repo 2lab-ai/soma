@@ -104,6 +104,16 @@ bot.use(
     if (ctx.callbackQuery) {
       return undefined;
     }
+    // STEERING FIX: If session is processing, bypass queue to enable steering
+    // The text handler will buffer this as steering instead of treating as new query
+    const chatId = ctx.chat?.id;
+    if (chatId && ctx.message?.text) {
+      const session = sessionManager.getSession(chatId);
+      if (session.isProcessing) {
+        console.log(`[SEQUENTIALIZE] Bypassing queue for steering (chat ${chatId})`);
+        return undefined;
+      }
+    }
     // Other messages are sequentialized per chat
     return ctx.chat?.id.toString();
   })
