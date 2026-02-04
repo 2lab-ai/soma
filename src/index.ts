@@ -32,6 +32,7 @@ import {
   handleCron,
   handleSessions,
   handleModel,
+  handleSkills,
   handleText,
   setBotUsername,
   handleVoice,
@@ -133,6 +134,7 @@ bot.command("status", handleStatus);
 bot.command("stats", handleStats);
 bot.command("context", handleContext);
 bot.command("model", handleModel);
+bot.command("skills", handleSkills);
 bot.command("help", handleHelp);
 bot.command("resume", handleResume);
 bot.command("restart", handleRestart);
