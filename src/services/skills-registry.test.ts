@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { skillsRegistry } from "./skills-registry";
+import { skillsRegistry, SkillsRegistryError } from "./skills-registry";
 import { join } from "path";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
@@ -39,12 +39,19 @@ describe("SkillsRegistry", () => {
     expect(skills).toEqual(["do-work", "new-task"]);
   });
 
-  it("should handle corrupt JSON gracefully", async () => {
+  it("should throw SkillsRegistryError on corrupt JSON", async () => {
     // Write invalid JSON
     writeFileSync(TEST_REGISTRY_PATH, "{ invalid json ]");
 
-    const skills = await skillsRegistry.load();
-    expect(skills).toEqual(["do-work", "new-task"]);
+    await expect(skillsRegistry.load()).rejects.toThrow(SkillsRegistryError);
+
+    try {
+      await skillsRegistry.load();
+    } catch (e) {
+      const error = e as SkillsRegistryError;
+      expect(error.code).toBe("CORRUPT_FILE");
+      expect(error.userMessage).toContain("corrupted");
+    }
   });
 
   it("should filter out invalid skill names on load", async () => {
@@ -110,8 +117,8 @@ describe("SkillsRegistry", () => {
   it("should add skill if not present and valid", async () => {
     await skillsRegistry.save(["do-work"]);
 
-    const added = await skillsRegistry.add("new-task");
-    expect(added).toBe(true);
+    const result = await skillsRegistry.add("new-task");
+    expect(result.success).toBe(true);
 
     const skills = await skillsRegistry.load();
     expect(skills).toContain("do-work");
@@ -121,8 +128,12 @@ describe("SkillsRegistry", () => {
   it("should not add skill if already present", async () => {
     await skillsRegistry.save(["do-work"]);
 
-    const added = await skillsRegistry.add("do-work");
-    expect(added).toBe(false);
+    const result = await skillsRegistry.add("do-work");
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("already_exists");
+      expect(result.message).toContain("already in the registry");
+    }
 
     const skills = await skillsRegistry.load();
     expect(skills).toEqual(["do-work"]);
@@ -131,8 +142,12 @@ describe("SkillsRegistry", () => {
   it("should not add skill if it doesn't exist", async () => {
     await skillsRegistry.save(["do-work"]);
 
-    const added = await skillsRegistry.add("nonexistent-skill");
-    expect(added).toBe(false);
+    const result = await skillsRegistry.add("nonexistent-skill");
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("not_found");
+      expect(result.message).toContain("not found");
+    }
 
     const skills = await skillsRegistry.load();
     expect(skills).toEqual(["do-work"]);
@@ -141,18 +156,21 @@ describe("SkillsRegistry", () => {
   it("should remove skill if present", async () => {
     await skillsRegistry.save(["do-work", "new-task"]);
 
-    const removed = await skillsRegistry.remove("do-work");
-    expect(removed).toBe(true);
+    const result = await skillsRegistry.remove("do-work");
+    expect(result.success).toBe(true);
 
     const skills = await skillsRegistry.load();
     expect(skills).toEqual(["new-task"]);
   });
 
-  it("should not error when removing non-existent skill", async () => {
+  it("should return failure when removing non-existent skill", async () => {
     await skillsRegistry.save(["do-work"]);
 
-    const removed = await skillsRegistry.remove("nonexistent-skill");
-    expect(removed).toBe(false);
+    const result = await skillsRegistry.remove("nonexistent-skill");
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("not_in_registry");
+    }
 
     const skills = await skillsRegistry.load();
     expect(skills).toEqual(["do-work"]);
@@ -167,13 +185,20 @@ describe("SkillsRegistry", () => {
     expect(skills).toEqual(["do-work", "new-task"]);
   });
 
-  it("should handle large file size gracefully", async () => {
+  it("should throw on large file size", async () => {
     // Write a file larger than MAX_REGISTRY_SIZE (10KB)
     const largeArray = new Array(10000).fill("skill-name");
     writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(largeArray));
 
-    const skills = await skillsRegistry.load();
-    expect(skills).toEqual(["do-work", "new-task"]);
+    await expect(skillsRegistry.load()).rejects.toThrow(SkillsRegistryError);
+
+    try {
+      await skillsRegistry.load();
+    } catch (e) {
+      const error = e as SkillsRegistryError;
+      expect(error.code).toBe("SIZE_EXCEEDED");
+      expect(error.userMessage).toContain("too large");
+    }
   });
 
   it("should cache scan results", async () => {
@@ -184,11 +209,18 @@ describe("SkillsRegistry", () => {
     expect(scan1).toEqual(scan2);
   });
 
-  it("should handle non-array JSON gracefully", async () => {
+  it("should throw on non-array JSON", async () => {
     writeFileSync(TEST_REGISTRY_PATH, JSON.stringify({ skills: ["do-work"] }));
 
-    const skills = await skillsRegistry.load();
-    expect(skills).toEqual(["do-work", "new-task"]);
+    await expect(skillsRegistry.load()).rejects.toThrow(SkillsRegistryError);
+
+    try {
+      await skillsRegistry.load();
+    } catch (e) {
+      const error = e as SkillsRegistryError;
+      expect(error.code).toBe("CORRUPT_FILE");
+      expect(error.userMessage).toContain("invalid format");
+    }
   });
 
   it("should handle empty array", async () => {
