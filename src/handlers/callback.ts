@@ -1,4 +1,5 @@
 import type { Context } from "grammy";
+import { InlineKeyboard } from "grammy";
 import { unlinkSync } from "fs";
 import { sessionManager } from "../session-manager";
 import type { ClaudeSession } from "../session";
@@ -7,6 +8,16 @@ import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback, cleanupToolMessages } from "./streaming";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import { isAbortError } from "../utils/error-classification";
+import {
+  getCurrentConfig,
+  updateContextModel,
+  MODEL_DISPLAY_NAMES,
+  AVAILABLE_MODELS,
+  REASONING_TOKENS,
+  type ConfigContext,
+  type ModelId,
+  type ReasoningLevel,
+} from "../model-config";
 
 type CallbackMessage = {
   message_id?: number;
@@ -279,6 +290,122 @@ async function handleChoiceCallback(
   );
 }
 
+/**
+ * Handle model configuration callbacks
+ * Format: model:context:general | model:model:general:opus | model:reasoning:general:high | model:save:general:opus:high
+ */
+async function handleModelCallback(ctx: Context, callbackData: string): Promise<void> {
+  try {
+    const parts = callbackData.split(":");
+    const action = parts[1];
+
+    if (action === "context") {
+      // Context selection - show model selection
+      const context = parts[2] as ConfigContext;
+      const config = getCurrentConfig();
+      const currentModel = config.contexts[context]?.model || config.defaults.model;
+
+      const keyboard = new InlineKeyboard();
+      for (const modelId of AVAILABLE_MODELS) {
+        const displayName = MODEL_DISPLAY_NAMES[modelId];
+        const current = modelId === currentModel ? " ✓" : "";
+        keyboard.text(`${displayName}${current}`, `model:model:${context}:${modelId.split("-")[1]}`).row();
+      }
+      keyboard.text("« Back", "model:back");
+
+      await ctx.editMessageText(
+        `🤖 <b>Select Model for ${context.charAt(0).toUpperCase() + context.slice(1)}</b>\n\n` +
+          `Current: ${MODEL_DISPLAY_NAMES[currentModel]}`,
+        {
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+        }
+      );
+    } else if (action === "model") {
+      // Model selection - show reasoning selection
+      const context = parts[2] as ConfigContext;
+      const modelShort = parts[3] || ""; // "opus", "sonnet", "haiku"
+      const modelId = AVAILABLE_MODELS.find(m => m.includes(modelShort))!;
+      const config = getCurrentConfig();
+      const currentReasoning = config.contexts[context]?.reasoning || config.defaults.reasoning;
+
+      const keyboard = new InlineKeyboard();
+      const reasoningLevels: ReasoningLevel[] = ["none", "minimal", "medium", "high", "xhigh"];
+      for (const level of reasoningLevels) {
+        const tokens = REASONING_TOKENS[level];
+        const current = level === currentReasoning ? " ✓" : "";
+        const display = level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+        keyboard.text(
+          `${display} (${tokens.toLocaleString()} tokens)${current}`,
+          `model:save:${context}:${modelShort}:${level}`
+        ).row();
+      }
+      keyboard.text("« Back", `model:context:${context}`);
+
+      await ctx.editMessageText(
+        `🧠 <b>Select Reasoning Budget</b>\n\n` +
+          `Model: ${MODEL_DISPLAY_NAMES[modelId]}\n` +
+          `Context: ${context.charAt(0).toUpperCase() + context.slice(1)}`,
+        {
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+        }
+      );
+    } else if (action === "save") {
+      // Save configuration
+      const context = parts[2] as ConfigContext;
+      const modelShort = parts[3] || "";
+      const reasoning = parts[4] as ReasoningLevel;
+      const modelId = AVAILABLE_MODELS.find(m => m.includes(modelShort))!;
+
+      await updateContextModel(context, modelId, reasoning);
+
+      await ctx.editMessageText(
+        `✅ <b>Configuration Saved!</b>\n\n` +
+          `<b>${context.charAt(0).toUpperCase() + context.slice(1)}</b> now uses:\n` +
+          `Model: ${MODEL_DISPLAY_NAMES[modelId]}\n` +
+          `Reasoning: ${reasoning} (${REASONING_TOKENS[reasoning].toLocaleString()} tokens)\n\n` +
+          `Use /model to configure other contexts.`,
+        { parse_mode: "HTML" }
+      );
+    } else if (action === "back") {
+      // Back to main menu - call handleModel equivalent
+      const config = getCurrentConfig();
+      const keyboard = new InlineKeyboard()
+        .text("💬 Chat Model", "model:context:general")
+        .row()
+        .text("📝 Summary Model", "model:context:summary")
+        .row()
+        .text("⏰ Cron Model", "model:context:cron");
+
+      const generalModel = config.contexts.general?.model || config.defaults.model;
+      const generalReasoning = config.contexts.general?.reasoning || config.defaults.reasoning;
+      const summaryModel = config.contexts.summary?.model || config.defaults.model;
+      const summaryReasoning = config.contexts.summary?.reasoning || config.defaults.reasoning;
+      const cronModel = config.contexts.cron?.model || config.defaults.model;
+      const cronReasoning = config.contexts.cron?.reasoning || config.defaults.reasoning;
+
+      await ctx.editMessageText(
+        `🤖 <b>Model Configuration</b>\n\n` +
+          `<b>Current Settings:</b>\n\n` +
+          `💬 <b>Chat:</b> ${MODEL_DISPLAY_NAMES[generalModel]} (${generalReasoning}, ${REASONING_TOKENS[generalReasoning]} tokens)\n` +
+          `📝 <b>Summary:</b> ${MODEL_DISPLAY_NAMES[summaryModel]} (${summaryReasoning}, ${REASONING_TOKENS[summaryReasoning]} tokens)\n` +
+          `⏰ <b>Cron:</b> ${MODEL_DISPLAY_NAMES[cronModel]} (${cronReasoning}, ${REASONING_TOKENS[cronReasoning]} tokens)\n\n` +
+          `Select which context to configure:`,
+        {
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+        }
+      );
+    }
+
+    await ctx.answerCallbackQuery();
+  } catch (error) {
+    console.error("[ERROR:MODEL_CALLBACK_FAILED]", error);
+    await ctx.answerCallbackQuery({ text: "❌ Failed to update configuration" });
+  }
+}
+
 export async function handleCallback(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
@@ -299,6 +426,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
   if (callbackData.startsWith("c:")) {
     await handleChoiceCallback(ctx, callbackData, chatId, threadId, userId, username);
+    return;
+  }
+
+  if (callbackData.startsWith("model:")) {
+    await handleModelCallback(ctx, callbackData);
     return;
   }
 

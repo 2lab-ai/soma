@@ -5,12 +5,23 @@
  */
 
 import type { Context } from "grammy";
+import { InlineKeyboard } from "grammy";
 import { sessionManager } from "../session-manager";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
 import { type ChatType, isAuthorizedForChat } from "../security";
 import { getSchedulerStatus, reloadScheduler } from "../scheduler";
 import { fetchAllUsage } from "../usage";
 import type { ClaudeUsage, CodexUsage, GeminiUsage } from "../types";
+import {
+  getCurrentConfig,
+  MODEL_DISPLAY_NAMES,
+  type ConfigContext,
+  type ModelId,
+  type ReasoningLevel,
+  AVAILABLE_MODELS,
+  REASONING_TOKENS,
+  ensureConfigExists,
+} from "../model-config";
 
 function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -156,6 +167,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
         `/status - Show current session details\n` +
         `/stats - Token usage & cost statistics\n` +
         `/context - Context window usage (200K limit)\n` +
+        `/model - Configure model & reasoning settings\n` +
         `/help - Show this command list\n\n` +
         `<b>Utilities:</b>\n` +
         `/retry - Retry last message\n` +
@@ -688,5 +700,64 @@ export async function handleContext(ctx: Context): Promise<void> {
       "❌ Failed to retrieve context usage. Please try again.\n\n" +
         "If this persists, restart the session with /new"
     );
+  }
+}
+
+/**
+ * /model - Configure model and reasoning settings
+ */
+export async function handleModel(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
+    return;
+  }
+
+  try {
+    // Ensure config file exists
+    await ensureConfigExists();
+
+    // Get current config
+    const config = getCurrentConfig();
+
+    // Build context selection keyboard
+    const keyboard = new InlineKeyboard()
+      .text("💬 Chat Model", "model:context:general")
+      .row()
+      .text("📝 Summary Model", "model:context:summary")
+      .row()
+      .text("⏰ Cron Model", "model:context:cron");
+
+    // Format current config display
+    const generalModel = config.contexts.general?.model || config.defaults.model;
+    const generalReasoning = config.contexts.general?.reasoning || config.defaults.reasoning;
+    const summaryModel = config.contexts.summary?.model || config.defaults.model;
+    const summaryReasoning = config.contexts.summary?.reasoning || config.defaults.reasoning;
+    const cronModel = config.contexts.cron?.model || config.defaults.model;
+    const cronReasoning = config.contexts.cron?.reasoning || config.defaults.reasoning;
+
+    await ctx.reply(
+      `🤖 <b>Model Configuration</b>\n\n` +
+        `<b>Current Settings:</b>\n\n` +
+        `💬 <b>Chat:</b> ${MODEL_DISPLAY_NAMES[generalModel]} (${generalReasoning}, ${REASONING_TOKENS[generalReasoning]} tokens)\n` +
+        `📝 <b>Summary:</b> ${MODEL_DISPLAY_NAMES[summaryModel]} (${summaryReasoning}, ${REASONING_TOKENS[summaryReasoning]} tokens)\n` +
+        `⏰ <b>Cron:</b> ${MODEL_DISPLAY_NAMES[cronModel]} (${cronReasoning}, ${REASONING_TOKENS[cronReasoning]} tokens)\n\n` +
+        `Select which context to configure:`,
+      {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      }
+    );
+  } catch (error) {
+    console.error(
+      "[ERROR:MODEL_COMMAND_FAILED] Failed to show model config:",
+      error instanceof Error ? error.message : String(error)
+    );
+    await ctx.reply("❌ Failed to show model configuration. Please try again.");
   }
 }

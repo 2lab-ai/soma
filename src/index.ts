@@ -31,6 +31,7 @@ import {
   handleRetry,
   handleCron,
   handleSessions,
+  handleModel,
   handleText,
   setBotUsername,
   handleVoice,
@@ -131,6 +132,7 @@ bot.command("stop", handleStop);
 bot.command("status", handleStatus);
 bot.command("stats", handleStats);
 bot.command("context", handleContext);
+bot.command("model", handleModel);
 bot.command("help", handleHelp);
 bot.command("resume", handleResume);
 bot.command("restart", handleRestart);

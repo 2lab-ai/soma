@@ -9,6 +9,7 @@ export {
   handleStatus,
   handleStats,
   handleContext,
+  handleModel,
   handleHelp,
   handleResume,
   handleRestart,
