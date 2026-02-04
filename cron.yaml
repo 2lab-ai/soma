@@ -57,3 +57,24 @@ schedules:
       - Report what was updated (or "No updates needed")
     enabled: true
     notify: true
+
+  # Daily summary at 11pm
+  - name: daily-summary
+    cron: "0 23 * * *"
+    prompt: |
+      Generate daily conversation summary:
+      1. cd ~/2lab.ai/soma && bun scripts/chat-search.ts today --limit 200
+      2. Read the output and create a concise summary (under 300 words)
+      3. Save to data/summaries/YYYY-MM-DD.md with format:
+         # Daily Summary - YYYY-MM-DD
+         ## Topics
+         - [bullet points]
+         ## Key Decisions
+         - [bullet points]
+         ## Tasks/Action Items
+         - [bullet points]
+      4. Create data/summaries/ directory if needed
+
+      Be concise. Focus on what matters.
+    enabled: true
+    notify: true
