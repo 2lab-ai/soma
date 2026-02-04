@@ -215,9 +215,12 @@ export function addTimestamp(message: string): string {
 let sessionModule: {
   session: {
     isRunning: boolean;
+    isInterrupting: boolean;
     stop: () => Promise<"stopped" | "pending" | false>;
     markInterrupt: () => void;
     clearStopRequested: () => void;
+    startInterrupt: () => boolean;
+    endInterrupt: () => void;
   };
 } | null = null;
 
@@ -234,12 +237,27 @@ export async function checkInterrupt(text: string): Promise<string> {
   const strippedText = text.slice(1).trimStart();
 
   if (sessionModule.session.isRunning) {
-    console.log("! prefix - interrupting current query");
-    sessionModule.session.markInterrupt();
-    // stop() now waits for query to actually stop (up to 5s)
-    await sessionModule.session.stop();
-    // Clear stopRequested so the new message can proceed
-    sessionModule.session.clearStopRequested();
+    // Prevent duplicate interrupts from racing
+    if (!sessionModule.session.startInterrupt()) {
+      console.log("! prefix - interrupt already in progress, waiting...");
+      // Wait for ongoing interrupt to complete (max 6s)
+      const start = Date.now();
+      while (sessionModule.session.isInterrupting && Date.now() - start < 6000) {
+        await Bun.sleep(100);
+      }
+      return strippedText;
+    }
+
+    try {
+      console.log("! prefix - interrupting current query");
+      sessionModule.session.markInterrupt();
+      // stop() now waits for query to actually stop (up to 5s)
+      await sessionModule.session.stop();
+      // Clear stopRequested so the new message can proceed
+      sessionModule.session.clearStopRequested();
+    } finally {
+      sessionModule.session.endInterrupt();
+    }
   }
 
   return strippedText;

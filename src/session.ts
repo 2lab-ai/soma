@@ -30,6 +30,7 @@ import { isAbortError } from "./utils/error-classification";
 import type { ChatCaptureService } from "./services/chat-capture-service";
 
 export type ActivityState = "idle" | "working" | "waiting";
+export type QueryState = "idle" | "preparing" | "running" | "aborting";
 
 type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
 
@@ -207,10 +208,10 @@ export class ClaudeSession {
   messagesSinceRestore = 0;
 
   private abortController: AbortController | null = null;
-  private isQueryRunning = false;
+  private _queryState: QueryState = "idle";
   private stopRequested = false;
-  private _isProcessing = false;
   private _wasInterruptedByNewMessage = false;
+  private _isInterrupting = false;
   private readonly MAX_STEERING_MESSAGES = 20;
   private steeringBuffer: SteeringMessage[] = [];
 
@@ -303,7 +304,11 @@ export class ClaudeSession {
   }
 
   get isRunning(): boolean {
-    return this.isQueryRunning || this._isProcessing;
+    return this._queryState !== "idle";
+  }
+
+  get queryState(): QueryState {
+    return this._queryState;
   }
 
   get currentContextTokens(): number {
@@ -344,7 +349,7 @@ export class ClaudeSession {
   }
 
   get isProcessing(): boolean {
-    return this._isProcessing;
+    return this._queryState === "preparing" || this._queryState === "running";
   }
 
   consumeInterruptFlag(): boolean {
@@ -360,6 +365,23 @@ export class ClaudeSession {
 
   clearStopRequested(): void {
     this.stopRequested = false;
+  }
+
+  get isInterrupting(): boolean {
+    return this._isInterrupting;
+  }
+
+  startInterrupt(): boolean {
+    if (this._isInterrupting) {
+      console.log("[INTERRUPT] Already interrupting, ignoring duplicate");
+      return false;
+    }
+    this._isInterrupting = true;
+    return true;
+  }
+
+  endInterrupt(): void {
+    this._isInterrupting = false;
   }
 
   clearWarning70(): void {
@@ -424,9 +446,9 @@ export class ClaudeSession {
   }
 
   startProcessing(): () => void {
-    this._isProcessing = true;
+    this._queryState = "preparing";
     return () => {
-      this._isProcessing = false;
+      this._queryState = "idle";
       // Don't clear steering - keep for next query if not consumed
       // (PreToolUse only fires when tools are used, so steering can be missed)
       if (this.steeringBuffer.length) {
@@ -443,27 +465,28 @@ export class ClaudeSession {
   }
 
   async stop(): Promise<"stopped" | "pending" | false> {
-    if (this.isQueryRunning && this.abortController) {
+    if (this._queryState === "running" && this.abortController) {
       this.stopRequested = true;
+      this._queryState = "aborting";
       this.abortController.abort();
       console.log("Stop requested - aborting current query");
 
       // Wait for query to actually stop (max 5s)
       const start = Date.now();
-      while (this.isQueryRunning && Date.now() - start < 5000) {
+      while (this.queryState !== "idle" && Date.now() - start < 5000) {
         await Bun.sleep(50);
       }
 
-      if (this.isQueryRunning) {
-        console.warn("Stop timeout - query still running after 5s");
-      } else {
+      if (this.queryState === "idle") {
         console.log("Stop completed - query stopped");
+      } else {
+        console.warn("Stop timeout - query still running after 5s");
       }
 
       return "stopped";
     }
 
-    if (this._isProcessing) {
+    if (this._queryState === "preparing") {
       this.stopRequested = true;
       console.log("Stop requested - will cancel before query starts");
       return "pending";
@@ -556,7 +579,7 @@ export class ClaudeSession {
     }
 
     this.abortController = new AbortController();
-    this.isQueryRunning = true;
+    this._queryState = "running";
     this.setActivityState("working");
     this.stopRequested = false;
     this.queryStarted = new Date();
@@ -842,7 +865,7 @@ export class ClaudeSession {
         throw error;
       }
     } finally {
-      this.isQueryRunning = false;
+      this._queryState = "idle";
       if (this._activityState !== "idle") {
         this.setActivityState("idle");
       }
