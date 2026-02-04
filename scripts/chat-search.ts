@@ -50,13 +50,13 @@ async function cmdRecent(args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--hours" && args[i + 1]) {
-      hours = parseInt(args[i + 1]);
+      hours = parseInt(args[i + 1]!);
       i++;
     } else if (args[i] === "--days" && args[i + 1]) {
-      days = parseInt(args[i + 1]);
+      days = parseInt(args[i + 1]!);
       i++;
     } else if (args[i] === "--limit" && args[i + 1]) {
-      limit = parseInt(args[i + 1]);
+      limit = parseInt(args[i + 1]!);
       i++;
     }
   }
@@ -79,10 +79,10 @@ async function cmdSearch(keyword: string, args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--days" && args[i + 1]) {
-      days = parseInt(args[i + 1]);
+      days = parseInt(args[i + 1]!);
       i++;
     } else if (args[i] === "--limit" && args[i + 1]) {
-      limit = parseInt(args[i + 1]);
+      limit = parseInt(args[i + 1]!);
       i++;
     }
   }
@@ -96,7 +96,7 @@ async function cmdToday(args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--limit" && args[i + 1]) {
-      limit = parseInt(args[i + 1]);
+      limit = parseInt(args[i + 1]!);
       i++;
     }
   }
@@ -120,7 +120,7 @@ async function cmdSummary(args: string[]): Promise<void> {
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--days" && args[i + 1]) {
-      days = parseInt(args[i + 1]);
+      days = parseInt(args[i + 1]!);
       i++;
     }
   }
