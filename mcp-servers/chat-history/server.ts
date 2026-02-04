@@ -5,151 +5,258 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { readFile, readdir } from "fs/promises";
-import { existsSync } from "fs";
-import { join, dirname } from "path";
+import { dirname, join } from "path";
 
-const DATA_DIR = join(dirname(dirname(dirname(import.meta.path))), "data", "chats");
+import { FileChatStorage } from "../../src/storage/chat-storage";
+import { FileSummaryStorage } from "../../src/storage/summary-storage";
+import { ChatSearchService } from "../../src/services/chat-search-service";
+import type { ChatRecord, Summary, SummaryGranularity } from "../../src/types/chat-history";
 
-interface ChatRecord {
-  id: string;
-  sessionId: string;
-  claudeSessionId: string;
-  model: string;
-  timestamp: string;
-  speaker: "user" | "assistant";
-  content: string;
-  tokenUsage?: { input: number; output: number };
+const DATA_DIR = join(dirname(dirname(dirname(import.meta.path))), "data");
+const chatStorage = new FileChatStorage(DATA_DIR);
+const summaryStorage = new FileSummaryStorage(DATA_DIR);
+const searchService = new ChatSearchService(chatStorage);
+
+type ChatType = null | "chat" | "summary";
+
+interface GetChatsResult {
+  data: (ChatRecord | Summary)[];
+  meta: {
+    pointDate: string;
+    lastN: number;
+    afterN: number;
+    type: ChatType;
+    returned: number;
+    hasMoreBefore: boolean;
+    hasMoreAfter: boolean;
+  };
 }
 
-async function getRecentChats(limit: number = 20): Promise<ChatRecord[]> {
-  if (!existsSync(DATA_DIR)) return [];
+interface GetChatsByDatesResult {
+  data: (ChatRecord | Summary)[];
+  meta: {
+    from: string;
+    to: string;
+    returned: number;
+    hasMore: boolean;
+  };
+}
 
-  const files = await readdir(DATA_DIR);
-  const ndjsonFiles = files.filter(f => f.endsWith(".ndjson")).sort().reverse();
+interface GetChatsCountResult {
+  count: number;
+  from: string;
+  to: string;
+}
 
-  const records: ChatRecord[] = [];
+function selectGranularity(from: Date, to: Date): SummaryGranularity {
+  const diffMs = to.getTime() - from.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
 
-  for (const file of ndjsonFiles) {
-    if (records.length >= limit) break;
+  if (diffDays < 1) return "hourly";
+  if (diffDays <= 7) return "daily";
+  if (diffDays <= 60) return "weekly";
+  return "monthly";
+}
 
-    const content = await readFile(join(DATA_DIR, file), "utf-8");
-    const lines = content.split("\n").filter(l => l.trim()).reverse();
+async function getChats(
+  pointDate: string | null,
+  lastN: number,
+  afterN: number,
+  type: ChatType
+): Promise<GetChatsResult> {
+  const point = pointDate ? new Date(pointDate) : new Date();
+  const results: (ChatRecord | Summary)[] = [];
 
-    for (const line of lines) {
-      if (records.length >= limit) break;
-      try {
-        records.push(JSON.parse(line));
-      } catch {}
-    }
+  if (type === "summary") {
+    const beforeDate = new Date(point);
+    beforeDate.setDate(beforeDate.getDate() - Math.max(lastN, 7));
+    const afterDate = new Date(point);
+    afterDate.setDate(afterDate.getDate() + Math.max(afterN, 7));
+
+    const granularity = selectGranularity(beforeDate, afterDate);
+    const summaries = await summaryStorage.getSummaries({
+      granularity,
+      from: beforeDate,
+      to: afterDate,
+      limit: lastN + afterN,
+    });
+
+    const before = summaries.filter(s => new Date(s.periodEnd) <= point).slice(0, lastN);
+    const after = summaries.filter(s => new Date(s.periodStart) > point).slice(0, afterN);
+    results.push(...before.reverse(), ...after);
+  } else {
+    const beforeMs = lastN * 60 * 60 * 1000;
+    const afterMs = afterN * 60 * 60 * 1000;
+
+    const fromDate = new Date(point.getTime() - beforeMs);
+    const toDate = new Date(point.getTime() + afterMs);
+
+    const chats = await searchService.searchByDateRange({
+      from: fromDate,
+      to: toDate,
+      limit: lastN + afterN + 100,
+    });
+
+    const before = chats.filter(c => new Date(c.timestamp) <= point);
+    const after = chats.filter(c => new Date(c.timestamp) > point);
+
+    const selectedBefore = before.slice(-lastN);
+    const selectedAfter = after.slice(0, afterN);
+
+    results.push(...selectedBefore, ...selectedAfter);
   }
 
-  return records.slice(0, limit);
+  return {
+    data: results,
+    meta: {
+      pointDate: point.toISOString(),
+      lastN,
+      afterN,
+      type,
+      returned: results.length,
+      hasMoreBefore: results.length > 0,
+      hasMoreAfter: results.length > 0,
+    },
+  };
 }
 
-async function searchChats(query: string, limit: number = 50): Promise<ChatRecord[]> {
-  if (!existsSync(DATA_DIR)) return [];
+async function getChatsByDates(
+  from: string,
+  to: string,
+  type: ChatType,
+  limit: number
+): Promise<GetChatsByDatesResult> {
+  const fromDate = new Date(from);
+  const toDate = new Date(to);
 
-  const files = await readdir(DATA_DIR);
-  const ndjsonFiles = files.filter(f => f.endsWith(".ndjson")).sort().reverse();
+  let results: (ChatRecord | Summary)[] = [];
 
-  const records: ChatRecord[] = [];
-  const lowerQuery = query.toLowerCase();
-
-  for (const file of ndjsonFiles) {
-    if (records.length >= limit) break;
-
-    const content = await readFile(join(DATA_DIR, file), "utf-8");
-    const lines = content.split("\n").filter(l => l.trim());
-
-    for (const line of lines) {
-      if (records.length >= limit) break;
-      try {
-        const record: ChatRecord = JSON.parse(line);
-        if (record.content.toLowerCase().includes(lowerQuery)) {
-          records.push(record);
-        }
-      } catch {}
-    }
+  if (type === "summary") {
+    const granularity = selectGranularity(fromDate, toDate);
+    results = await summaryStorage.getSummaries({
+      granularity,
+      from: fromDate,
+      to: toDate,
+      limit,
+    });
+  } else {
+    results = await searchService.searchByDateRange({
+      from: fromDate,
+      to: toDate,
+      limit,
+    });
   }
 
-  return records;
+  return {
+    data: results,
+    meta: {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      returned: results.length,
+      hasMore: results.length >= limit,
+    },
+  };
 }
 
-async function getChatsByDate(date: string): Promise<ChatRecord[]> {
-  const filePath = join(DATA_DIR, `${date}.ndjson`);
-  if (!existsSync(filePath)) return [];
+async function getChatsCountByDates(from: string, to: string): Promise<GetChatsCountResult> {
+  const fromDate = new Date(from);
+  const toDate = new Date(to);
 
-  const content = await readFile(filePath, "utf-8");
-  const lines = content.split("\n").filter(l => l.trim());
+  const chats = await searchService.searchByDateRange({
+    from: fromDate,
+    to: toDate,
+    limit: 10000,
+  });
 
-  return lines.map(line => {
-    try { return JSON.parse(line); } catch { return null; }
-  }).filter(Boolean);
-}
-
-function formatChatRecord(r: ChatRecord): string {
-  const time = new Date(r.timestamp).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
-  const speaker = r.speaker === "user" ? "👤 User" : "🤖 Assistant";
-  const preview = r.content.length > 200 ? r.content.slice(0, 200) + "..." : r.content;
-  return `[${time}] ${speaker}:\n${preview}`;
+  return {
+    count: chats.length,
+    from: fromDate.toISOString(),
+    to: toDate.toISOString(),
+  };
 }
 
 const server = new Server(
-  { name: "chat-history", version: "1.0.0" },
+  { name: "chat-history", version: "2.0.0" },
   { capabilities: { tools: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
-      name: "get_recent_chats",
-      description: "Get the most recent chat messages from the conversation history. Returns messages in reverse chronological order.",
+      name: "get_chats",
+      description: "Get chat messages or summaries around a specific point in time. Use lastN for messages before the point, afterN for messages after. Type: null (chats only), 'chat' (same as null), 'summary' (get summaries instead of individual messages).",
       inputSchema: {
         type: "object",
         properties: {
-          limit: {
+          pointDate: {
+            type: "string",
+            description: "ISO datetime as the reference point. If null/omitted, uses current time.",
+          },
+          lastN: {
             type: "number",
-            description: "Number of messages to retrieve (default: 20, max: 100)",
-            default: 20
-          }
-        }
-      }
+            description: "Number of messages/summaries before pointDate (default: 20)",
+            default: 20,
+          },
+          afterN: {
+            type: "number",
+            description: "Number of messages/summaries after pointDate (default: 0)",
+            default: 0,
+          },
+          type: {
+            type: "string",
+            enum: ["chat", "summary"],
+            description: "Type of data to retrieve: 'chat' for messages (default), 'summary' for AI-generated summaries",
+          },
+        },
+      },
     },
     {
-      name: "search_chats",
-      description: "Search chat history for messages containing a specific keyword or phrase.",
+      name: "get_chats_by_dates",
+      description: "Get all chat messages or summaries within a datetime range.",
       inputSchema: {
         type: "object",
         properties: {
-          query: {
+          from: {
             type: "string",
-            description: "Search query (case-insensitive)"
+            description: "Start datetime (ISO format)",
+          },
+          to: {
+            type: "string",
+            description: "End datetime (ISO format)",
+          },
+          type: {
+            type: "string",
+            enum: ["chat", "summary"],
+            description: "Type of data: 'chat' (default) or 'summary'",
           },
           limit: {
             type: "number",
-            description: "Maximum results to return (default: 50)",
-            default: 50
-          }
+            description: "Maximum results (default: 100, max: 500)",
+            default: 100,
+          },
         },
-        required: ["query"]
-      }
+        required: ["from", "to"],
+      },
     },
     {
-      name: "get_chats_by_date",
-      description: "Get all chat messages from a specific date.",
+      name: "get_chats_count_by_dates",
+      description: "Get the count of chat messages within a datetime range (useful to check before fetching large results).",
       inputSchema: {
         type: "object",
         properties: {
-          date: {
+          from: {
             type: "string",
-            description: "Date in YYYY-MM-DD format"
-          }
+            description: "Start datetime (ISO format)",
+          },
+          to: {
+            type: "string",
+            description: "End datetime (ISO format)",
+          },
         },
-        required: ["date"]
-      }
-    }
-  ]
+        required: ["from", "to"],
+      },
+    },
+  ],
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -157,35 +264,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     switch (name) {
-      case "get_recent_chats": {
-        const limit = Math.min((args as any)?.limit || 20, 100);
-        const records = await getRecentChats(limit);
-        const formatted = records.map(formatChatRecord).join("\n\n---\n\n");
+      case "get_chats": {
+        const pointDate = (args as any)?.pointDate || null;
+        const lastN = Math.min(Math.max((args as any)?.lastN || 20, 0), 500);
+        const afterN = Math.min(Math.max((args as any)?.afterN || 0, 0), 500);
+        const type: ChatType = (args as any)?.type === "summary" ? "summary" : null;
+
+        const result = await getChats(pointDate, lastN, afterN, type);
         return {
-          content: [{ type: "text", text: formatted || "No chat history found." }]
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
 
-      case "search_chats": {
-        const query = (args as any)?.query;
-        if (!query) throw new Error("query is required");
-        const limit = Math.min((args as any)?.limit || 50, 100);
-        const records = await searchChats(query, limit);
-        const formatted = records.map(formatChatRecord).join("\n\n---\n\n");
+      case "get_chats_by_dates": {
+        const from = (args as any)?.from;
+        const to = (args as any)?.to;
+        if (!from || !to) throw new Error("from and to are required");
+
+        const type: ChatType = (args as any)?.type === "summary" ? "summary" : null;
+        const limit = Math.min(Math.max((args as any)?.limit || 100, 1), 500);
+
+        const result = await getChatsByDates(from, to, type, limit);
         return {
-          content: [{ type: "text", text: formatted || `No messages found containing "${query}".` }]
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
 
-      case "get_chats_by_date": {
-        const date = (args as any)?.date;
-        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-          throw new Error("date must be in YYYY-MM-DD format");
-        }
-        const records = await getChatsByDate(date);
-        const formatted = records.map(formatChatRecord).join("\n\n---\n\n");
+      case "get_chats_count_by_dates": {
+        const from = (args as any)?.from;
+        const to = (args as any)?.to;
+        if (!from || !to) throw new Error("from and to are required");
+
+        const result = await getChatsCountByDates(from, to);
         return {
-          content: [{ type: "text", text: formatted || `No chat history found for ${date}.` }]
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
 
@@ -195,7 +307,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   } catch (error) {
     return {
       content: [{ type: "text", text: `Error: ${(error as Error).message}` }],
-      isError: true
+      isError: true,
     };
   }
 });
