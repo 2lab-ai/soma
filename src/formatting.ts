@@ -316,7 +316,6 @@ export function formatToolStatus(
   }
 
   if (toolName.startsWith("mcp__")) {
-    // Generic MCP tool formatting
     const parts = toolName.split("__");
     if (parts.length >= 3) {
       const server = parts[1]!;
@@ -327,7 +326,40 @@ export function formatToolStatus(
       }
       action = action.replace(/_/g, " ");
 
-      // Try to get meaningful summary
+      // Detailed display for AI MCP calls (codex, gemini, claude)
+      const isAiMcp = /codex|gemini|claude/i.test(server);
+      if (isAiMcp) {
+        const lines: string[] = [`🔮 <b>MCP: ${server} → ${action}</b>`];
+
+        // Show prompt
+        const prompt = toolInput.prompt as string | undefined;
+        if (prompt) {
+          const truncatedPrompt = truncate(prompt, 200);
+          lines.push(`<b>prompt:</b> ${escapeHtml(truncatedPrompt)}`);
+        }
+
+        // Show model
+        const model = toolInput.model as string | undefined;
+        if (model) {
+          lines.push(`<b>model:</b> ${escapeHtml(model)}`);
+        }
+
+        // Show config (other params)
+        const config: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(toolInput)) {
+          if (!["prompt", "model", "cwd", "sessionId", "systemPrompt"].includes(key) && value !== undefined) {
+            config[key] = value;
+          }
+        }
+        if (Object.keys(config).length > 0) {
+          lines.push(`<b>config:</b>`);
+          lines.push(`<code>${escapeHtml(JSON.stringify(config, null, 2))}</code>`);
+        }
+
+        return lines.join("\n");
+      }
+
+      // Generic MCP tool formatting
       const summary =
         toolInput.title ||
         toolInput.query ||
