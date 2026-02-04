@@ -10,6 +10,7 @@ export {
   handleStats,
   handleContext,
   handleModel,
+  handleSkills,
   handleHelp,
   handleResume,
   handleRestart,

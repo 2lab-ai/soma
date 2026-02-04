@@ -22,6 +22,7 @@ import {
   REASONING_TOKENS,
   ensureConfigExists,
 } from "../model-config";
+import { skillsRegistry } from "../services/skills-registry";
 
 function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -168,6 +169,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
         `/stats - Token usage & cost statistics\n` +
         `/context - Context window usage (200K limit)\n` +
         `/model - Configure model & reasoning settings\n` +
+        `/skills - Quick access to SuperClaude skills\n` +
         `/help - Show this command list\n\n` +
         `<b>Utilities:</b>\n` +
         `/retry - Retry last message\n` +
@@ -700,6 +702,69 @@ export async function handleContext(ctx: Context): Promise<void> {
       "❌ Failed to retrieve context usage. Please try again.\n\n" +
         "If this persists, restart the session with /new"
     );
+  }
+}
+
+/**
+ * /skills - Show quick skills menu
+ */
+export async function handleSkills(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
+    return;
+  }
+
+  try {
+    const skills = await skillsRegistry.sync();
+
+    if (skills.length === 0) {
+      await ctx.reply(
+        `🛠️ <b>Quick Skills</b>\n\n` +
+          `<i>No skills registered.</i>\n\n` +
+          `Say "add do-work to skills menu" to add a skill.`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    const keyboard = new InlineKeyboard();
+    const maxButtons = 8;
+    const displaySkills = skills.slice(0, maxButtons);
+
+    for (let i = 0; i < displaySkills.length; i += 2) {
+      const skill1 = displaySkills[i];
+      const skill2 = displaySkills[i + 1];
+
+      if (skill1 && skill2) {
+        keyboard.text(skill1, `sk:${skill1}`).text(skill2, `sk:${skill2}`).row();
+      } else if (skill1) {
+        keyboard.text(skill1, `sk:${skill1}`).row();
+      }
+    }
+
+    keyboard.text("⚙️ Manage", "sk:manage");
+
+    await ctx.reply(
+      `🛠️ <b>Quick Skills</b>\n\n` +
+        `Use /skills to access frequently-used SuperClaude skills.\n` +
+        `To customize: "add/remove {skill} to/from skills menu"`,
+      {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      }
+    );
+  } catch (error) {
+    console.error(
+      "[ERROR:SKILLS_COMMAND_FAILED] Failed to show skills menu:",
+      error instanceof Error ? error.message : String(error)
+    );
+    await ctx.reply("❌ Failed to load skills menu. Please try again.");
   }
 }
 
