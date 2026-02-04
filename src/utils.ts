@@ -211,38 +211,36 @@ export function addTimestamp(message: string): string {
 
 // ============== Message Interrupt ==============
 
-// Import session lazily to avoid circular dependency
-let sessionModule: {
-  session: {
-    isRunning: boolean;
-    isInterrupting: boolean;
-    stop: () => Promise<"stopped" | "pending" | false>;
-    markInterrupt: () => void;
-    clearStopRequested: () => void;
-    startInterrupt: () => boolean;
-    endInterrupt: () => void;
-  };
-} | null = null;
+interface InterruptableSession {
+  isRunning: boolean;
+  isInterrupting: boolean;
+  stop: () => Promise<"stopped" | "pending" | false>;
+  markInterrupt: () => void;
+  clearStopRequested: () => void;
+  startInterrupt: () => boolean;
+  endInterrupt: () => void;
+}
 
-export async function checkInterrupt(text: string): Promise<string> {
+export async function checkInterrupt(
+  text: string,
+  session?: InterruptableSession
+): Promise<string> {
   if (!text || !text.startsWith("!")) {
     return text;
   }
 
-  // Lazy import to avoid circular dependency
-  if (!sessionModule) {
-    sessionModule = await import("./session");
-  }
-
   const strippedText = text.slice(1).trimStart();
 
-  if (sessionModule.session.isRunning) {
-    // Prevent duplicate interrupts from racing
-    if (!sessionModule.session.startInterrupt()) {
+  if (!session) {
+    console.warn("checkInterrupt called without session - cannot stop query");
+    return strippedText;
+  }
+
+  if (session.isRunning) {
+    if (!session.startInterrupt()) {
       console.log("! prefix - interrupt already in progress, waiting...");
-      // Wait for ongoing interrupt to complete (max 6s)
       const start = Date.now();
-      while (sessionModule.session.isInterrupting && Date.now() - start < 6000) {
+      while (session.isInterrupting && Date.now() - start < 6000) {
         await Bun.sleep(100);
       }
       return strippedText;
@@ -250,13 +248,11 @@ export async function checkInterrupt(text: string): Promise<string> {
 
     try {
       console.log("! prefix - interrupting current query");
-      sessionModule.session.markInterrupt();
-      // stop() now waits for query to actually stop (up to 5s)
-      await sessionModule.session.stop();
-      // Clear stopRequested so the new message can proceed
-      sessionModule.session.clearStopRequested();
+      session.markInterrupt();
+      await session.stop();
+      session.clearStopRequested();
     } finally {
-      sessionModule.session.endInterrupt();
+      session.endInterrupt();
     }
   }
 

@@ -337,7 +337,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 2. Check for interrupt prefix
   const wasInterrupt = message.startsWith("!");
-  message = await checkInterrupt(message);
+  message = await checkInterrupt(message, session);
   if (!message.trim()) {
     // "!" alone - provide feedback that stop was requested
     if (wasInterrupt) {
