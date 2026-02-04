@@ -339,6 +339,17 @@ export async function handleText(ctx: Context): Promise<void> {
   const wasInterrupt = message.startsWith("!");
   message = await checkInterrupt(message);
   if (!message.trim()) {
+    // "!" alone - provide feedback that stop was requested
+    if (wasInterrupt) {
+      try {
+        await ctx.reply("🛑 Stopped");
+      } catch {
+        // Fallback to reaction if reply fails (use valid Telegram emoji)
+        try {
+          await ctx.react("👎");
+        } catch {}
+      }
+    }
     return;
   }
 
