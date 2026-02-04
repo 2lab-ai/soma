@@ -328,7 +328,7 @@ describe("SkillsRegistry", () => {
     // Registry should be valid and contain one of the values
     const loaded = await skillsRegistry.load();
     expect(loaded.length).toBe(1);
-    expect(["skill-a", "skill-b", "skill-c"]).toContain(loaded[0]);
+    expect(["skill-a", "skill-b", "skill-c"]).toContain(loaded[0]!);
   });
 
   it("should return invalid_name reason for add() with special characters", async () => {
