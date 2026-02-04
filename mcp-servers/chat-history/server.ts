@@ -12,7 +12,9 @@ import { FileSummaryStorage } from "../../src/storage/summary-storage";
 import { ChatSearchService } from "../../src/services/chat-search-service";
 import type { ChatRecord, Summary, SummaryGranularity } from "../../src/types/chat-history";
 
-const DATA_DIR = process.env.CHAT_HISTORY_DATA_DIR || join(process.cwd(), ".db");
+// Use same data dir as the bot (defaults to "data" relative to repo root)
+const REPO_ROOT = dirname(dirname(dirname(import.meta.path)));
+const DATA_DIR = process.env.CHAT_HISTORY_DATA_DIR || join(REPO_ROOT, "data");
 const chatStorage = new FileChatStorage(DATA_DIR);
 const summaryStorage = new FileSummaryStorage(DATA_DIR);
 const searchService = new ChatSearchService(chatStorage);
