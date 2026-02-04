@@ -26,10 +26,10 @@ export interface QueryMetadata {
 
 // Status callback for streaming updates
 export type StatusCallback = (
-  type: "thinking" | "tool" | "text" | "segment_end" | "done",
+  type: "thinking" | "tool" | "text" | "segment_end" | "done" | "steering_pending",
   content: string,
   segmentId?: number,
-  metadata?: QueryMetadata
+  metadata?: QueryMetadata & { steeringCount?: number }
 ) => Promise<void>;
 
 // Rate limit bucket for token bucket algorithm

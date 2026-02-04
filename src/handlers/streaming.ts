@@ -179,6 +179,8 @@ export class StreamingState {
   extractedChoice: UserChoice | null = null;
   extractedChoices: UserChoices | null = null;
   hasUserChoice = false;
+  hasSteeringPending = false;
+  steeringPendingCount = 0;
 
   cleanup(): void {
     if (this.progressTimer) {
@@ -390,6 +392,28 @@ export async function createStatusCallback(
           state.lastContent.set(segmentId, lastChunkContent);
         }
         if (PROGRESS_SPINNER_ENABLED) await recreateProgressMessage();
+        return;
+      }
+
+      if (statusType === "steering_pending") {
+        // User sent messages during execution but Claude responded with text-only
+        // Their messages weren't delivered via PreToolUse hook
+        const steeringCount = (metadata as { steeringCount?: number })?.steeringCount || 0;
+        console.log(`[STEERING] ${steeringCount} message(s) pending - will be processed in follow-up`);
+
+        // Notify user their message is queued
+        try {
+          await ctx.reply(
+            `💬 <i>${steeringCount}개 메시지 대기 중 - 다음 응답에서 처리됩니다</i>`,
+            { parse_mode: "HTML" }
+          );
+        } catch {
+          // Notification failed
+        }
+
+        // Store flag for text handler to trigger follow-up
+        state.hasSteeringPending = true;
+        state.steeringPendingCount = steeringCount;
         return;
       }
 

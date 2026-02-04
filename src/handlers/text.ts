@@ -505,6 +505,37 @@ export async function handleText(ctx: Context): Promise<void> {
       // 9. Audit log
       await auditLog(userId, username, "TEXT", message, response);
 
+      // 9.1 Check for unconsumed steering and auto-continue
+      if (session.hasSteeringMessages()) {
+        const steeringCount = session.getSteeringCount();
+        console.log(`[STEERING] Auto-continuing with ${steeringCount} pending message(s)`);
+
+        // Get the steering content and consume it
+        const steeringContent = session.consumeSteering();
+        if (steeringContent) {
+          // Send follow-up with the steering messages
+          const followUpMessage = `[이전 응답 중 보낸 메시지]\n${steeringContent}`;
+
+          const followUpState = new StreamingState();
+          const followUpCallback = await createStatusCallback(ctx, followUpState, session);
+
+          try {
+            const followUpResponse = await session.sendMessageStreaming(
+              followUpMessage,
+              username,
+              userId,
+              followUpCallback,
+              chatId,
+              ctx
+            );
+            await auditLog(userId, username, "STEERING_FOLLOWUP", steeringContent, followUpResponse);
+          } catch (followUpError) {
+            console.error("[STEERING] Follow-up failed:", followUpError);
+            await ctx.reply("⚠️ 대기 중인 메시지 처리 실패. 다시 보내주세요.");
+          }
+        }
+      }
+
       // 9.5. Check context limit and trigger auto-save
       if (session.needsSave) {
         const currentTokens = session.currentContextTokens;
