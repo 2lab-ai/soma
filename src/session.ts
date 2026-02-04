@@ -31,7 +31,7 @@ import { isAbortError } from "./utils/error-classification";
 import type { ChatCaptureService } from "./services/chat-capture-service";
 
 export type ActivityState = "idle" | "working" | "waiting";
-export type QueryState = "idle" | "preparing" | "running" | "aborting";
+export type QueryState = "idle" | "preparing" | "running" | "aborting" | "completing";
 
 type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
 
@@ -363,7 +363,7 @@ export class ClaudeSession {
   }
 
   get isProcessing(): boolean {
-    return this._queryState === "preparing" || this._queryState === "running";
+    return this._queryState === "preparing" || this._queryState === "running" || this._queryState === "completing";
   }
 
   consumeInterruptFlag(): boolean {
@@ -931,7 +931,10 @@ export class ClaudeSession {
       }
     } finally {
       closeCurrentTool(); // Ensure any pending tool timing is closed
-      this._queryState = "idle";
+      // Set completing state to prevent race condition with new messages
+      // Messages sent during completion will still be treated as steering
+      // Note: For errors that throw, idle is set below
+      this._queryState = "completing";
       if (this._activityState !== "idle") {
         this.setActivityState("idle");
       }
@@ -1002,6 +1005,8 @@ export class ClaudeSession {
       ).catch(err => console.error("[ChatCapture] Failed to capture assistant message:", err));
     }
 
+    // Only now set idle - all post-processing complete
+    this._queryState = "idle";
     return fullResponse;
   }
 
