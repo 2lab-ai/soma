@@ -64,11 +64,34 @@ Another summary
 
   it("should scan metadata and find valid files", async () => {
     const reader = new ConversationReader(TEST_DIR);
-    const metadata = await reader.scanMetadata();
+    const { metadata, errors } = await reader.scanMetadata();
 
     expect(metadata.length).toBe(2);
     expect(metadata.some((m) => m.type === "daily")).toBe(true);
     expect(metadata.some((m) => m.type === "monthly")).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  it("should return error for nonexistent directory", async () => {
+    const reader = new ConversationReader("/nonexistent/path");
+    const { metadata, errors } = await reader.scanMetadata();
+
+    expect(metadata).toEqual([]);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors[0]).toContain("not found");
+  });
+
+  it("should surface errors in getEntries result", async () => {
+    const reader = new ConversationReader(TEST_DIR);
+    const result = await reader.getEntries({
+      dateRange: {
+        start: new Date("2025-01-01"),
+        end: new Date("2025-12-31"),
+      },
+    });
+
+    expect(Array.isArray(result.errors)).toBe(true);
+    expect(Array.isArray(result.warnings)).toBe(true);
   });
 
   it("should parse daily file correctly", async () => {
@@ -114,22 +137,24 @@ Another summary
 
   it("should filter by lastNDays", async () => {
     const reader = new ConversationReader(TEST_DIR);
-    const entries = await reader.getEntries({ lastNDays: 30 });
+    const result = await reader.getEntries({ lastNDays: 30 });
 
-    expect(entries.length).toBeGreaterThanOrEqual(0);
+    expect(result.entries.length).toBeGreaterThanOrEqual(0);
+    expect(result.errors).toBeDefined();
+    expect(result.warnings).toBeDefined();
   });
 
   it("should filter by date range", async () => {
     const reader = new ConversationReader(TEST_DIR);
-    const entries = await reader.getEntries({
+    const result = await reader.getEntries({
       dateRange: {
         start: new Date("2025-01-01"),
         end: new Date("2025-01-31"),
       },
     });
 
-    expect(entries.length).toBeGreaterThan(0);
-    expect(entries.every((e) => e.date >= new Date("2025-01-01"))).toBe(true);
+    expect(result.entries.length).toBeGreaterThan(0);
+    expect(result.entries.every((e) => e.date >= new Date("2025-01-01"))).toBe(true);
   });
 
   it("should include monthly files when flag is set", async () => {
@@ -143,7 +168,7 @@ Another summary
       includeMonthly: false,
     });
 
-    expect(withMonthly.length).toBeGreaterThanOrEqual(withoutMonthly.length);
+    expect(withMonthly.entries.length).toBeGreaterThanOrEqual(withoutMonthly.entries.length);
   });
 
   it("should handle missing files gracefully", async () => {
@@ -165,15 +190,15 @@ Another summary
 
   it("should sort entries by date ascending", async () => {
     const reader = new ConversationReader(TEST_DIR);
-    const entries = await reader.getEntries({
+    const result = await reader.getEntries({
       dateRange: {
         start: new Date("2025-01-01"),
         end: new Date("2025-12-31"),
       },
     });
 
-    for (let i = 1; i < entries.length; i++) {
-      expect(entries[i]!.date >= entries[i - 1]!.date).toBe(true);
+    for (let i = 1; i < result.entries.length; i++) {
+      expect(result.entries[i]!.date >= result.entries[i - 1]!.date).toBe(true);
     }
   });
 
