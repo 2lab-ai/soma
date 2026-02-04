@@ -87,7 +87,7 @@ async function captureUsageSnapshot(): Promise<UsageSnapshot | null> {
     const usage = await fetchClaudeUsage(0); // bypass cache
     if (!usage) return null;
     return {
-      fiveHour: usage.five_hour ? Math.round(usage.five_hour.utilization) : 0,
+      fiveHour: usage.five_hour ? Math.round(usage.five_hour.utilization * 10) / 10 : 0,
       sevenDay: usage.seven_day ? Math.round(usage.seven_day.utilization) : 0,
     };
   } catch {
