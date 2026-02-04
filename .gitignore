@@ -49,3 +49,6 @@ rust/**/target
 
 # Local operator notes
 install.txt
+
+# Chat history data (NDJSON files, summaries)
+data/

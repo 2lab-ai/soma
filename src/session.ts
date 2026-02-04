@@ -25,6 +25,7 @@ import type {
   ParseTextChoiceState,
 } from "./types/user-choice";
 import { isAbortError } from "./utils/error-classification";
+import type { ChatCaptureService } from "./services/chat-capture-service";
 
 export type ActivityState = "idle" | "working" | "waiting";
 
@@ -162,6 +163,7 @@ function extractMainAssistantContextUsageFromTranscriptLine(
 export class ClaudeSession {
   readonly sessionKey: string;
   readonly workingDir: string;
+  readonly chatCaptureService: ChatCaptureService | null = null;
 
   sessionId: string | null = null;
   lastActivity: Date | null = null;
@@ -189,9 +191,10 @@ export class ClaudeSession {
   totalCacheCreateTokens = 0;
   totalQueries = 0;
 
-  constructor(sessionKey = "default") {
+  constructor(sessionKey = "default", chatCaptureService: ChatCaptureService | null = null) {
     this.sessionKey = sessionKey;
     this.workingDir = WORKING_DIR;
+    this.chatCaptureService = chatCaptureService;
   }
 
   contextLimitWarned = false;
@@ -552,6 +555,16 @@ export class ClaudeSession {
     let lastCallUsage: TokenUsage | null = null;
 
     try {
+      // Capture user message
+      if (this.chatCaptureService && this.sessionId) {
+        this.chatCaptureService.captureUserMessage(
+          this.sessionKey,
+          this.sessionId,
+          "claude-sonnet-4-5",
+          message // Original user message, not the preprocessed one
+        ).catch(err => console.error("[ChatCapture] Failed to capture user message:", err));
+      }
+
       const queryInstance = query({
         prompt: messageToSend,
         options: {
@@ -802,13 +815,10 @@ export class ClaudeSession {
       }
     } catch (error) {
       const isExpectedAbort =
-        isAbortError(error) &&
-        (queryCompleted || this.stopRequested);
+        isAbortError(error) && (queryCompleted || this.stopRequested);
 
       if (isExpectedAbort) {
-        console.warn(
-          `Suppressed expected abort (completed: ${queryCompleted})`
-        );
+        console.warn(`Suppressed expected abort (completed: ${queryCompleted})`);
       } else {
         console.error("Error in query:", error);
         this.lastError = String(error).slice(0, 100);
@@ -838,7 +848,25 @@ export class ClaudeSession {
       console.error("[CRON] Failed to process queued jobs:", err)
     );
 
-    return responseParts.join("") || "No response from Claude.";
+    const fullResponse = responseParts.join("") || "No response from Claude.";
+
+    // Capture assistant response
+    if (this.chatCaptureService && this.sessionId) {
+      this.chatCaptureService.captureAssistantMessage(
+        this.sessionKey,
+        this.sessionId,
+        "claude-sonnet-4-5",
+        fullResponse,
+        {
+          tokenUsage: this.lastUsage ? {
+            input: this.lastUsage.input_tokens,
+            output: this.lastUsage.output_tokens,
+          } : undefined,
+        }
+      ).catch(err => console.error("[ChatCapture] Failed to capture assistant message:", err));
+    }
+
+    return fullResponse;
   }
 
   async kill(): Promise<void> {
