@@ -236,8 +236,8 @@ export async function checkInterrupt(text: string): Promise<string> {
   if (sessionModule.session.isRunning) {
     console.log("! prefix - interrupting current query");
     sessionModule.session.markInterrupt();
+    // stop() now waits for query to actually stop (up to 5s)
     await sessionModule.session.stop();
-    await Bun.sleep(100);
     // Clear stopRequested so the new message can proceed
     sessionModule.session.clearStopRequested();
   }

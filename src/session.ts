@@ -447,6 +447,19 @@ export class ClaudeSession {
       this.stopRequested = true;
       this.abortController.abort();
       console.log("Stop requested - aborting current query");
+
+      // Wait for query to actually stop (max 5s)
+      const start = Date.now();
+      while (this.isQueryRunning && Date.now() - start < 5000) {
+        await Bun.sleep(50);
+      }
+
+      if (this.isQueryRunning) {
+        console.warn("Stop timeout - query still running after 5s");
+      } else {
+        console.log("Stop completed - query stopped");
+      }
+
       return "stopped";
     }
 
