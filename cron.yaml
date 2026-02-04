@@ -39,3 +39,21 @@ schedules:
   #   prompt: "Is everything running smoothly?"
   #   enabled: false
   #   notify: false
+
+  # Daily memory update at 3am
+  - name: daily-memory-update
+    cron: "0 3 * * *"
+    prompt: |
+      Run daily memory update:
+      1. Read last 3 days of conversations from data/chats/
+      2. Use memory-analyzer to extract learnings
+      3. Use memory-updater to update CLAUDE.md (confidence >= 0.8 only)
+      4. Commit changes with structured message
+
+      Constraints:
+      - Minimal changes only
+      - Grounded in actual conversations
+      - Skip if no high-confidence learnings
+      - Report what was updated (or "No updates needed")
+    enabled: true
+    notify: true
