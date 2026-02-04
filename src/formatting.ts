@@ -269,6 +269,52 @@ export function formatToolStatus(
     return `💭 Using skill...`;
   }
 
+  if (toolName === "TodoWrite") {
+    const todos = toolInput.todos as Array<{
+      content: string;
+      status: string;
+      activeForm?: string;
+    }> | undefined;
+
+    if (!todos || todos.length === 0) {
+      return `📋 Task List (empty)`;
+    }
+
+    const inProgress = todos.filter((t) => t.status === "in_progress");
+    const completed = todos.filter((t) => t.status === "completed");
+    const pending = todos.filter((t) => t.status === "pending");
+
+    const lines: string[] = ["📋 <b>Task List</b>"];
+
+    if (inProgress.length > 0) {
+      lines.push("🔄 <b>In Progress:</b>");
+      for (const t of inProgress) {
+        lines.push(`   • ${escapeHtml(truncate(t.content, 50))}`);
+      }
+    }
+
+    if (completed.length > 0) {
+      lines.push("✅ <b>Completed:</b>");
+      for (const t of completed) {
+        lines.push(`   • ${escapeHtml(truncate(t.content, 50))}`);
+      }
+    }
+
+    if (pending.length > 0) {
+      lines.push("⏳ <b>Pending:</b>");
+      for (const t of pending) {
+        lines.push(`   • ${escapeHtml(truncate(t.content, 50))}`);
+      }
+    }
+
+    const total = todos.length;
+    const completedCount = completed.length;
+    const pct = Math.round((completedCount / total) * 100);
+    lines.push(`\nProgress: ${completedCount}/${total} tasks (${pct}%)`);
+
+    return lines.join("\n");
+  }
+
   if (toolName.startsWith("mcp__")) {
     // Generic MCP tool formatting
     const parts = toolName.split("__");
