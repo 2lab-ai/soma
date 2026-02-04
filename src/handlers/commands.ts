@@ -59,19 +59,19 @@ function formatClaudeUsage(usage: ClaudeUsage): string[] {
   if (usage.five_hour) {
     const reset = formatTimeRemaining(usage.five_hour.resets_at);
     lines.push(
-      `   5h: ${usage.five_hour.utilization.toFixed(1)}%${reset ? ` (resets in ${reset})` : ""}`
+      `   5h: ${Math.round(usage.five_hour.utilization)}%${reset ? ` (resets in ${reset})` : ""}`
     );
   }
   if (usage.seven_day) {
     const reset = formatTimeRemaining(usage.seven_day.resets_at);
     lines.push(
-      `   7d: ${usage.seven_day.utilization.toFixed(1)}%${reset ? ` (resets in ${reset})` : ""}`
+      `   7d: ${Math.round(usage.seven_day.utilization)}%${reset ? ` (resets in ${reset})` : ""}`
     );
   }
   if (usage.seven_day_sonnet) {
     const reset = formatTimeRemaining(usage.seven_day_sonnet.resets_at);
     lines.push(
-      `   7d Sonnet: ${usage.seven_day_sonnet.utilization.toFixed(1)}%${reset ? ` (resets in ${reset})` : ""}`
+      `   7d Sonnet: ${Math.round(usage.seven_day_sonnet.utilization)}%${reset ? ` (resets in ${reset})` : ""}`
     );
   }
 
@@ -84,13 +84,13 @@ function formatCodexUsage(usage: CodexUsage): string[] {
   if (usage.primary) {
     const reset = formatTimeRemaining(usage.primary.resetAt);
     lines.push(
-      `   5h: ${usage.primary.usedPercent.toFixed(1)}%${reset ? ` (resets in ${reset})` : ""}`
+      `   5h: ${Math.round(usage.primary.usedPercent)}%${reset ? ` (resets in ${reset})` : ""}`
     );
   }
   if (usage.secondary) {
     const reset = formatTimeRemaining(usage.secondary.resetAt);
     lines.push(
-      `   7d: ${usage.secondary.usedPercent.toFixed(1)}%${reset ? ` (resets in ${reset})` : ""}`
+      `   7d: ${Math.round(usage.secondary.usedPercent)}%${reset ? ` (resets in ${reset})` : ""}`
     );
   }
 
@@ -103,7 +103,7 @@ function formatGeminiUsage(usage: GeminiUsage): string[] {
   if (usage.usedPercent !== null) {
     const reset = formatTimeRemaining(usage.resetAt);
     lines.push(
-      `   Usage: ${usage.usedPercent.toFixed(1)}%${reset ? ` (resets in ${reset})` : ""}`
+      `   Usage: ${Math.round(usage.usedPercent)}%${reset ? ` (resets in ${reset})` : ""}`
     );
   }
 

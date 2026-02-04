@@ -55,14 +55,20 @@ function buildEnhancedFooter(
   if (metadata?.usageBefore && metadata?.usageAfter) {
     const b = metadata.usageBefore;
     const a = metadata.usageAfter;
-    const d5 = Math.round((a.fiveHour - b.fiveHour) * 10) / 10;
-    const d7 = Math.round((a.sevenDay - b.sevenDay) * 10) / 10;
+    const d5 = Math.round(a.fiveHour - b.fiveHour);
+    const d7 = Math.round(a.sevenDay - b.sevenDay);
     const sign5 = d5 >= 0 ? "+" : "";
     const sign7 = d7 >= 0 ? "+" : "";
-    lines.push(`📊 5h: ${b.fiveHour.toFixed(1)}%→${a.fiveHour.toFixed(1)}% (${sign5}${d5.toFixed(1)}%) | 7d: ${b.sevenDay.toFixed(1)}%→${a.sevenDay.toFixed(1)}% (${sign7}${d7.toFixed(1)}%)`);
+    const ctxPart = metadata?.contextUsagePercent !== undefined
+      ? `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% | `
+      : "";
+    lines.push(`📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% (${sign5}${d5}%) | 7d: ${Math.round(a.sevenDay)}% (${sign7}${d7}%)`);
   } else if (metadata?.usageAfter) {
     const a = metadata.usageAfter;
-    lines.push(`📊 5h: ${a.fiveHour.toFixed(1)}% | 7d: ${a.sevenDay.toFixed(1)}%`);
+    const ctxPart = metadata?.contextUsagePercent !== undefined
+      ? `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% | `
+      : "";
+    lines.push(`📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% | 7d: ${Math.round(a.sevenDay)}%`);
   }
 
   // Tools line (if available)
