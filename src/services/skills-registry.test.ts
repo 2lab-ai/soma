@@ -183,4 +183,46 @@ describe("SkillsRegistry", () => {
     // Both scans should return same results (cache working)
     expect(scan1).toEqual(scan2);
   });
+
+  it("should handle non-array JSON gracefully", async () => {
+    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify({ skills: ["do-work"] }));
+
+    const skills = await skillsRegistry.load();
+    expect(skills).toEqual(["do-work", "new-task"]);
+  });
+
+  it("should handle empty array", async () => {
+    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify([]));
+
+    const skills = await skillsRegistry.load();
+    expect(skills).toEqual([]);
+  });
+
+  it("should reject skill names over 64 characters", async () => {
+    const longName = "a".repeat(65);
+    const data = ["do-work", longName];
+    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(data));
+
+    const skills = await skillsRegistry.load();
+    expect(skills).toContain("do-work");
+    expect(skills).not.toContain(longName);
+  });
+
+  it("should reject skill names starting with hyphen", async () => {
+    const data = ["do-work", "-invalid-start"];
+    writeFileSync(TEST_REGISTRY_PATH, JSON.stringify(data));
+
+    const skills = await skillsRegistry.load();
+    expect(skills).toContain("do-work");
+    expect(skills).not.toContain("-invalid-start");
+  });
+
+  it("should normalize skill names to lowercase", async () => {
+    await skillsRegistry.save(["DO-WORK", "New-Task"]);
+
+    const skills = await skillsRegistry.load();
+    expect(skills).toContain("do-work");
+    expect(skills).toContain("new-task");
+    expect(skills).not.toContain("DO-WORK");
+  });
 });
