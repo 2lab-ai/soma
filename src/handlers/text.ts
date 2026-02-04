@@ -390,7 +390,7 @@ export async function handleText(ctx: Context): Promise<void> {
           );
           // Final fallback: attempt reaction
           try {
-            await ctx.react("❌");
+            await ctx.react("👎");
           } catch {}
         }
         return;

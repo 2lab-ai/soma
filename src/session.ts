@@ -3,6 +3,7 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import type { Context } from "grammy";
 import {
   ALLOWED_PATHS,
+  CHAT_HISTORY_ACCESS_INFO,
   DEFAULT_THINKING_TOKENS,
   MCP_SERVERS,
   SAFETY_PROMPT,
@@ -506,7 +507,7 @@ export class ClaudeSession {
       allowDangerouslySkipPermissions: true,
       // Needed to observe per-API-call usage (message_start/message_delta) for accurate context usage.
       includePartialMessages: true,
-      systemPrompt: `${SAFETY_PROMPT}\n\n${UI_ASKUSER_INSTRUCTIONS}`,
+      systemPrompt: `${SAFETY_PROMPT}\n\n${UI_ASKUSER_INSTRUCTIONS}\n\n${CHAT_HISTORY_ACCESS_INFO}`,
       mcpServers: MCP_SERVERS,
       maxThinkingTokens: thinkingTokens,
       additionalDirectories: ALLOWED_PATHS,

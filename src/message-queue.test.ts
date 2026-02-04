@@ -14,7 +14,7 @@ describe("MessageQueue", () => {
     const batches: BatchPayload[] = [];
     const queue = new MessageQueue({
       debounceMs: 100,
-      onFlush: (batch) => batches.push(batch),
+      onFlush: (batch) => void batches.push(batch),
     });
 
     queue.enqueue("msg1");
@@ -28,7 +28,7 @@ describe("MessageQueue", () => {
     const batches: BatchPayload[] = [];
     const queue = new MessageQueue({
       debounceMs: 100,
-      onFlush: (batch) => batches.push(batch),
+      onFlush: (batch) => void batches.push(batch),
     });
 
     queue.enqueue("a");
@@ -43,7 +43,7 @@ describe("MessageQueue", () => {
     const batches: BatchPayload[] = [];
     const queue = new MessageQueue({
       debounceMs: 100,
-      onFlush: (batch) => batches.push(batch),
+      onFlush: (batch) => void batches.push(batch),
     });
 
     queue.enqueue("a");
@@ -60,7 +60,7 @@ describe("MessageQueue", () => {
     const batches: BatchPayload[] = [];
     const queue = new MessageQueue({
       debounceMs: 100,
-      onFlush: (batch) => batches.push(batch),
+      onFlush: (batch) => void batches.push(batch),
     });
 
     queue.enqueue("x");
@@ -84,7 +84,7 @@ describe("MessageQueue", () => {
     const batches: BatchPayload[] = [];
     const queue = new MessageQueue({
       debounceMs: 100,
-      onFlush: (batch) => batches.push(batch),
+      onFlush: (batch) => void batches.push(batch),
     });
 
     queue.enqueue("msg");
@@ -99,7 +99,7 @@ describe("MessageQueue", () => {
     const batches: BatchPayload[] = [];
     const queue = new MessageQueue({
       debounceMs: 100,
-      onFlush: (batch) => batches.push(batch),
+      onFlush: (batch) => void batches.push(batch),
     });
 
     queue.enqueue("a");
@@ -128,7 +128,7 @@ describe("MessageQueue", () => {
     const batches: BatchPayload[] = [];
     const queue = new MessageQueue({
       debounceMs: 100,
-      onFlush: (batch) => batches.push(batch),
+      onFlush: (batch) => void batches.push(batch),
     });
 
     queue.enqueue("msg");
@@ -169,7 +169,7 @@ describe("MessageQueue", () => {
     const batches: BatchPayload[] = [];
     const queue = new MessageQueue({
       debounceMs: 500,
-      onFlush: (batch) => batches.push(batch),
+      onFlush: (batch) => void batches.push(batch),
     });
 
     queue.enqueue("msg");
@@ -246,7 +246,7 @@ describe("MessageQueue", () => {
     const batches: BatchPayload[] = [];
     const queue = new MessageQueue({
       debounceMs: 0,
-      onFlush: (batch) => batches.push(batch),
+      onFlush: (batch) => void batches.push(batch),
     });
 
     queue.enqueue("instant");
