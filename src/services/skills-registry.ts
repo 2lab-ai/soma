@@ -25,9 +25,9 @@ export class SkillsRegistryError extends Error {
     message: string,
     public readonly code: "CORRUPT_FILE" | "SIZE_EXCEEDED" | "SCAN_FAILED" | "SAVE_FAILED" | "DIR_CREATE_FAILED",
     public readonly userMessage: string,
-    public readonly cause?: Error
+    originalError?: Error
   ) {
-    super(message);
+    super(message, { cause: originalError });
     this.name = "SkillsRegistryError";
   }
 }
@@ -235,9 +235,9 @@ class SkillsRegistryImpl {
       return [];
     }
 
-    let entries: Awaited<ReturnType<typeof readdir>>;
+    let entries: Array<{ name: string; isDirectory(): boolean; isSymbolicLink(): boolean }>;
     try {
-      entries = await readdir(SKILLS_DIR, { withFileTypes: true });
+      entries = await readdir(SKILLS_DIR, { withFileTypes: true }) as typeof entries;
     } catch (error) {
       // Unexpected: directory exists but can't be read
       throw new SkillsRegistryError(
