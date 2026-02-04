@@ -939,6 +939,7 @@ export class ClaudeSession {
       queryDurationMs: Date.now() - queryStartedMs,
       contextUsagePercent,
       contextUsagePercentBefore,
+      currentProvider: "anthropic",
     };
 
     if (currentSegmentText) {

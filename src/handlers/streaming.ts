@@ -17,7 +17,12 @@ import {
   PROGRESS_SPINNER_ENABLED,
   SHOW_ELAPSED_TIME,
   PROGRESS_REACTION_ENABLED,
+  SHOW_CURRENT_PROVIDER_USAGE,
+  SHOW_ANTHROPIC_USAGE,
+  SHOW_CODEX_USAGE,
+  SHOW_GEMINI_USAGE,
 } from "../config";
+import type { Provider } from "../types";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -52,7 +57,16 @@ function buildEnhancedFooter(
   lines.push(`⏰ ${startStr} → ${endStr} (${formatElapsed(startTime)})`);
 
   // Usage line (if available)
-  if (metadata?.usageBefore && metadata?.usageAfter) {
+  const shouldShowUsage = (() => {
+    const provider = metadata?.currentProvider;
+    if (SHOW_CURRENT_PROVIDER_USAGE && provider) return true;
+    if (SHOW_ANTHROPIC_USAGE && provider === "anthropic") return true;
+    if (SHOW_CODEX_USAGE && provider === "codex") return true;
+    if (SHOW_GEMINI_USAGE && provider === "gemini") return true;
+    return false;
+  })();
+
+  if (shouldShowUsage && metadata?.usageBefore && metadata?.usageAfter) {
     const b = metadata.usageBefore;
     const a = metadata.usageAfter;
     const d5 = Math.round(a.fiveHour - b.fiveHour);
@@ -67,7 +81,7 @@ function buildEnhancedFooter(
       return `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% (${signCtx}${dCtx.toFixed(1)}%) | `;
     })();
     lines.push(`📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% (${sign5}${d5}%) | 7d: ${Math.round(a.sevenDay)}% (${sign7}${d7}%)`);
-  } else if (metadata?.usageAfter) {
+  } else if (shouldShowUsage && metadata?.usageAfter) {
     const a = metadata.usageAfter;
     const ctxPart = metadata?.contextUsagePercent !== undefined
       ? `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% | `

@@ -11,6 +11,8 @@ export interface UsageSnapshot {
   sevenDay: number;
 }
 
+export type Provider = "anthropic" | "codex" | "gemini";
+
 export interface QueryMetadata {
   usageBefore: UsageSnapshot | null;
   usageAfter: UsageSnapshot | null;
@@ -18,6 +20,8 @@ export interface QueryMetadata {
   queryDurationMs: number;
   contextUsagePercent?: number;
   contextUsagePercentBefore?: number;
+  currentProvider?: Provider;
+  resetTimeMs?: number;
 }
 
 // Status callback for streaming updates
