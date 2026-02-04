@@ -1,8 +1,8 @@
-import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { SummaryGenerator } from "./summary-generator";
+import { existsSync, rmSync, mkdirSync } from "fs";
+import { readFile } from "fs/promises";
 import type { ChatRecord, IChatStorage, ISummaryStorage, Summary } from "../types/chat-history";
-
-const mockFetch = mock(() => Promise.resolve(new Response()));
 
 class MockChatStorage implements IChatStorage {
   records: ChatRecord[] = [];
@@ -49,233 +49,126 @@ class MockSummaryStorage implements ISummaryStorage {
   }
 }
 
+const TEST_SUMMARIES_DIR = "data/summaries";
+
 describe("SummaryGenerator", () => {
-  const originalFetch = globalThis.fetch;
   let chatStorage: MockChatStorage;
   let summaryStorage: MockSummaryStorage;
+  let generator: SummaryGenerator;
 
   beforeEach(() => {
-    globalThis.fetch = mockFetch;
-    mockFetch.mockClear();
     chatStorage = new MockChatStorage();
     summaryStorage = new MockSummaryStorage();
+    generator = new SummaryGenerator(chatStorage, summaryStorage);
+    if (existsSync(TEST_SUMMARIES_DIR)) {
+      rmSync(TEST_SUMMARIES_DIR, { recursive: true });
+    }
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    if (existsSync(TEST_SUMMARIES_DIR)) {
+      rmSync(TEST_SUMMARIES_DIR, { recursive: true });
+    }
   });
 
-  describe("generate", () => {
-    it("should return success with no chats when period is empty", async () => {
-      const generator = new SummaryGenerator(chatStorage, summaryStorage, {
-        anthropicApiKey: "test-key",
-      });
+  describe("saveSummary", () => {
+    it("should save summary to storage", async () => {
+      const content = "Test summary content";
+      const periodStart = new Date("2025-01-01T00:00:00Z");
+      const periodEnd = new Date("2025-01-02T00:00:00Z");
 
-      const result = await generator.generate({
-        granularity: "hourly",
-        periodStart: new Date("2025-01-01T00:00:00Z"),
-        periodEnd: new Date("2025-01-01T01:00:00Z"),
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.chatCount).toBe(0);
-      expect(result.error).toContain("No chats");
-    });
-
-    it("should return error when API key not configured", async () => {
-      const generator = new SummaryGenerator(chatStorage, summaryStorage);
-
-      chatStorage.records = [
-        {
-          id: "1",
-          sessionId: "s1",
-          claudeSessionId: "cs1",
-          model: "sonnet",
-          timestamp: "2025-01-01T00:30:00Z",
-          speaker: "user",
-          content: "Hello",
-        },
-      ];
-
-      const result = await generator.generate({
-        granularity: "hourly",
-        periodStart: new Date("2025-01-01T00:00:00Z"),
-        periodEnd: new Date("2025-01-01T01:00:00Z"),
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("API key");
-    });
-
-    it("should generate and save summary on success", async () => {
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            id: "msg_123",
-            content: [{ type: "text", text: "Summary: User greeted, assistant responded." }],
-            model: "claude-3-5-haiku-20241022",
-            stop_reason: "end_turn",
-            usage: { input_tokens: 50, output_tokens: 30 },
-          }),
-          { status: 200 }
-        )
+      const summary = await generator.saveSummary(
+        content,
+        "daily",
+        periodStart,
+        periodEnd,
+        10
       );
 
-      const generator = new SummaryGenerator(chatStorage, summaryStorage, {
-        anthropicApiKey: "test-key",
-      });
-
-      chatStorage.records = [
-        {
-          id: "1",
-          sessionId: "s1",
-          claudeSessionId: "cs1",
-          model: "sonnet",
-          timestamp: "2025-01-01T00:30:00Z",
-          speaker: "user",
-          content: "Hello",
-        },
-        {
-          id: "2",
-          sessionId: "s1",
-          claudeSessionId: "cs1",
-          model: "sonnet",
-          timestamp: "2025-01-01T00:30:05Z",
-          speaker: "assistant",
-          content: "Hi there!",
-        },
-      ];
-
-      const result = await generator.generate({
-        granularity: "hourly",
-        periodStart: new Date("2025-01-01T00:00:00Z"),
-        periodEnd: new Date("2025-01-01T01:00:00Z"),
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.summary).toBeDefined();
-      expect(result.summary?.content).toContain("Summary");
-      expect(result.chatCount).toBe(2);
+      expect(summary.content).toBe(content);
+      expect(summary.granularity).toBe("daily");
+      expect(summary.chatCount).toBe(10);
+      expect(summary.model).toBe("claude-session");
       expect(summaryStorage.summaries.length).toBe(1);
     });
+  });
 
-    it("should handle API errors gracefully", async () => {
-      mockFetch.mockResolvedValue(
-        new Response(JSON.stringify({ error: { message: "Server error" } }), { status: 500 })
-      );
+  describe("saveMarkdownSummary", () => {
+    it("should save markdown file with correct path", async () => {
+      const date = new Date("2025-06-15T12:00:00Z");
+      const content = "# Daily Summary\n\nTest content";
 
-      const generator = new SummaryGenerator(chatStorage, summaryStorage, {
-        anthropicApiKey: "test-key",
-      });
+      const path = await generator.saveMarkdownSummary(date, content);
 
+      expect(path).toBe("data/summaries/2025-06-15.md");
+      expect(existsSync(path)).toBe(true);
+
+      const saved = await readFile(path, "utf-8");
+      expect(saved).toBe(content);
+    });
+
+    it("should create directory if not exists", async () => {
+      const date = new Date("2025-06-16T12:00:00Z");
+      const content = "Test";
+
+      await generator.saveMarkdownSummary(date, content);
+
+      expect(existsSync(TEST_SUMMARIES_DIR)).toBe(true);
+    });
+  });
+
+  describe("getSummaryPath", () => {
+    it("should return correct path format", () => {
+      const date = new Date("2025-12-31T23:59:59Z");
+      const path = generator.getSummaryPath(date);
+      expect(path).toBe("data/summaries/2025-12-31.md");
+    });
+  });
+
+  describe("hasSummary", () => {
+    it("should return false when no summary exists", () => {
+      const date = new Date("2025-01-01");
+      expect(generator.hasSummary(date)).toBe(false);
+    });
+
+    it("should return true when summary exists", async () => {
+      const date = new Date("2025-01-02");
+      await generator.saveMarkdownSummary(date, "Test");
+      expect(generator.hasSummary(date)).toBe(true);
+    });
+  });
+
+  describe("readSummary", () => {
+    it("should return null when no summary exists", async () => {
+      const date = new Date("2025-01-03");
+      const result = await generator.readSummary(date);
+      expect(result).toBeNull();
+    });
+
+    it("should return content when summary exists", async () => {
+      const date = new Date("2025-01-04");
+      const content = "Summary content here";
+      await generator.saveMarkdownSummary(date, content);
+
+      const result = await generator.readSummary(date);
+      expect(result).toBe(content);
+    });
+  });
+
+  describe("getChatCount", () => {
+    it("should return count of chats in range", async () => {
       chatStorage.records = [
-        {
-          id: "1",
-          sessionId: "s1",
-          claudeSessionId: "cs1",
-          model: "sonnet",
-          timestamp: "2025-01-01T00:30:00Z",
-          speaker: "user",
-          content: "Hello",
-        },
+        { id: "1", sessionId: "s1", claudeSessionId: "c1", model: "sonnet", timestamp: "2025-01-01T12:00:00Z", speaker: "user", content: "Hello" },
+        { id: "2", sessionId: "s1", claudeSessionId: "c1", model: "sonnet", timestamp: "2025-01-01T12:01:00Z", speaker: "assistant", content: "Hi" },
+        { id: "3", sessionId: "s1", claudeSessionId: "c1", model: "sonnet", timestamp: "2025-01-01T12:02:00Z", speaker: "user", content: "Bye" },
       ];
 
-      const result = await generator.generate({
-        granularity: "hourly",
-        periodStart: new Date("2025-01-01T00:00:00Z"),
-        periodEnd: new Date("2025-01-01T01:00:00Z"),
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBeDefined();
-    });
-  });
-
-  describe("generateHourly", () => {
-    it("should set correct period boundaries", async () => {
-      const generator = new SummaryGenerator(chatStorage, summaryStorage, {
-        anthropicApiKey: "test-key",
-      });
-
-      const result = await generator.generateHourly(new Date("2025-01-01T14:30:00Z"));
-
-      expect(result.chatCount).toBe(0);
-    });
-  });
-
-  describe("generateDaily", () => {
-    it("should set correct period boundaries", async () => {
-      const generator = new SummaryGenerator(chatStorage, summaryStorage, {
-        anthropicApiKey: "test-key",
-      });
-
-      const result = await generator.generateDaily(new Date("2025-01-15T14:30:00Z"));
-
-      expect(result.chatCount).toBe(0);
-    });
-  });
-
-  describe("formatChatsForSummary", () => {
-    it("should skip tool messages", async () => {
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            id: "msg_123",
-            content: [{ type: "text", text: "Summary" }],
-            model: "claude-3-5-haiku-20241022",
-            stop_reason: "end_turn",
-            usage: { input_tokens: 50, output_tokens: 30 },
-          }),
-          { status: 200 }
-        )
+      const count = await generator.getChatCount(
+        new Date("2025-01-01"),
+        new Date("2025-01-02")
       );
 
-      const generator = new SummaryGenerator(chatStorage, summaryStorage, {
-        anthropicApiKey: "test-key",
-      });
-
-      chatStorage.records = [
-        {
-          id: "1",
-          sessionId: "s1",
-          claudeSessionId: "cs1",
-          model: "sonnet",
-          timestamp: "2025-01-01T00:30:00Z",
-          speaker: "user",
-          content: "Run command",
-        },
-        {
-          id: "2",
-          sessionId: "s1",
-          claudeSessionId: "cs1",
-          model: "sonnet",
-          timestamp: "2025-01-01T00:30:05Z",
-          speaker: "tool",
-          content: "Tool output here",
-          toolName: "Bash",
-        },
-        {
-          id: "3",
-          sessionId: "s1",
-          claudeSessionId: "cs1",
-          model: "sonnet",
-          timestamp: "2025-01-01T00:30:10Z",
-          speaker: "assistant",
-          content: "Command executed",
-        },
-      ];
-
-      const result = await generator.generate({
-        granularity: "hourly",
-        periodStart: new Date("2025-01-01T00:00:00Z"),
-        periodEnd: new Date("2025-01-01T01:00:00Z"),
-      });
-
-      expect(result.success).toBe(true);
-
-      const call = mockFetch.mock.calls[0];
-      const body = JSON.parse(call?.[1]?.body as string);
-      expect(body.messages[0].content).not.toContain("Tool output");
+      expect(count).toBe(3);
     });
   });
 });
