@@ -97,7 +97,6 @@ export async function fetchClaudeUsage(
       if (!response.ok) return null;
 
       const data = (await response.json()) as any;
-      console.log("[Usage] Claude raw:", JSON.stringify(data, null, 2));
       const usage: ClaudeUsage = {
         five_hour: data.five_hour ?? null,
         seven_day: data.seven_day ?? null,
@@ -191,7 +190,6 @@ export async function fetchCodexUsage(
       if (!response.ok) return null;
 
       const data = (await response.json()) as any;
-      console.log("[Usage] Codex raw:", JSON.stringify(data, null, 2));
       if (!data?.rate_limit || !data?.plan_type) return null;
 
       const model = await getCodexModel();
@@ -419,7 +417,6 @@ export async function fetchGeminiUsage(
 
       if (!response.ok) return null;
       const data = (await response.json()) as any;
-      console.log("[Usage] Gemini raw:", JSON.stringify(data, null, 2));
 
       const settings = await getGeminiSettings();
       const model = settings?.selectedModel ?? "unknown";

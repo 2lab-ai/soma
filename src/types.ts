@@ -16,6 +16,7 @@ export interface QueryMetadata {
   usageAfter: UsageSnapshot | null;
   toolDurations: Record<string, { count: number; totalMs: number }>;
   queryDurationMs: number;
+  contextUsagePercent?: number;
 }
 
 // Status callback for streaming updates

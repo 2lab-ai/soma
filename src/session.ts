@@ -924,11 +924,15 @@ export class ClaudeSession {
     usageAfter = await captureUsageSnapshot();
 
     // Build query metadata
+    const contextUsagePercent = this.contextWindowUsage
+      ? (this.currentContextTokens / this.contextWindowSize) * 100
+      : undefined;
     const metadata: QueryMetadata = {
       usageBefore,
       usageAfter,
       toolDurations,
       queryDurationMs: Date.now() - queryStartedMs,
+      contextUsagePercent,
     };
 
     if (currentSegmentText) {
