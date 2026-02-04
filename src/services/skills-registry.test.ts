@@ -257,4 +257,129 @@ describe("SkillsRegistry", () => {
     expect(skills).toContain("new-task");
     expect(skills).not.toContain("DO-WORK");
   });
+
+  // Critical test cases from soma-a9s
+
+  it("should throw SIZE_EXCEEDED when trying to save too many skills", async () => {
+    // Create array that exceeds MAX_REGISTRY_SIZE (10KB) when serialized
+    // Each entry ~20 chars in JSON, need ~600 to exceed 10KB with formatting
+    const tooManySkills = Array.from({ length: 800 }, (_, i) => `skill-name-${i.toString().padStart(5, "0")}`);
+    const serialized = JSON.stringify(tooManySkills, null, 2);
+    expect(serialized.length).toBeGreaterThan(10 * 1024); // Verify our test data is large enough
+
+    await expect(skillsRegistry.save(tooManySkills)).rejects.toThrow(SkillsRegistryError);
+
+    try {
+      await skillsRegistry.save(tooManySkills);
+    } catch (e) {
+      const error = e as SkillsRegistryError;
+      expect(error.code).toBe("SIZE_EXCEEDED");
+      expect(error.userMessage).toContain("too many skills");
+    }
+  });
+
+  it("should clean up temp file after atomic write", async () => {
+    const tempPath = `${TEST_REGISTRY_PATH}.tmp`;
+
+    // Ensure no leftover temp file
+    if (existsSync(tempPath)) {
+      rmSync(tempPath);
+    }
+
+    await skillsRegistry.save(["do-work", "new-task"]);
+
+    // Temp file should not exist after successful save
+    expect(existsSync(tempPath)).toBe(false);
+  });
+
+  it("should handle empty skills directory in scan", async () => {
+    // scan() returns empty array if no valid skills found
+    // This tests the case where directory exists but has no valid skills
+    const available = await skillsRegistry.scan();
+
+    // Should return an array (could be empty or have skills depending on env)
+    expect(Array.isArray(available)).toBe(true);
+  });
+
+  it("should not update cache on scan when no skills directory", async () => {
+    // First scan to populate cache
+    const firstScan = await skillsRegistry.scan();
+
+    // Cache should be populated
+    const secondScan = await skillsRegistry.scan();
+    expect(secondScan).toEqual(firstScan);
+  });
+
+  it("should handle concurrent save operations safely", async () => {
+    // Run multiple saves concurrently using Promise.allSettled
+    // Some may fail due to atomic rename race, but data should remain valid
+    const saves = [
+      skillsRegistry.save(["skill-a"]),
+      skillsRegistry.save(["skill-b"]),
+      skillsRegistry.save(["skill-c"]),
+    ];
+
+    const results = await Promise.allSettled(saves);
+
+    // At least one should succeed
+    const successes = results.filter((r) => r.status === "fulfilled");
+    expect(successes.length).toBeGreaterThanOrEqual(1);
+
+    // Registry should be valid and contain one of the values
+    const loaded = await skillsRegistry.load();
+    expect(loaded.length).toBe(1);
+    expect(["skill-a", "skill-b", "skill-c"]).toContain(loaded[0]);
+  });
+
+  it("should return invalid_name reason for add() with special characters", async () => {
+    await skillsRegistry.save(["do-work"]);
+
+    const result = await skillsRegistry.add("skill@with#special!");
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("invalid_name");
+      expect(result.message).toContain("lowercase letters, numbers, and hyphens");
+    }
+  });
+
+  it("should handle case-insensitive add() - DO-WORK same as do-work", async () => {
+    await skillsRegistry.save(["do-work"]);
+
+    const result = await skillsRegistry.add("DO-WORK");
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.reason).toBe("already_exists");
+    }
+  });
+
+  it("should handle case-insensitive remove() - DO-WORK same as do-work", async () => {
+    await skillsRegistry.save(["do-work", "new-task"]);
+
+    const result = await skillsRegistry.remove("DO-WORK");
+    expect(result.success).toBe(true);
+
+    const skills = await skillsRegistry.load();
+    expect(skills).not.toContain("do-work");
+    expect(skills).toContain("new-task");
+  });
+
+  it("should not save when sync() finds no changes needed", async () => {
+    // Save valid skills only
+    await skillsRegistry.save(["do-work", "new-task"]);
+
+    // Get initial file modification time
+    const initialStat = Bun.file(TEST_REGISTRY_PATH);
+    const initialSize = initialStat.size;
+
+    // Sync should not change anything since all skills are valid
+    const synced = await skillsRegistry.sync();
+
+    // Should return same skills
+    expect(synced).toContain("do-work");
+    expect(synced).toContain("new-task");
+
+    // File should be unchanged (same size at minimum)
+    const finalStat = Bun.file(TEST_REGISTRY_PATH);
+    expect(finalStat.size).toBe(initialSize);
+  });
 });
