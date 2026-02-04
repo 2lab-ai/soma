@@ -19,8 +19,8 @@ export const MCP_SERVERS: Record<
   | { command: string; args?: string[]; env?: Record<string, string> }
   | { type: "http"; url: string; headers?: Record<string, string> }
 > = {
-  // Chat History - Claude can query conversation history via MCP tools
-  // Tools: get_recent_chats, search_chats, get_chats_by_date
+  // Chat History v2.0 - Claude can query conversation history via MCP tools
+  // Tools: get_chats, get_chats_by_dates, get_chats_count_by_dates
   "chat-history": {
     command: "bun",
     args: ["run", `${REPO_ROOT}/mcp-servers/chat-history/server.ts`]
