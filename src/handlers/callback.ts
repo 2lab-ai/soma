@@ -18,6 +18,7 @@ import {
   type ModelId,
   type ReasoningLevel,
 } from "../model-config";
+import { skillsRegistry } from "../services/skills-registry";
 
 type CallbackMessage = {
   message_id?: number;
@@ -406,6 +407,60 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
   }
 }
 
+async function handleSkillCallback(
+  ctx: Context,
+  skillId: string,
+  userId: number,
+  username: string,
+  chatId: number,
+  threadId: number | undefined
+): Promise<void> {
+  if (skillId === "manage") {
+    await ctx.editMessageText(
+      `⚙️ <b>Skills Management</b>\n\n` +
+        `To customize your skills menu:\n\n` +
+        `• <b>Add:</b> "add do-work to skills menu"\n` +
+        `• <b>Remove:</b> "remove new-task from skills menu"\n` +
+        `• <b>Reset:</b> "reset skills menu to defaults"\n\n` +
+        `<i>Available skills are in ~/.claude/skills/</i>`,
+      { parse_mode: "HTML" }
+    );
+    await ctx.answerCallbackQuery();
+    return;
+  }
+
+  const skills = await skillsRegistry.sync();
+  if (!skills.includes(skillId)) {
+    await ctx.answerCallbackQuery({
+      text: `❌ Skill '${skillId}' not found`,
+      show_alert: true,
+    });
+    return;
+  }
+
+  await ctx.answerCallbackQuery({ text: `Launching ${skillId}...` });
+
+  try {
+    await ctx.editMessageText(`🚀 Launching skill: <b>${skillId}</b>`, {
+      parse_mode: "HTML",
+    });
+  } catch {
+  }
+
+  const session = sessionManager.getSession(chatId, threadId);
+  const message = `/${skillId}`;
+
+  await sendMessageToClaude(
+    ctx,
+    session,
+    message,
+    userId,
+    username,
+    chatId,
+    "SKILL_CALLBACK"
+  );
+}
+
 export async function handleCallback(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
   const username = ctx.from?.username || "unknown";
@@ -431,6 +486,18 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
   if (callbackData.startsWith("model:")) {
     await handleModelCallback(ctx, callbackData);
+    return;
+  }
+
+  if (callbackData.startsWith("sk:")) {
+    await handleSkillCallback(
+      ctx,
+      callbackData.slice(3),
+      userId,
+      username,
+      chatId,
+      threadId
+    );
     return;
   }
 
