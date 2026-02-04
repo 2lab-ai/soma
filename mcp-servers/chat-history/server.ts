@@ -12,7 +12,7 @@ import { FileSummaryStorage } from "../../src/storage/summary-storage";
 import { ChatSearchService } from "../../src/services/chat-search-service";
 import type { ChatRecord, Summary, SummaryGranularity } from "../../src/types/chat-history";
 
-const DATA_DIR = join(dirname(dirname(dirname(import.meta.path))), "data");
+const DATA_DIR = process.env.CHAT_HISTORY_DATA_DIR || join(process.cwd(), ".db");
 const chatStorage = new FileChatStorage(DATA_DIR);
 const summaryStorage = new FileSummaryStorage(DATA_DIR);
 const searchService = new ChatSearchService(chatStorage);
@@ -46,6 +46,19 @@ interface GetChatsCountResult {
   count: number;
   from: string;
   to: string;
+}
+
+interface SearchChatsResult {
+  data: ChatRecord[];
+  meta: {
+    from: string;
+    to: string;
+    searchTerm: string;
+    lastN: number;
+    afterN: number;
+    returned: number;
+    hasMore: boolean;
+  };
 }
 
 function selectGranularity(from: Date, to: Date): SummaryGranularity {
@@ -175,8 +188,45 @@ async function getChatsCountByDates(from: string, to: string): Promise<GetChatsC
   };
 }
 
+async function searchChats(
+  from: string,
+  to: string,
+  searchTerm: string,
+  lastN: number,
+  afterN: number
+): Promise<SearchChatsResult> {
+  const fromDate = new Date(from);
+  const toDate = new Date(to);
+  const limit = lastN + afterN;
+
+  const allChats = await chatStorage.search({
+    from: fromDate,
+    to: toDate,
+    query: searchTerm,
+    limit: limit + 100,
+  });
+
+  const midpoint = Math.floor(allChats.length / 2);
+  const before = allChats.slice(Math.max(0, midpoint - lastN), midpoint);
+  const after = allChats.slice(midpoint, midpoint + afterN);
+  const results = [...before, ...after];
+
+  return {
+    data: results,
+    meta: {
+      from: fromDate.toISOString(),
+      to: toDate.toISOString(),
+      searchTerm,
+      lastN,
+      afterN,
+      returned: results.length,
+      hasMore: allChats.length > limit,
+    },
+  };
+}
+
 const server = new Server(
-  { name: "chat-history", version: "2.0.0" },
+  { name: "chat-history", version: "2.1.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -256,6 +306,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["from", "to"],
       },
     },
+    {
+      name: "search_chats",
+      description: "Search chat messages by keyword within a datetime range. Returns messages containing the search term.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          from: {
+            type: "string",
+            description: "Start datetime (ISO format)",
+          },
+          to: {
+            type: "string",
+            description: "End datetime (ISO format)",
+          },
+          searchTerm: {
+            type: "string",
+            description: "Keyword to search for in messages",
+          },
+          lastN: {
+            type: "number",
+            description: "Number of messages before midpoint (default: 20)",
+            default: 20,
+          },
+          afterN: {
+            type: "number",
+            description: "Number of messages after midpoint (default: 0)",
+            default: 0,
+          },
+        },
+        required: ["from", "to", "searchTerm"],
+      },
+    },
   ],
 }));
 
@@ -296,6 +378,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!from || !to) throw new Error("from and to are required");
 
         const result = await getChatsCountByDates(from, to);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case "search_chats": {
+        const from = (args as any)?.from;
+        const to = (args as any)?.to;
+        const searchTerm = (args as any)?.searchTerm;
+        if (!from || !to) throw new Error("from and to are required");
+        if (!searchTerm) throw new Error("searchTerm is required");
+
+        const lastN = Math.min(Math.max((args as any)?.lastN || 20, 0), 500);
+        const afterN = Math.min(Math.max((args as any)?.afterN || 0, 0), 500);
+
+        const result = await searchChats(from, to, searchTerm, lastN, afterN);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };

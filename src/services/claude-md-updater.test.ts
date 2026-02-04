@@ -133,7 +133,7 @@ describe("ClaudeMdUpdater", () => {
       const parsed = await updater.read(TEST_FILE);
 
       const learning: Learning = {
-        category: "unknown",
+        category: "patterns",
         content: "Something completely unrelated xyz123",
         confidence: 0.9,
         sourceQuotes: [],
