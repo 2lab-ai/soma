@@ -19,6 +19,13 @@ export const MCP_SERVERS: Record<
   | { command: string; args?: string[]; env?: Record<string, string> }
   | { type: "http"; url: string; headers?: Record<string, string> }
 > = {
+  // Chat History - Claude can query conversation history via MCP tools
+  // Tools: get_recent_chats, search_chats, get_chats_by_date
+  "chat-history": {
+    command: "bun",
+    args: ["run", `${REPO_ROOT}/mcp-servers/chat-history/server.ts`]
+  },
+
   // Ask User - present options as Telegram inline keyboard buttons
   // Uncomment to enable interactive button prompts
   // "ask-user": {
