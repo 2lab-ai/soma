@@ -253,6 +253,10 @@ export const RESTART_FILE = "/tmp/soma-restart.json";
 export const TEMP_DIR = "/tmp/soma";
 export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
+// Chat history configuration
+export const CHAT_HISTORY_ENABLED = parseEnvBool("CHAT_HISTORY_ENABLED", true);
+export const CHAT_HISTORY_DATA_DIR = process.env.CHAT_HISTORY_DATA_DIR || "data";
+
 await Bun.write(`${TEMP_DIR}/.keep`, "");
 
 if (!TELEGRAM_TOKEN) {

@@ -8,6 +8,9 @@
 import { existsSync, mkdirSync, readdirSync, unlinkSync, readFileSync } from "fs";
 import { ClaudeSession } from "./session";
 import type { SessionData } from "./types";
+import { ChatCaptureService } from "./services/chat-capture-service";
+import { FileChatStorage } from "./storage/chat-storage";
+import { CHAT_HISTORY_ENABLED, CHAT_HISTORY_DATA_DIR } from "./config";
 
 const SESSIONS_DIR = "/tmp/soma-sessions";
 const LEGACY_SESSION_FILE = "/tmp/soma-session.json";
@@ -25,11 +28,28 @@ export interface SessionKey {
 class SessionManager {
   private sessions: Map<string, ClaudeSession> = new Map();
   private cleanupInterval: ReturnType<typeof setInterval> | null = null;
+  private chatCaptureService: ChatCaptureService | null = null;
 
   constructor() {
     this.ensureSessionsDir();
     this.migrateLegacySession();
+    this.initializeChatCapture();
     this.startCleanupTimer();
+  }
+
+  private initializeChatCapture() {
+    if (!CHAT_HISTORY_ENABLED) {
+      console.log("[SessionManager] Chat history disabled");
+      return;
+    }
+
+    try {
+      const storage = new FileChatStorage(CHAT_HISTORY_DATA_DIR);
+      this.chatCaptureService = new ChatCaptureService(storage);
+      console.log(`[SessionManager] Chat history enabled (${CHAT_HISTORY_DATA_DIR})`);
+    } catch (error) {
+      console.error("[SessionManager] Failed to initialize chat capture:", error);
+    }
   }
 
   /**
@@ -51,7 +71,7 @@ class SessionManager {
     const key = this.deriveKey(chatId, threadId);
 
     if (!this.sessions.has(key)) {
-      const session = new ClaudeSession(key);
+      const session = new ClaudeSession(key, this.chatCaptureService);
       this.sessions.set(key, session);
 
       // Try to load persisted session
