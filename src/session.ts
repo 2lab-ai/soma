@@ -20,7 +20,8 @@ import { formatToolStatus } from "./formatting";
 import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import { createSteeringMessage } from "./types";
-import type { SessionData, StatusCallback, SteeringMessage, TokenUsage } from "./types";
+import type { QueryMetadata, SessionData, StatusCallback, SteeringMessage, TokenUsage, UsageSnapshot } from "./types";
+import { fetchClaudeUsage } from "./usage";
 import type {
   ChoiceState,
   DirectInputState,
@@ -79,6 +80,19 @@ function mergeLatestUsage(
       base.cache_creation_input_tokens ?? 0
     ),
   };
+}
+
+async function captureUsageSnapshot(): Promise<UsageSnapshot | null> {
+  try {
+    const usage = await fetchClaudeUsage(0); // bypass cache
+    if (!usage) return null;
+    return {
+      fiveHour: usage.five_hour ? Math.round(usage.five_hour.utilization * 100) : 0,
+      sevenDay: usage.seven_day ? Math.round(usage.seven_day.utilization * 100) : 0,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function isClaudeCodeContextWindow(value: unknown): value is ClaudeCodeContextWindow {
@@ -593,7 +607,28 @@ export class ClaudeSession {
     let queryCompleted = false;
     let lastCallUsage: TokenUsage | null = null;
 
+    // Tool timing tracking
+    let currentToolStart: { name: string; startMs: number } | null = null;
+    const toolDurations: Record<string, { count: number; totalMs: number }> = {};
+    const closeCurrentTool = () => {
+      if (currentToolStart) {
+        const duration = Date.now() - currentToolStart.startMs;
+        const existing = toolDurations[currentToolStart.name] || { count: 0, totalMs: 0 };
+        toolDurations[currentToolStart.name] = {
+          count: existing.count + 1,
+          totalMs: existing.totalMs + duration,
+        };
+        currentToolStart = null;
+      }
+    };
+
+    // Usage before/after tracking
+    let usageBefore: UsageSnapshot | null = null;
+    let usageAfter: UsageSnapshot | null = null;
+
     try {
+      // Capture usage before query (non-blocking, don't delay query start)
+      captureUsageSnapshot().then(u => { usageBefore = u; }).catch(() => {});
       // Capture user message
       if (this.chatCaptureService && this.sessionId) {
         this.chatCaptureService.captureUserMessage(
@@ -691,6 +726,10 @@ export class ClaudeSession {
                 currentSegmentText = "";
               }
 
+              // Close previous tool timing, start new one
+              closeCurrentTool();
+              currentToolStart = { name: toolName, startMs: Date.now() };
+
               const toolDisplay = formatToolStatus(toolName, toolInput);
               this.currentTool = toolDisplay;
               this.lastTool = toolDisplay;
@@ -699,6 +738,7 @@ export class ClaudeSession {
             }
 
             if (block.type === "text") {
+              closeCurrentTool(); // Text means tool completed
               responseParts.push(block.text);
               currentSegmentText += block.text;
 
@@ -716,6 +756,7 @@ export class ClaudeSession {
 
         if (event.type === "result") {
           console.log("Response complete");
+          closeCurrentTool(); // Close any pending tool timing
           queryCompleted = true;
 
           const contextWindowFromClaudeCode = (() => {
@@ -865,6 +906,7 @@ export class ClaudeSession {
         throw error;
       }
     } finally {
+      closeCurrentTool(); // Ensure any pending tool timing is closed
       this._queryState = "idle";
       if (this._activityState !== "idle") {
         this.setActivityState("idle");
@@ -878,11 +920,22 @@ export class ClaudeSession {
     this.lastError = null;
     this.lastErrorTime = null;
 
+    // Capture usage after query
+    usageAfter = await captureUsageSnapshot();
+
+    // Build query metadata
+    const metadata: QueryMetadata = {
+      usageBefore,
+      usageAfter,
+      toolDurations,
+      queryDurationMs: Date.now() - queryStartedMs,
+    };
+
     if (currentSegmentText) {
       await statusCallback("segment_end", currentSegmentText, currentSegmentId);
     }
 
-    await statusCallback("done", "");
+    await statusCallback("done", "", undefined, metadata);
     processQueuedJobs().catch((err) =>
       console.error("[CRON] Failed to process queued jobs:", err)
     );
