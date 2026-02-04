@@ -175,13 +175,19 @@ describe("TelegramChoiceBuilder", () => {
 
       // Should show options for first question (q1)
       expect(inlineKeyboard[0][0].text).toBe("Option A");
-      expect(inlineKeyboard[0][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:q1:a$/);
+      expect(inlineKeyboard[0][0].callback_data).toMatch(
+        /^mc:[a-z0-9]{8}:form-abc:q1:a$/
+      );
       expect(inlineKeyboard[1][0].text).toBe("Option B");
-      expect(inlineKeyboard[1][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:q1:b$/);
+      expect(inlineKeyboard[1][0].callback_data).toMatch(
+        /^mc:[a-z0-9]{8}:form-abc:q1:b$/
+      );
 
       // Should have direct input button
       expect(inlineKeyboard[2][0].text).toBe("✏️ Direct input");
-      expect(inlineKeyboard[2][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:q1:__direct$/);
+      expect(inlineKeyboard[2][0].callback_data).toMatch(
+        /^mc:[a-z0-9]{8}:form-abc:q1:__direct$/
+      );
     });
 
     test("shows second question after first answered", () => {
@@ -201,7 +207,9 @@ describe("TelegramChoiceBuilder", () => {
 
       // Should show options for second question (q2)
       expect(inlineKeyboard[0][0].text).toBe("Option C");
-      expect(inlineKeyboard[0][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:q2:c$/);
+      expect(inlineKeyboard[0][0].callback_data).toMatch(
+        /^mc:[a-z0-9]{8}:form-abc:q2:c$/
+      );
       expect(inlineKeyboard[1][0].text).toBe("Option D");
 
       // Should have change button for q1
@@ -230,11 +238,15 @@ describe("TelegramChoiceBuilder", () => {
 
       // Should show submit button
       expect(inlineKeyboard[0][0].text).toBe("🚀 Submit");
-      expect(inlineKeyboard[0][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:__submit$/);
+      expect(inlineKeyboard[0][0].callback_data).toMatch(
+        /^mc:[a-z0-9]{8}:form-abc:__submit$/
+      );
 
       // Should show reset button
       expect(inlineKeyboard[1][0].text).toBe("🗑️ Reset");
-      expect(inlineKeyboard[1][0].callback_data).toMatch(/^mc:[a-z0-9]{8}:form-abc:__reset$/);
+      expect(inlineKeyboard[1][0].callback_data).toMatch(
+        /^mc:[a-z0-9]{8}:form-abc:__reset$/
+      );
     });
 
     test("throws when choices is empty", () => {
@@ -317,7 +329,8 @@ describe("TelegramChoiceBuilder", () => {
     });
 
     test("truncates long labels in change buttons", () => {
-      const longLabel = "This is a very long option label that exceeds thirty characters";
+      const longLabel =
+        "This is a very long option label that exceeds thirty characters";
       const choices: UserChoices = {
         type: "user_choices",
         questions: [

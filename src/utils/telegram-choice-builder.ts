@@ -81,8 +81,7 @@ export class TelegramChoiceBuilder {
 
     // Progress indicator: ●●○○○
     const progressIndicator =
-      "●".repeat(answeredCount) +
-      "○".repeat(totalQuestions - answeredCount);
+      "●".repeat(answeredCount) + "○".repeat(totalQuestions - answeredCount);
 
     // Find first unanswered question
     const firstUnanswered = choices.questions.find((q) => !selections[q.id]);
@@ -124,10 +123,9 @@ export class TelegramChoiceBuilder {
       const changeCallback = `mc:${compressedKey}:${formId}:${safeQId}:__change`;
       validateCallbackData(changeCallback);
       const selectedLabel = selections[q.id]!.label;
-      keyboard.text(
-        `🔄 Change "${truncateLabel(selectedLabel)}"`,
-        changeCallback
-      ).row();
+      keyboard
+        .text(`🔄 Change "${truncateLabel(selectedLabel)}"`, changeCallback)
+        .row();
     }
 
     return keyboard;

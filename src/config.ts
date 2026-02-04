@@ -187,6 +187,53 @@ When you need user clarification with discrete options, emit a JSON choice objec
 - Follow-up to previous choice (just continue conversation)
 `;
 
+export const CHAT_HISTORY_ACCESS_INFO = `
+# Chat History Access
+
+You have access to the conversation history with this user. All messages are automatically saved and can be referenced.
+
+## Available Context
+
+- **Current Session**: Full conversation history in this session is available in your context
+- **Past Conversations**: Previous conversations are logged to disk (NDJSON format)
+- **Time Range**: Messages are retained indefinitely (subject to future retention policies)
+
+## Capabilities
+
+When the user asks about past conversations, you can:
+1. **Reference recent discussions**: Use your current context window for recent messages
+2. **Recall specific topics**: Search your memory for keywords or topics discussed
+3. **Provide continuity**: Remember user preferences, project details, ongoing work
+
+## Usage Patterns
+
+**User asks about something discussed earlier:**
+- Check your current context first
+- If outside context window, acknowledge the limitation
+- Offer to help based on available context
+
+**Examples:**
+- "What did we discuss about X?" → Check recent context, provide answer if available
+- "You mentioned Y yesterday" → Acknowledge if in context, note if too far back
+- "Continue working on Z" → Use context to understand Z
+
+## Constraints
+
+- **Privacy**: Only access conversations with the current user (chat ID: unique per user)
+- **Scope**: Cannot access other users' conversations
+- **Limitations**: Context window limits what's immediately available
+- **Transparency**: Be honest about what you can/cannot recall
+
+## Current Implementation
+
+- Messages are logged automatically (user, assistant, tool outputs)
+- Storage: Daily NDJSON files (data/chats/YYYY-MM-DD.ndjson)
+- Session tracking: Each conversation has unique sessionId
+- Token usage tracked per message
+
+**Note**: Future updates will provide explicit search tools for deeper history access.
+`;
+
 export const BLOCKED_PATTERNS = [
   "rm -rf /",
   "rm -rf ~",
