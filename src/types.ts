@@ -5,11 +5,25 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 
+// Query metadata for response footer
+export interface UsageSnapshot {
+  fiveHour: number;
+  sevenDay: number;
+}
+
+export interface QueryMetadata {
+  usageBefore: UsageSnapshot | null;
+  usageAfter: UsageSnapshot | null;
+  toolDurations: Record<string, { count: number; totalMs: number }>;
+  queryDurationMs: number;
+}
+
 // Status callback for streaming updates
 export type StatusCallback = (
   type: "thinking" | "tool" | "text" | "segment_end" | "done",
   content: string,
-  segmentId?: number
+  segmentId?: number,
+  metadata?: QueryMetadata
 ) => Promise<void>;
 
 // Rate limit bucket for token bucket algorithm

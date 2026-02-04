@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { InlineKeyboard } from "grammy";
-import type { StatusCallback } from "../types";
+import type { QueryMetadata, StatusCallback } from "../types";
 import type { ClaudeSession } from "../session";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import { UserChoiceExtractor } from "../utils/user-choice-extractor";
@@ -30,6 +30,54 @@ function formatElapsed(startTime: Date): string {
   const minutes = Math.floor(elapsed / 60);
   const seconds = elapsed % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function buildEnhancedFooter(
+  startTime: Date,
+  metadata?: QueryMetadata
+): string {
+  const endTime = new Date();
+  const timeOpts = { hour: "2-digit", minute: "2-digit", second: "2-digit" } as const;
+  const startStr = startTime.toLocaleTimeString("ko-KR", timeOpts);
+  const endStr = endTime.toLocaleTimeString("ko-KR", timeOpts);
+
+  const lines: string[] = [];
+
+  // Time line
+  lines.push(`⏰ ${startStr} → ${endStr} (${formatElapsed(startTime)})`);
+
+  // Usage line (if available)
+  if (metadata?.usageBefore && metadata?.usageAfter) {
+    const b = metadata.usageBefore;
+    const a = metadata.usageAfter;
+    const d5 = a.fiveHour - b.fiveHour;
+    const d7 = a.sevenDay - b.sevenDay;
+    const sign5 = d5 >= 0 ? "+" : "";
+    const sign7 = d7 >= 0 ? "+" : "";
+    lines.push(`📊 5h: ${b.fiveHour}%→${a.fiveHour}% (${sign5}${d5}%) | 7d: ${b.sevenDay}%→${a.sevenDay}% (${sign7}${d7}%)`);
+  } else if (metadata?.usageAfter) {
+    const a = metadata.usageAfter;
+    lines.push(`📊 5h: ${a.fiveHour}% | 7d: ${a.sevenDay}%`);
+  }
+
+  // Tools line (if available)
+  if (metadata?.toolDurations) {
+    const tools = Object.entries(metadata.toolDurations);
+    if (tools.length > 0) {
+      const parts = tools
+        .sort((x, y) => y[1].totalMs - x[1].totalMs) // Sort by total time desc
+        .slice(0, 5) // Top 5 tools
+        .map(([name, { count, totalMs }]) => `${name}×${count}: ${formatDurationMs(totalMs)}`);
+      lines.push(`🔧 ${parts.join(" | ")}`);
+    }
+  }
+
+  return `\n\n<i>${lines.join("\n")}</i>`;
 }
 
 async function deleteMessage(ctx: Context, msg: Message): Promise<void> {
@@ -188,7 +236,7 @@ export async function createStatusCallback(
     }
   }
 
-  return async (statusType: string, content: string, segmentId?: number) => {
+  return async (statusType: string, content: string, segmentId?: number, metadata?: QueryMetadata) => {
     try {
       if (statusType === "thinking") {
         const escaped = escapeHtml(truncate(content, 500));
@@ -326,15 +374,7 @@ export async function createStatusCallback(
         if (state.progressMessage) await deleteMessage(ctx, state.progressMessage);
 
         if (SHOW_ELAPSED_TIME && state.startTime && state.textMessages.size > 0) {
-          const endTime = new Date();
-          const timeOpts = {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-          } as const;
-          const startStr = state.startTime.toLocaleTimeString("ko-KR", timeOpts);
-          const endStr = endTime.toLocaleTimeString("ko-KR", timeOpts);
-          const timeFooter = `\n\n<i>⏰ ${startStr} → ${endStr} (${formatElapsed(state.startTime)})</i>`;
+          const footer = buildEnhancedFooter(state.startTime, metadata);
 
           const lastSegmentId = Math.max(...state.textMessages.keys());
           const lastMsg = state.textMessages.get(lastSegmentId);
@@ -345,11 +385,11 @@ export async function createStatusCallback(
               await ctx.api.editMessageText(
                 lastMsg.chat.id,
                 lastMsg.message_id,
-                lastContent + timeFooter,
+                lastContent + footer,
                 { parse_mode: "HTML" }
               );
             } catch {
-              // Time footer append failed
+              // Footer append failed
             }
           }
         }
