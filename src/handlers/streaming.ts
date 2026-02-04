@@ -59,9 +59,13 @@ function buildEnhancedFooter(
     const d7 = Math.round(a.sevenDay - b.sevenDay);
     const sign5 = d5 >= 0 ? "+" : "";
     const sign7 = d7 >= 0 ? "+" : "";
-    const ctxPart = metadata?.contextUsagePercent !== undefined
-      ? `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% | `
-      : "";
+    const ctxPart = (() => {
+      if (metadata?.contextUsagePercent === undefined) return "";
+      const ctxBefore = metadata.contextUsagePercentBefore ?? metadata.contextUsagePercent;
+      const dCtx = Math.round((metadata.contextUsagePercent - ctxBefore) * 10) / 10;
+      const signCtx = dCtx >= 0 ? "+" : "";
+      return `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% (${signCtx}${dCtx.toFixed(1)}%) | `;
+    })();
     lines.push(`📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% (${sign5}${d5}%) | 7d: ${Math.round(a.sevenDay)}% (${sign7}${d7}%)`);
   } else if (metadata?.usageAfter) {
     const a = metadata.usageAfter;

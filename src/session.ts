@@ -607,6 +607,11 @@ export class ClaudeSession {
     let queryCompleted = false;
     let lastCallUsage: TokenUsage | null = null;
 
+    // Context usage before query
+    const contextUsagePercentBefore = this.contextWindowUsage
+      ? (this.currentContextTokens / this.contextWindowSize) * 100
+      : undefined;
+
     // Tool timing tracking
     let currentToolStart: { name: string; startMs: number } | null = null;
     const toolDurations: Record<string, { count: number; totalMs: number }> = {};
@@ -933,6 +938,7 @@ export class ClaudeSession {
       toolDurations,
       queryDurationMs: Date.now() - queryStartedMs,
       contextUsagePercent,
+      contextUsagePercentBefore,
     };
 
     if (currentSegmentText) {
