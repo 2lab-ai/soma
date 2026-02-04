@@ -272,7 +272,7 @@ export const THINKING_DEEP_KEYWORDS = parseEnvList("THINKING_DEEP_KEYWORDS").len
 
 export const DELETE_THINKING_MESSAGES = parseEnvBool(
   "DEFAULT_DELETE_THINKING_MESSAGES",
-  false
+  true
 );
 export const DELETE_TOOL_MESSAGES = parseEnvBool("DEFAULT_DELETE_TOOL_MESSAGES", true);
 export const PROGRESS_SPINNER_ENABLED = parseEnvBool("PROGRESS_SPINNER_ENABLED", false);
