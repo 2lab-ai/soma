@@ -15,7 +15,7 @@ import {
   UI_ASKUSER_INSTRUCTIONS,
   WORKING_DIR,
 } from "./config";
-import { getModelForContext, getReasoningTokens } from "./model-config";
+import { getModelForContext, getReasoningTokens, type ConfigContext } from "./model-config";
 import { formatToolStatus } from "./formatting";
 import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
@@ -465,7 +465,8 @@ export class ClaudeSession {
     userId: number,
     statusCallback: StatusCallback,
     chatId?: number,
-    ctx?: Context
+    ctx?: Context,
+    modelContext: ConfigContext = "general"
   ): Promise<string> {
     if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);
 
@@ -501,7 +502,7 @@ export class ClaudeSession {
     }
 
     const options: Options = {
-      model: getModelForContext("general"),
+      model: getModelForContext(modelContext),
       cwd: WORKING_DIR,
       settingSources: ["user", "project"],
       permissionMode: "bypassPermissions",
@@ -562,7 +563,7 @@ export class ClaudeSession {
         this.chatCaptureService.captureUserMessage(
           this.sessionKey,
           this.sessionId,
-          getModelForContext("general"),
+          getModelForContext(modelContext),
           message // Original user message, not the preprocessed one
         ).catch(err => console.error("[ChatCapture] Failed to capture user message:", err));
       }
@@ -857,7 +858,7 @@ export class ClaudeSession {
       this.chatCaptureService.captureAssistantMessage(
         this.sessionKey,
         this.sessionId,
-        getModelForContext("general"),
+        getModelForContext(modelContext),
         fullResponse,
         {
           tokenUsage: this.lastUsage ? {

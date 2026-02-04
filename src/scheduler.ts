@@ -14,6 +14,7 @@ import { session } from "./session";
 import { escapeHtml } from "./formatting";
 import { isPathAllowed } from "./security";
 import type { CronConfig, CronSchedule } from "./types";
+import { getModelForContext, MODEL_DISPLAY_NAMES } from "./model-config";
 
 const CRON_CONFIG_PATH = resolve(WORKING_DIR, "cron.yaml");
 const MAX_PROMPT_LENGTH = 10000;
@@ -99,7 +100,9 @@ function checkRateLimit(): boolean {
 
 async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
   const { name, prompt, notify } = schedule;
-  console.log(`[CRON] Executing scheduled job: ${name}`);
+  const cronModel = getModelForContext("cron");
+  console.log(`[CRON] Executing scheduled job: ${name} (model: ${MODEL_DISPLAY_NAMES[cronModel]})`);
+
 
   if (cronExecutionLock || session.isRunning) {
     if (pendingCronJobs.length >= MAX_PENDING_QUEUE_SIZE) {
@@ -137,7 +140,10 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
       prompt,
       `cron:${name}`,
       userId,
-      statusCallback
+      statusCallback,
+      undefined, // chatId
+      undefined, // ctx
+      "cron"     // modelContext - uses cron model from config
     );
 
     console.log(`[CRON] Job ${name} completed`);
