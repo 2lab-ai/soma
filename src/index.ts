@@ -113,13 +113,13 @@ bot.use(
 
 // Register Telegram command autocomplete menu
 await bot.api.setMyCommands([
+  { command: "skills", description: "Quick access to SuperClaude skills" },
   { command: "start", description: "Welcome message and status" },
   { command: "new", description: "Start fresh Claude session" },
   { command: "stop", description: "Stop current query" },
   { command: "status", description: "Show session details" },
   { command: "stats", description: "Token usage & cost statistics" },
   { command: "context", description: "Context window usage (200K limit)" },
-  { command: "skills", description: "Quick access to SuperClaude skills" },
   { command: "model", description: "Configure model & reasoning settings" },
   { command: "help", description: "Show all available commands" },
   { command: "resume", description: "Resume last saved session" },
