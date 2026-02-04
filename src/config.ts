@@ -304,6 +304,12 @@ export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
 export const CHAT_HISTORY_ENABLED = parseEnvBool("CHAT_HISTORY_ENABLED", true);
 export const CHAT_HISTORY_DATA_DIR = process.env.CHAT_HISTORY_DATA_DIR || "data";
 
+// Usage display settings
+export const SHOW_CURRENT_PROVIDER_USAGE = parseEnvBool("SHOW_CURRENT_PROVIDER_USAGE", true);
+export const SHOW_ANTHROPIC_USAGE = parseEnvBool("SHOW_ANTHROPIC_USAGE", false);
+export const SHOW_CODEX_USAGE = parseEnvBool("SHOW_CODEX_USAGE", false);
+export const SHOW_GEMINI_USAGE = parseEnvBool("SHOW_GEMINI_USAGE", false);
+
 await Bun.write(`${TEMP_DIR}/.keep`, "");
 
 if (!TELEGRAM_TOKEN) {
