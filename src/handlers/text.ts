@@ -661,6 +661,16 @@ export async function handleText(ctx: Context): Promise<void> {
       // Final attempt failed or non-retryable error
       console.error("Error processing message:", error);
 
+      // Clear steering buffer on error to prevent wrong context delivery
+      if (session.hasSteeringMessages()) {
+        const lostCount = session.getSteeringCount();
+        session.consumeSteering(); // Clear the buffer
+        console.warn(`[STEERING] Cleared ${lostCount} message(s) due to error`);
+        await ctx.reply(
+          `⚠️ 에러로 인해 대기 중이던 ${lostCount}개 메시지가 처리되지 않았습니다. 다시 보내주세요.`
+        );
+      }
+
       // Check if it was a cancellation
       if (await handleAbortError(ctx, error, session)) {
         // Abort handled

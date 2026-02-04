@@ -1010,7 +1010,13 @@ export class ClaudeSession {
     return fullResponse;
   }
 
-  async kill(): Promise<void> {
+  async kill(): Promise<number> {
+    // Return count of lost steering messages for caller to notify user
+    const lostSteeringCount = this.steeringBuffer.length;
+    if (lostSteeringCount > 0) {
+      console.warn(`[STEERING] Clearing ${lostSteeringCount} message(s) during session kill`);
+    }
+
     this.sessionId = null;
     this.lastActivity = null;
     this.sessionStartTime = null;
@@ -1022,6 +1028,7 @@ export class ClaudeSession {
     this.steeringBuffer = [];
     this.resetWarningFlags();
     console.log("Session cleared");
+    return lostSteeringCount;
   }
 
   markRestored(): void {
@@ -1040,7 +1047,13 @@ export class ClaudeSession {
     this.messagesSinceRestore = 0;
   }
 
-  restoreFromData(data: SessionData): void {
+  restoreFromData(data: SessionData): number {
+    // Return count of lost steering messages for caller to notify user
+    const lostSteeringCount = this.steeringBuffer.length;
+    if (lostSteeringCount > 0) {
+      console.warn(`[STEERING] Clearing ${lostSteeringCount} message(s) during session restore`);
+    }
+
     this.sessionId = data.session_id;
     this.lastActivity = new Date();
     this.totalInputTokens = data.totalInputTokens || 0;
@@ -1054,6 +1067,7 @@ export class ClaudeSession {
     if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0)
       this.contextWindowSize = data.contextWindowSize;
     this.steeringBuffer = [];
+    return lostSteeringCount;
   }
 
   private accumulateUsage(u: TokenUsage): void {
