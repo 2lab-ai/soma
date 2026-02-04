@@ -56,13 +56,13 @@ function buildEnhancedFooter(
     const b = metadata.usageBefore;
     const a = metadata.usageAfter;
     const d5 = Math.round((a.fiveHour - b.fiveHour) * 10) / 10;
-    const d7 = a.sevenDay - b.sevenDay;
+    const d7 = Math.round((a.sevenDay - b.sevenDay) * 10) / 10;
     const sign5 = d5 >= 0 ? "+" : "";
     const sign7 = d7 >= 0 ? "+" : "";
-    lines.push(`📊 5h: ${b.fiveHour.toFixed(1)}%→${a.fiveHour.toFixed(1)}% (${sign5}${d5.toFixed(1)}%) | 7d: ${b.sevenDay}%→${a.sevenDay}% (${sign7}${d7}%)`);
+    lines.push(`📊 5h: ${b.fiveHour.toFixed(1)}%→${a.fiveHour.toFixed(1)}% (${sign5}${d5.toFixed(1)}%) | 7d: ${b.sevenDay.toFixed(1)}%→${a.sevenDay.toFixed(1)}% (${sign7}${d7.toFixed(1)}%)`);
   } else if (metadata?.usageAfter) {
     const a = metadata.usageAfter;
-    lines.push(`📊 5h: ${a.fiveHour.toFixed(1)}% | 7d: ${a.sevenDay}%`);
+    lines.push(`📊 5h: ${a.fiveHour.toFixed(1)}% | 7d: ${a.sevenDay.toFixed(1)}%`);
   }
 
   // Tools line (if available)
