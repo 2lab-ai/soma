@@ -5,7 +5,7 @@
  */
 
 import { readdir, readFile, stat } from "fs/promises";
-import { join, resolve } from "path";
+import { join, resolve, relative } from "path";
 
 const DEFAULT_HISTORY_DIR = "/home/zhugehyuk/2lab.ai/soul/p9/USER/history";
 
@@ -48,7 +48,12 @@ export interface ReaderOptions {
   dateRange?: DateRange;
   lastNDays?: number;
   includeMonthly?: boolean;
-  parseDepth?: "shallow" | "full";
+}
+
+export interface GetEntriesResult {
+  entries: ConversationEntry[];
+  warnings: string[];
+  errors: Array<{ path: string; error: string }>;
 }
 
 export interface ParseResult<T> {
@@ -164,8 +169,23 @@ export class ConversationReader {
 
   constructor(private historyDir: string = DEFAULT_HISTORY_DIR) {}
 
-  async scanMetadata(): Promise<FileMetadata[]> {
-    const files = await readdir(this.historyDir);
+  async scanMetadata(): Promise<{ metadata: FileMetadata[]; errors: string[] }> {
+    const errors: string[] = [];
+    let files: string[];
+
+    try {
+      files = await readdir(this.historyDir);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return { metadata: [], errors: [`History directory not found: ${this.historyDir}`] };
+      }
+      if (code === "EACCES") {
+        return { metadata: [], errors: [`Permission denied: ${this.historyDir}`] };
+      }
+      return { metadata: [], errors: [`Failed to read directory: ${String(e)}`] };
+    }
+
     const metadata: FileMetadata[] = [];
 
     for (const file of files) {
@@ -173,30 +193,35 @@ export class ConversationReader {
       if (!parsed) continue;
 
       const fullPath = join(this.historyDir, file);
-      const fileStat = await stat(fullPath);
 
-      const meta: FileMetadata = {
-        path: fullPath,
-        ...parsed,
-        size: fileStat.size,
-        mtime: fileStat.mtimeMs,
-      };
-
-      metadata.push(meta);
-      this.metadataCache.set(fullPath, meta);
+      try {
+        const fileStat = await stat(fullPath);
+        const meta: FileMetadata = {
+          path: fullPath,
+          ...parsed,
+          size: fileStat.size,
+          mtime: fileStat.mtimeMs,
+        };
+        metadata.push(meta);
+        this.metadataCache.set(fullPath, meta);
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        errors.push(`${file}: ${code === "EACCES" ? "permission denied" : String(e)}`);
+      }
     }
 
-    return metadata.sort((a, b) => b.date.getTime() - a.date.getTime());
+    return {
+      metadata: metadata.sort((a, b) => b.date.getTime() - a.date.getTime()),
+      errors,
+    };
   }
 
   private validatePath(path: string): string | null {
-    const resolvedPath = resolve(path).replace(/\\/g, "/");
-    const resolvedHistoryDir = resolve(this.historyDir).replace(/\\/g, "/");
-    const normalizedDir = resolvedHistoryDir.endsWith("/")
-      ? resolvedHistoryDir
-      : resolvedHistoryDir + "/";
+    const resolvedPath = resolve(path);
+    const resolvedHistoryDir = resolve(this.historyDir);
+    const rel = relative(resolvedHistoryDir, resolvedPath);
 
-    if (!resolvedPath.startsWith(normalizedDir)) {
+    if (rel.startsWith("..") || rel.includes("/..") || rel.includes("\\..")) {
       return `Path traversal blocked: ${path}`;
     }
 
@@ -223,11 +248,23 @@ export class ConversationReader {
       const entry = this.parse(content, resolvedPath, warnings);
       return { ok: true, data: entry, warnings };
     } catch (e) {
-      const errorCode = (e as NodeJS.ErrnoException).code;
-      if (errorCode === "ENOENT") {
+      const err = e as NodeJS.ErrnoException;
+      const code = err.code;
+
+      if (code === "ENOENT") {
         return { ok: false, error: `File not found: ${resolvedPath}`, warnings: [] };
       }
-      return { ok: false, error: String(e), warnings: [] };
+      if (code === "EACCES") {
+        return { ok: false, error: `Permission denied: ${resolvedPath}`, warnings: [] };
+      }
+      if (code === "EISDIR") {
+        return { ok: false, error: `Path is a directory: ${resolvedPath}`, warnings: [] };
+      }
+      if (code === "EMFILE" || code === "ENFILE") {
+        return { ok: false, error: `Too many open files`, warnings: [] };
+      }
+
+      return { ok: false, error: `Read failed [${code || "unknown"}]: ${err.message}`, warnings: [] };
     }
   }
 
@@ -313,21 +350,34 @@ export class ConversationReader {
     return metadata.filter((meta) => this.isInDateRange(meta, range, opts));
   }
 
-  async getEntries(opts: ReaderOptions = {}): Promise<ConversationEntry[]> {
-    const metadata = await this.scanMetadata();
+  async getEntries(opts: ReaderOptions = {}): Promise<GetEntriesResult> {
+    const { metadata, errors: scanErrors } = await this.scanMetadata();
     const filtered = this.filterMetadata(metadata, opts);
 
     const entries: ConversationEntry[] = [];
+    const warnings: string[] = [];
+    const errors: Array<{ path: string; error: string }> = scanErrors.map((e) => ({
+      path: this.historyDir,
+      error: e,
+    }));
 
     for (const meta of filtered) {
       const result = await this.readFile(meta.path);
+
       if (result.ok && result.data) {
         entries.push(result.data);
+        if (result.warnings.length > 0) {
+          warnings.push(...result.warnings);
+        }
       } else if (result.error) {
-        console.warn(`[ConversationReader] ${result.error}`);
+        errors.push({ path: meta.path, error: result.error });
       }
     }
 
-    return entries.sort((a, b) => a.date.getTime() - b.date.getTime());
+    return {
+      entries: entries.sort((a, b) => a.date.getTime() - b.date.getTime()),
+      warnings,
+      errors,
+    };
   }
 }
