@@ -42,6 +42,21 @@ function formatDurationMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function buildProgressBar(elapsedMs: number): string {
+  // Animated progress bar that cycles every ~60 seconds
+  const cycleMs = 60_000;
+  const progress = (elapsedMs % cycleMs) / cycleMs;
+  const filled = Math.floor(progress * 20);
+  const empty = 20 - filled;
+  const bar = "█".repeat(filled) + "░".repeat(empty);
+  const elapsedSec = Math.floor(elapsedMs / 1000);
+  return `⏱️ ${elapsedSec}s [${bar}]`;
+}
+
+function isAiMcpTool(content: string): boolean {
+  return /🔮.*MCP.*(?:codex|gemini|claude)/i.test(content);
+}
+
 function buildEnhancedFooter(
   startTime: Date,
   metadata?: QueryMetadata
@@ -182,11 +197,31 @@ export class StreamingState {
   hasSteeringPending = false;
   steeringPendingCount = 0;
 
+  // MCP progress tracking
+  mcpToolMessage: Message | null = null;
+  mcpToolStartTime: number | null = null;
+  mcpToolBaseContent: string | null = null;
+  mcpProgressTimer: Timer | null = null;
+
   cleanup(): void {
     if (this.progressTimer) {
       clearInterval(this.progressTimer);
       this.progressTimer = null;
     }
+    if (this.mcpProgressTimer) {
+      clearInterval(this.mcpProgressTimer);
+      this.mcpProgressTimer = null;
+    }
+  }
+
+  stopMcpProgress(): void {
+    if (this.mcpProgressTimer) {
+      clearInterval(this.mcpProgressTimer);
+      this.mcpProgressTimer = null;
+    }
+    this.mcpToolMessage = null;
+    this.mcpToolStartTime = null;
+    this.mcpToolBaseContent = null;
   }
 }
 
@@ -265,6 +300,7 @@ export async function createStatusCallback(
   return async (statusType: string, content: string, segmentId?: number, metadata?: QueryMetadata) => {
     try {
       if (statusType === "thinking") {
+        state.stopMcpProgress(); // Stop any MCP progress timer
         const escaped = escapeHtml(truncate(content, 500));
         const thinkingMsg = await ctx.reply(`🧠 <i>${escaped}</i>`, {
           parse_mode: "HTML",
@@ -275,13 +311,45 @@ export async function createStatusCallback(
       }
 
       if (statusType === "tool") {
+        // Stop any previous MCP progress timer
+        state.stopMcpProgress();
+
         const toolMsg = await ctx.reply(content, { parse_mode: "HTML" });
         state.toolMessages.push(toolMsg);
+
+        // For AI MCP tools, start progress timer
+        if (isAiMcpTool(content)) {
+          state.mcpToolMessage = toolMsg;
+          state.mcpToolStartTime = Date.now();
+          state.mcpToolBaseContent = content;
+
+          // Update every 10 seconds
+          state.mcpProgressTimer = setInterval(async () => {
+            if (!state.mcpToolMessage || !state.mcpToolStartTime || !state.mcpToolBaseContent) return;
+
+            const elapsed = Date.now() - state.mcpToolStartTime;
+            const progressLine = `\n\n🔮 <b>MCP 실행 중</b>\n${buildProgressBar(elapsed)}`;
+
+            try {
+              await ctx.api.editMessageText(
+                state.mcpToolMessage.chat.id,
+                state.mcpToolMessage.message_id,
+                state.mcpToolBaseContent + progressLine,
+                { parse_mode: "HTML" }
+              );
+            } catch {
+              // Progress update failed (message deleted or too old)
+              state.stopMcpProgress();
+            }
+          }, 10_000);
+        }
+
         if (PROGRESS_SPINNER_ENABLED) await recreateProgressMessage();
         return;
       }
 
       if (statusType === "text" && segmentId !== undefined) {
+        state.stopMcpProgress(); // Stop any MCP progress timer
         const now = Date.now();
         const lastEdit = state.lastEditTimes.get(segmentId) || 0;
         const display = truncate(content, TELEGRAM_SAFE_LIMIT);
