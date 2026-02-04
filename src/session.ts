@@ -459,6 +459,25 @@ export class ClaudeSession {
     return this.steeringBuffer.length > 0;
   }
 
+  getSteeringCount(): number {
+    return this.steeringBuffer.length;
+  }
+
+  peekSteering(): string | null {
+    if (!this.steeringBuffer.length) return null;
+    return this.steeringBuffer
+      .map((msg) => {
+        const ts = new Date(msg.timestamp).toLocaleTimeString("en-US", {
+          hour12: false,
+        });
+        const tool = msg.receivedDuringTool
+          ? ` (during ${msg.receivedDuringTool})`
+          : "";
+        return `[${ts}${tool}] ${msg.content}`;
+      })
+      .join("\n---\n");
+  }
+
   startProcessing(): () => void {
     this._queryState = "preparing";
     return () => {
@@ -950,6 +969,20 @@ export class ClaudeSession {
     processQueuedJobs().catch((err) =>
       console.error("[CRON] Failed to process queued jobs:", err)
     );
+
+    // Check for unconsumed steering (text-only response didn't trigger PreToolUse)
+    if (this.hasSteeringMessages()) {
+      const steeringCount = this.getSteeringCount();
+      const steeringContent = this.peekSteering();
+      console.log(
+        `[STEERING] ${steeringCount} message(s) not delivered (text-only response)`
+      );
+      // Notify callback about pending steering - handler can decide to follow up
+      await statusCallback("steering_pending", steeringContent || "", undefined, {
+        ...metadata,
+        steeringCount,
+      } as QueryMetadata & { steeringCount: number });
+    }
 
     const fullResponse = responseParts.join("") || "No response from Claude.";
 
