@@ -126,7 +126,7 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
 
   try {
     const statusCallback = async (
-      type: "thinking" | "tool" | "text" | "segment_end" | "done",
+      type: "thinking" | "tool" | "text" | "segment_end" | "done" | "steering_pending",
       content: string,
       _segmentId?: number
     ) => {
