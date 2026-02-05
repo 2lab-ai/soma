@@ -19,6 +19,9 @@ import {
   type ReasoningLevel,
 } from "../model-config";
 import { skillsRegistry } from "../services/skills-registry";
+import { ChatSearchService } from "../services/chat-search-service";
+import { FileChatStorage } from "../storage/chat-storage";
+import { CHAT_HISTORY_DATA_DIR, CHAT_HISTORY_ENABLED } from "../config";
 
 type CallbackMessage = {
   message_id?: number;
@@ -617,6 +620,63 @@ async function handleLostMessageCallback(
         `📋 ${messageCount}개 메시지가 다음 대화의 참고 컨텍스트로 저장되었습니다.`
       );
       await ctx.answerCallbackQuery({ text: "Messages saved as context" });
+      break;
+    }
+
+    case "history": {
+      // Store messages + recent chat history as context for next query
+      const resolved = session.resolvePendingRecovery();
+      let contextParts: string[] = [];
+
+      // Format lost messages
+      if (resolved && resolved.length > 0) {
+        const formattedLost = resolved
+          .map((msg) => {
+            const time = new Date(msg.timestamp).toLocaleTimeString("en-US", {
+              hour12: false,
+            });
+            return `[${time}] ${msg.content}`;
+          })
+          .join("\n");
+        contextParts.push(`[UNDELIVERED MESSAGES (${resolved.length})]\n${formattedLost}`);
+      }
+
+      // Fetch recent chat history if enabled
+      if (CHAT_HISTORY_ENABLED) {
+        try {
+          const storage = new FileChatStorage(CHAT_HISTORY_DATA_DIR);
+          const searchService = new ChatSearchService(storage);
+          const recentMessages = await searchService.getMostRecent(10);
+
+          if (recentMessages.length > 0) {
+            const formattedHistory = recentMessages
+              .map((record) => {
+                const time = new Date(record.timestamp).toLocaleTimeString("en-US", {
+                  hour12: false,
+                });
+                const speaker = record.speaker === "user" ? "User" : "Assistant";
+                const preview = record.content.length > 200
+                  ? record.content.slice(0, 197) + "..."
+                  : record.content;
+                return `[${time}] ${speaker}: ${preview}`;
+              })
+              .join("\n");
+            contextParts.push(`[RECENT HISTORY (${recentMessages.length} messages)]\n${formattedHistory}`);
+          }
+        } catch (historyError) {
+          console.error("[CALLBACK] Failed to fetch chat history:", historyError);
+          contextParts.push("[RECENT HISTORY: Failed to fetch]");
+        }
+      } else {
+        contextParts.push("[RECENT HISTORY: Chat history is disabled]");
+      }
+
+      session.nextQueryContext = contextParts.join("\n\n") + "\n[END CONTEXT]";
+
+      await ctx.editMessageText(
+        `📜 ${messageCount}개 메시지 + 최근 대화 기록이 참고 컨텍스트로 저장되었습니다.`
+      );
+      await ctx.answerCallbackQuery({ text: "Messages + history saved" });
       break;
     }
 

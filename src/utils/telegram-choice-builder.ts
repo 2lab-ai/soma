@@ -170,7 +170,7 @@ export class TelegramChoiceBuilder {
   /**
    * Build inline keyboard for lost message recovery.
    * @param sessionKey - Session identifier for callback routing
-   * @returns InlineKeyboard with resend/discard/context options
+   * @returns InlineKeyboard with resend/discard/context/history options
    */
   static buildLostMessageKeyboard(sessionKey: string): InlineKeyboard {
     const keyboard = new InlineKeyboard();
@@ -180,6 +180,7 @@ export class TelegramChoiceBuilder {
     keyboard.text("📨 Resend", `lost:${compressedKey}:resend`).row();
     keyboard.text("🗑️ Discard", `lost:${compressedKey}:discard`).row();
     keyboard.text("📋 With Context", `lost:${compressedKey}:context`).row();
+    keyboard.text("📜 With History", `lost:${compressedKey}:history`).row();
 
     return keyboard;
   }
@@ -251,7 +252,8 @@ export class TelegramChoiceBuilder {
     const footer = `\n\n어떻게 처리할까요?
 • **Resend**: 이 메시지들을 새로 전송
 • **Discard**: 버리기
-• **With Context**: 다음 대화에 참고용으로 첨부`;
+• **With Context**: 다음 대화에 참고용으로 첨부
+• **With History**: 최근 10개 대화 기록과 함께 참고용 첨부`;
 
     return `${header}\n\n${preview}${footer}`;
   }
