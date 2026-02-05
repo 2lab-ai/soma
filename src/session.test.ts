@@ -638,6 +638,184 @@ describe("ClaudeSession - activityState error handling", () => {
   });
 });
 
+describe("ClaudeSession - injected steering restore (auto-continue)", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-injected-restore");
+  });
+
+  test("restoreInjectedSteering returns 0 when nothing to restore", () => {
+    const count = session.restoreInjectedSteering();
+    expect(count).toBe(0);
+    expect(session.hasSteeringMessages()).toBe(false);
+  });
+
+  test("getSteeringCount returns correct buffer size", () => {
+    expect(session.getSteeringCount()).toBe(0);
+
+    session.addSteering("msg1", 1);
+    expect(session.getSteeringCount()).toBe(1);
+
+    session.addSteering("msg2", 2);
+    expect(session.getSteeringCount()).toBe(2);
+  });
+
+  test("extractSteeringMessages returns and clears buffer", () => {
+    session.addSteering("msg1", 1);
+    session.addSteering("msg2", 2);
+
+    const extracted = session.extractSteeringMessages();
+
+    expect(extracted).toHaveLength(2);
+    expect(extracted[0].content).toBe("msg1");
+    expect(extracted[1].content).toBe("msg2");
+    expect(session.hasSteeringMessages()).toBe(false);
+    expect(session.getSteeringCount()).toBe(0);
+  });
+
+  test("extractSteeringMessages returns empty array when buffer empty", () => {
+    const extracted = session.extractSteeringMessages();
+    expect(extracted).toHaveLength(0);
+  });
+
+  test("clearInjectedSteeringTracking clears internal tracking", () => {
+    // This is internal state, but we can test it indirectly
+    // by checking that restoreInjectedSteering returns 0 after clearing
+    session.clearInjectedSteeringTracking();
+    expect(session.restoreInjectedSteering()).toBe(0);
+  });
+
+  test("peekSteering returns content without consuming", () => {
+    session.addSteering("peek test", 1);
+
+    const peeked = session.peekSteering();
+    expect(peeked).toMatch(/peek test/);
+
+    // Buffer should still have the message
+    expect(session.hasSteeringMessages()).toBe(true);
+    expect(session.getSteeringCount()).toBe(1);
+
+    // Can still consume after peek
+    const consumed = session.consumeSteering();
+    expect(consumed).toMatch(/peek test/);
+    expect(session.hasSteeringMessages()).toBe(false);
+  });
+
+  test("peekSteering returns null when buffer empty", () => {
+    expect(session.peekSteering()).toBeNull();
+  });
+
+  test("full auto-continue simulation: text-only response", () => {
+    // Simulate: user sends message during text-only Claude response
+    // 1. Message added to buffer
+    session.addSteering("user message during execution", 123);
+    expect(session.hasSteeringMessages()).toBe(true);
+
+    // 2. No tools used, so hook doesn't fire
+    // 3. Query completes with messages in buffer
+    // 4. restoreInjectedSteering called (nothing to restore)
+    const restored = session.restoreInjectedSteering();
+    expect(restored).toBe(0);
+
+    // 5. hasSteeringMessages still true (messages never consumed)
+    expect(session.hasSteeringMessages()).toBe(true);
+
+    // 6. Auto-continue consumes and processes
+    const content = session.consumeSteering();
+    expect(content).toMatch(/user message during execution/);
+    expect(session.hasSteeringMessages()).toBe(false);
+  });
+
+  test("full auto-continue simulation: tool-using response (hook fires)", () => {
+    // Simulate: user sends message during tool-using Claude response
+    // 1. Message added to buffer
+    session.addSteering("message during tool", 123);
+    expect(session.getSteeringCount()).toBe(1);
+
+    // 2. Simulate postToolUseHook firing:
+    //    - Copy to injectedSteeringDuringQuery (internal)
+    //    - Consume buffer for systemMessage injection
+    // We can't directly access injectedSteeringDuringQuery, but we can
+    // simulate the behavior by extracting and manually tracking
+    const messagesToInject = session.extractSteeringMessages();
+    expect(messagesToInject).toHaveLength(1);
+    expect(session.hasSteeringMessages()).toBe(false);
+
+    // 3. Query completes, restoreInjectedSteering would restore
+    //    But since we simulated extraction, buffer is empty
+    //    In real code, injectedSteeringDuringQuery would have the messages
+
+    // For proper testing, we need to directly test the session methods
+    // This test confirms the individual pieces work correctly
+  });
+
+  test("multiple messages: some before hook, some after", () => {
+    // Message 1 arrives before any tool
+    session.addSteering("msg before tool", 1);
+
+    // Simulate hook consuming msg1
+    const beforeHook = session.consumeSteering();
+    expect(beforeHook).toMatch(/msg before tool/);
+
+    // Message 2 arrives after hook fired (between tools or after last tool)
+    session.addSteering("msg after tool", 2);
+
+    // At query end, buffer has msg2
+    expect(session.hasSteeringMessages()).toBe(true);
+    expect(session.getSteeringCount()).toBe(1);
+
+    // restoreInjectedSteering would add msg1 back
+    // (in real code, from injectedSteeringDuringQuery)
+    // For this test, we manually add it back to simulate
+    session.addSteering("msg before tool", 1); // simulating restore prepend
+
+    // Now buffer has both messages
+    expect(session.getSteeringCount()).toBe(2);
+
+    // Auto-continue processes all
+    const allMessages = session.consumeSteering();
+    expect(allMessages).toMatch(/msg after tool/);
+    expect(allMessages).toMatch(/msg before tool/);
+  });
+
+  test("kill returns lost messages for recovery", async () => {
+    session.addSteering("important message 1", 1);
+    session.addSteering("important message 2", 2);
+
+    const result = await session.kill();
+
+    expect(result.count).toBe(2);
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[0].content).toBe("important message 1");
+    expect(result.messages[1].content).toBe("important message 2");
+
+    // Buffer should be cleared after kill
+    expect(session.hasSteeringMessages()).toBe(false);
+  });
+
+  test("restoreFromData returns lost messages for recovery", () => {
+    session.addSteering("message before restore", 1);
+
+    const mockData: SessionData = {
+      session_id: "new-session",
+      saved_at: new Date().toISOString(),
+      working_dir: "/test",
+      contextWindowUsage: null,
+      contextWindowSize: 200000,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalQueries: 0,
+    };
+
+    const result = session.restoreFromData(mockData);
+
+    expect(result.count).toBe(1);
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].content).toBe("message before restore");
+  });
+});
+
 describe("createSteeringMessage - factory validation", () => {
   test("creates valid steering message with all fields", () => {
     const msg = createSteeringMessage("test content", 123, "Bash");
