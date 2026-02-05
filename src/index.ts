@@ -509,15 +509,22 @@ async function sendShutdownMessage(): Promise<void> {
   const contextSize = session.contextWindowSize;
   const contextPct = contextTokens > 0 ? ((contextTokens / contextSize) * 100).toFixed(1) : "0";
 
+  // Get tool stats
+  const toolStats = session.formatToolStats();
+
   // Build message
-  const message = [
+  const lines = [
     "━━━━━━━━━━━━━━━━━━━━━━",
     "🔄 서비스를 재시작합니다.",
     `⏰ ${startTimeStr} → ${endTimeStr} (${duration})`,
     `📊 Context: ${contextPct}% (${contextTokens.toLocaleString()}/${contextSize.toLocaleString()} tokens)`,
     `📈 Queries: ${session.totalQueries} | Tokens: ${(session.totalInputTokens + session.totalOutputTokens).toLocaleString()}`,
-    "━━━━━━━━━━━━━━━━━━━━━━",
-  ].join("\n");
+  ];
+  if (toolStats) {
+    lines.push(`🔧 ${toolStats}`);
+  }
+  lines.push("━━━━━━━━━━━━━━━━━━━━━━");
+  const message = lines.join("\n");
 
   try {
     await bot.api.sendMessage(userId, message, { parse_mode: "HTML" });

@@ -222,6 +222,9 @@ export class ClaudeSession {
   totalCacheCreateTokens = 0;
   totalQueries = 0;
 
+  // Cumulative tool usage (session-wide)
+  cumulativeToolDurations: Record<string, { count: number; totalMs: number }> = {};
+
   constructor(
     sessionKey = "default",
     chatCaptureService: ChatCaptureService | null = null
@@ -392,6 +395,24 @@ export class ClaudeSession {
 
   private getContextTokensFromCumulatives(): number {
     return this.totalInputTokens + this.totalCacheCreateTokens;
+  }
+
+  /**
+   * Format cumulative tool stats for display.
+   * Returns string like: "Bash×12: 134.8s | Grep×5: 84.6s"
+   */
+  formatToolStats(): string {
+    const tools = Object.entries(this.cumulativeToolDurations);
+    if (tools.length === 0) return "";
+
+    return tools
+      .sort((a, b) => b[1].totalMs - a[1].totalMs) // Sort by total time desc
+      .slice(0, 5) // Top 5 tools
+      .map(([name, { count, totalMs }]) => {
+        const secs = (totalMs / 1000).toFixed(1);
+        return `${name}×${count}: ${secs}s`;
+      })
+      .join(" | ");
   }
 
   get needsSave(): boolean {
@@ -1161,6 +1182,15 @@ export class ClaudeSession {
       currentProvider: "anthropic",
     };
 
+    // Accumulate tool stats for session-wide tracking
+    for (const [toolName, stats] of Object.entries(toolDurations)) {
+      const existing = this.cumulativeToolDurations[toolName] || { count: 0, totalMs: 0 };
+      this.cumulativeToolDurations[toolName] = {
+        count: existing.count + stats.count,
+        totalMs: existing.totalMs + stats.totalMs,
+      };
+    }
+
     if (currentSegmentText) {
       await statusCallback("segment_end", currentSegmentText, currentSegmentId);
     }
@@ -1249,6 +1279,7 @@ export class ClaudeSession {
     this.totalCacheReadTokens = 0;
     this.totalCacheCreateTokens = 0;
     this.totalQueries = 0;
+    this.cumulativeToolDurations = {};
     this.steeringBuffer = [];
     this.resetWarningFlags();
     console.log("Session cleared");
