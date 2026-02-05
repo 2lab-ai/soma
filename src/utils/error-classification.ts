@@ -4,6 +4,7 @@
 
 import type { Context } from "grammy";
 import type { ClaudeSession } from "../session";
+import { Reactions } from "../constants/reactions";
 
 /**
  * Check if an error is an abort/cancellation error
@@ -37,6 +38,13 @@ export async function handleAbortError(
   session: ClaudeSession
 ): Promise<boolean> {
   if (!isAbortError(error)) return false;
+
+  // Add interrupted reaction
+  try {
+    await ctx.react(Reactions.INTERRUPTED);
+  } catch {
+    // Ignore reaction errors
+  }
 
   // Only show "Query stopped" if it was an explicit stop, not an interrupt
   const wasInterrupt = session.consumeInterruptFlag();
