@@ -64,7 +64,11 @@ describe("FileSummaryStorage", () => {
 
   test("saveSummary creates file for weekly granularity", async () => {
     const date = new Date("2026-02-02T00:00:00Z"); // Monday
-    const summary = createSummary("weekly", date, new Date(date.getTime() + 7 * 86400000));
+    const summary = createSummary(
+      "weekly",
+      date,
+      new Date(date.getTime() + 7 * 86400000)
+    );
 
     await storage.saveSummary(summary);
 

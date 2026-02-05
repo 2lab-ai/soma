@@ -102,7 +102,9 @@ export class FileChatStorage implements IChatStorage {
     }
 
     // Sort by timestamp descending (most recent first)
-    records.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    records.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
 
     // Apply pagination
     return records.slice(offset, offset + limit);

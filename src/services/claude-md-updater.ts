@@ -146,7 +146,11 @@ export class ClaudeMdUpdater {
 
     const existingContent = section.content;
 
-    if (existingContent.toLowerCase().includes(learning.content.toLowerCase().slice(0, 30))) {
+    if (
+      existingContent
+        .toLowerCase()
+        .includes(learning.content.toLowerCase().slice(0, 30))
+    ) {
       return null;
     }
 
@@ -189,7 +193,10 @@ export class ClaudeMdUpdater {
       }
 
       if (!newContent.includes(diff.oldContent)) {
-        skipped.push({ diff, reason: `Old content not found in section: ${diff.sectionName}` });
+        skipped.push({
+          diff,
+          reason: `Old content not found in section: ${diff.sectionName}`,
+        });
         continue;
       }
 

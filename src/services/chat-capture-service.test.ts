@@ -200,7 +200,12 @@ describe("ChatCaptureService", () => {
   });
 
   test("captureUserMessage convenience method", async () => {
-    await service.captureUserMessage("session-1", "claude-1", "model-1", "User message");
+    await service.captureUserMessage(
+      "session-1",
+      "claude-1",
+      "model-1",
+      "User message"
+    );
 
     expect(storage.records.length).toBe(1);
     expect(storage.records[0]?.speaker).toBe("user");

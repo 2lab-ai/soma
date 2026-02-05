@@ -101,8 +101,9 @@ function checkRateLimit(): boolean {
 async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
   const { name, prompt, notify } = schedule;
   const cronModel = getModelForContext("cron");
-  console.log(`[CRON] Executing scheduled job: ${name} (model: ${MODEL_DISPLAY_NAMES[cronModel]})`);
-
+  console.log(
+    `[CRON] Executing scheduled job: ${name} (model: ${MODEL_DISPLAY_NAMES[cronModel]})`
+  );
 
   if (cronExecutionLock || session.isRunning) {
     if (pendingCronJobs.length >= MAX_PENDING_QUEUE_SIZE) {
@@ -143,7 +144,7 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
       statusCallback,
       undefined, // chatId
       undefined, // ctx
-      "cron"     // modelContext - uses cron model from config
+      "cron" // modelContext - uses cron model from config
     );
 
     console.log(`[CRON] Job ${name} completed`);

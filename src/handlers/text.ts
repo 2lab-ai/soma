@@ -20,7 +20,11 @@ import {
   startTypingIndicator,
 } from "../utils";
 import { StreamingState, createStatusCallback, cleanupToolMessages } from "./streaming";
-import { handleAbortError } from "../utils/error-classification";
+import {
+  handleAbortError,
+  formatErrorForLog,
+  formatErrorForUser,
+} from "../utils/error-classification";
 import type { ClaudeSession } from "../session";
 
 const DIRECT_INPUT_EXPIRY_MS = 5 * 60 * 1000;
@@ -199,18 +203,13 @@ async function sendDirectInputToClaude(
     );
     await auditLog(userId, username, "DIRECT_INPUT", originalMessage, response);
   } catch (error) {
-    // Log full error for debugging
-    console.error("Error processing direct input:", error);
-    console.error("Stack:", error instanceof Error ? error.stack : "N/A");
+    console.error(formatErrorForLog(error));
 
-    // Reset activity state on error
     session.setActivityState("idle");
-
     await cleanupToolMessages(ctx, state.toolMessages);
 
     if (!(await handleAbortError(ctx, error, session))) {
-      const errorStr = String(error);
-      await ctx.reply(`❌ Error: ${errorStr.slice(0, 300)}`);
+      await ctx.reply(formatErrorForUser(error));
     }
   } finally {
     state.cleanup();
@@ -508,7 +507,9 @@ export async function handleText(ctx: Context): Promise<void> {
       // 9.1 Check for unconsumed steering and auto-continue
       if (session.hasSteeringMessages()) {
         const steeringCount = session.getSteeringCount();
-        console.log(`[STEERING] Auto-continuing with ${steeringCount} pending message(s)`);
+        console.log(
+          `[STEERING] Auto-continuing with ${steeringCount} pending message(s)`
+        );
 
         // Get the steering content and consume it
         const steeringContent = session.consumeSteering();
@@ -517,7 +518,11 @@ export async function handleText(ctx: Context): Promise<void> {
           const followUpMessage = `[이전 응답 중 보낸 메시지]\n${steeringContent}`;
 
           const followUpState = new StreamingState();
-          const followUpCallback = await createStatusCallback(ctx, followUpState, session);
+          const followUpCallback = await createStatusCallback(
+            ctx,
+            followUpState,
+            session
+          );
 
           try {
             const followUpResponse = await session.sendMessageStreaming(
@@ -528,7 +533,13 @@ export async function handleText(ctx: Context): Promise<void> {
               chatId,
               ctx
             );
-            await auditLog(userId, username, "STEERING_FOLLOWUP", steeringContent, followUpResponse);
+            await auditLog(
+              userId,
+              username,
+              "STEERING_FOLLOWUP",
+              steeringContent,
+              followUpResponse
+            );
           } catch (followUpError) {
             console.error("[STEERING] Follow-up failed:", followUpError);
             await ctx.reply("⚠️ 대기 중인 메시지 처리 실패. 다시 보내주세요.");
@@ -659,7 +670,7 @@ export async function handleText(ctx: Context): Promise<void> {
       }
 
       // Final attempt failed or non-retryable error
-      console.error("Error processing message:", error);
+      console.error(formatErrorForLog(error));
 
       // Clear steering buffer on error to prevent wrong context delivery
       if (session.hasSteeringMessages()) {
@@ -675,7 +686,7 @@ export async function handleText(ctx: Context): Promise<void> {
       if (await handleAbortError(ctx, error, session)) {
         // Abort handled
       } else {
-        await ctx.reply(`❌ Error: ${errorStr.slice(0, 200)}`);
+        await ctx.reply(formatErrorForUser(error));
       }
       break; // Exit loop after handling error
     }

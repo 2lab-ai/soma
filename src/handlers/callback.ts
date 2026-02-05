@@ -310,7 +310,12 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       for (const modelId of AVAILABLE_MODELS) {
         const displayName = MODEL_DISPLAY_NAMES[modelId];
         const current = modelId === currentModel ? " ✓" : "";
-        keyboard.text(`${displayName}${current}`, `model:model:${context}:${modelId.split("-")[1]}`).row();
+        keyboard
+          .text(
+            `${displayName}${current}`,
+            `model:model:${context}:${modelId.split("-")[1]}`
+          )
+          .row();
       }
       keyboard.text("« Back", "model:back");
 
@@ -326,20 +331,30 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       // Model selection - show reasoning selection
       const context = parts[2] as ConfigContext;
       const modelShort = parts[3] || ""; // "opus", "sonnet", "haiku"
-      const modelId = AVAILABLE_MODELS.find(m => m.includes(modelShort))!;
+      const modelId = AVAILABLE_MODELS.find((m) => m.includes(modelShort))!;
       const config = getCurrentConfig();
-      const currentReasoning = config.contexts[context]?.reasoning || config.defaults.reasoning;
+      const currentReasoning =
+        config.contexts[context]?.reasoning || config.defaults.reasoning;
 
       const keyboard = new InlineKeyboard();
-      const reasoningLevels: ReasoningLevel[] = ["none", "minimal", "medium", "high", "xhigh"];
+      const reasoningLevels: ReasoningLevel[] = [
+        "none",
+        "minimal",
+        "medium",
+        "high",
+        "xhigh",
+      ];
       for (const level of reasoningLevels) {
         const tokens = REASONING_TOKENS[level];
         const current = level === currentReasoning ? " ✓" : "";
-        const display = level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
-        keyboard.text(
-          `${display} (${tokens.toLocaleString()} tokens)${current}`,
-          `model:save:${context}:${modelShort}:${level}`
-        ).row();
+        const display =
+          level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+        keyboard
+          .text(
+            `${display} (${tokens.toLocaleString()} tokens)${current}`,
+            `model:save:${context}:${modelShort}:${level}`
+          )
+          .row();
       }
       keyboard.text("« Back", `model:context:${context}`);
 
@@ -357,7 +372,7 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       const context = parts[2] as ConfigContext;
       const modelShort = parts[3] || "";
       const reasoning = parts[4] as ReasoningLevel;
-      const modelId = AVAILABLE_MODELS.find(m => m.includes(modelShort))!;
+      const modelId = AVAILABLE_MODELS.find((m) => m.includes(modelShort))!;
 
       await updateContextModel(context, modelId, reasoning);
 
@@ -380,11 +395,14 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
         .text("⏰ Cron Model", "model:context:cron");
 
       const generalModel = config.contexts.general?.model || config.defaults.model;
-      const generalReasoning = config.contexts.general?.reasoning || config.defaults.reasoning;
+      const generalReasoning =
+        config.contexts.general?.reasoning || config.defaults.reasoning;
       const summaryModel = config.contexts.summary?.model || config.defaults.model;
-      const summaryReasoning = config.contexts.summary?.reasoning || config.defaults.reasoning;
+      const summaryReasoning =
+        config.contexts.summary?.reasoning || config.defaults.reasoning;
       const cronModel = config.contexts.cron?.model || config.defaults.model;
-      const cronReasoning = config.contexts.cron?.reasoning || config.defaults.reasoning;
+      const cronReasoning =
+        config.contexts.cron?.reasoning || config.defaults.reasoning;
 
       await ctx.editMessageText(
         `🤖 <b>Model Configuration</b>\n\n` +
@@ -444,8 +462,7 @@ async function handleSkillCallback(
     await ctx.editMessageText(`🚀 Launching skill: <b>${skillId}</b>`, {
       parse_mode: "HTML",
     });
-  } catch {
-  }
+  } catch {}
 
   const session = sessionManager.getSession(chatId, threadId);
   const message = `/${skillId}`;

@@ -800,9 +800,11 @@ export async function handleModel(ctx: Context): Promise<void> {
 
     // Format current config display
     const generalModel = config.contexts.general?.model || config.defaults.model;
-    const generalReasoning = config.contexts.general?.reasoning || config.defaults.reasoning;
+    const generalReasoning =
+      config.contexts.general?.reasoning || config.defaults.reasoning;
     const summaryModel = config.contexts.summary?.model || config.defaults.model;
-    const summaryReasoning = config.contexts.summary?.reasoning || config.defaults.reasoning;
+    const summaryReasoning =
+      config.contexts.summary?.reasoning || config.defaults.reasoning;
     const cronModel = config.contexts.cron?.model || config.defaults.model;
     const cronReasoning = config.contexts.cron?.reasoning || config.defaults.reasoning;
 

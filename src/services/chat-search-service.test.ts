@@ -45,7 +45,9 @@ class MockChatStorage implements IChatStorage {
     }
 
     // Sort by timestamp descending
-    results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    results.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
 
     // Pagination
     const offset = options.offset || 0;

@@ -23,7 +23,12 @@ const MAX_SKILL_NAME_LENGTH = 64;
 export class SkillsRegistryError extends Error {
   constructor(
     message: string,
-    public readonly code: "CORRUPT_FILE" | "SIZE_EXCEEDED" | "SCAN_FAILED" | "SAVE_FAILED" | "DIR_CREATE_FAILED",
+    public readonly code:
+      | "CORRUPT_FILE"
+      | "SIZE_EXCEEDED"
+      | "SCAN_FAILED"
+      | "SAVE_FAILED"
+      | "DIR_CREATE_FAILED",
     public readonly userMessage: string,
     originalError?: Error
   ) {
@@ -35,7 +40,16 @@ export class SkillsRegistryError extends Error {
 // Result type for add/remove operations
 export type RegistryOpResult =
   | { success: true }
-  | { success: false; reason: "invalid_name" | "already_exists" | "not_found" | "not_in_registry" | "save_failed"; message: string };
+  | {
+      success: false;
+      reason:
+        | "invalid_name"
+        | "already_exists"
+        | "not_found"
+        | "not_in_registry"
+        | "save_failed";
+      message: string;
+    };
 
 function isValidSkillName(name: string): boolean {
   return /^[a-z0-9][a-z0-9-]*$/i.test(name) && name.length <= MAX_SKILL_NAME_LENGTH;
@@ -185,7 +199,9 @@ class SkillsRegistryImpl {
           console.warn(
             `[SkillsRegistry] Failed to cleanup temp file (${this.cleanupFailureCount}/${SkillsRegistryImpl.CLEANUP_FAILURE_THRESHOLD}): ${cleanupError}`
           );
-          if (this.cleanupFailureCount >= SkillsRegistryImpl.CLEANUP_FAILURE_THRESHOLD) {
+          if (
+            this.cleanupFailureCount >= SkillsRegistryImpl.CLEANUP_FAILURE_THRESHOLD
+          ) {
             console.error(
               `[SkillsRegistry] ALERT: Cleanup failures exceeded threshold. Manual cleanup needed: rm ${tempPath}`
             );
@@ -235,9 +251,13 @@ class SkillsRegistryImpl {
       return [];
     }
 
-    let entries: Array<{ name: string; isDirectory(): boolean; isSymbolicLink(): boolean }>;
+    let entries: Array<{
+      name: string;
+      isDirectory(): boolean;
+      isSymbolicLink(): boolean;
+    }>;
     try {
-      entries = await readdir(SKILLS_DIR, { withFileTypes: true }) as typeof entries;
+      entries = (await readdir(SKILLS_DIR, { withFileTypes: true })) as typeof entries;
     } catch (error) {
       // Unexpected: directory exists but can't be read
       throw new SkillsRegistryError(
@@ -295,7 +315,7 @@ class SkillsRegistryImpl {
       return {
         success: false,
         reason: "invalid_name",
-        message: `Invalid skill name "${skillName}". Use lowercase letters, numbers, and hyphens only (max ${MAX_SKILL_NAME_LENGTH} chars).`
+        message: `Invalid skill name "${skillName}". Use lowercase letters, numbers, and hyphens only (max ${MAX_SKILL_NAME_LENGTH} chars).`,
       };
     }
 
@@ -306,7 +326,7 @@ class SkillsRegistryImpl {
       return {
         success: false,
         reason: "already_exists",
-        message: `Skill "${normalized}" is already in the registry.`
+        message: `Skill "${normalized}" is already in the registry.`,
       };
     }
 
@@ -317,7 +337,7 @@ class SkillsRegistryImpl {
       return {
         success: false,
         reason: "not_found",
-        message: `Skill "${normalized}" not found in ~/.claude/skills/. Available: ${available.join(", ") || "none"}`
+        message: `Skill "${normalized}" not found in ~/.claude/skills/. Available: ${available.join(", ") || "none"}`,
       };
     }
 
@@ -329,7 +349,10 @@ class SkillsRegistryImpl {
       return {
         success: false,
         reason: "save_failed",
-        message: error instanceof SkillsRegistryError ? error.userMessage : `Failed to save: ${error}`
+        message:
+          error instanceof SkillsRegistryError
+            ? error.userMessage
+            : `Failed to save: ${error}`,
       };
     }
   }
@@ -348,7 +371,7 @@ class SkillsRegistryImpl {
       return {
         success: false,
         reason: "not_in_registry",
-        message: `Skill "${normalized}" is not in the registry.`
+        message: `Skill "${normalized}" is not in the registry.`,
       };
     }
 
@@ -360,7 +383,10 @@ class SkillsRegistryImpl {
       return {
         success: false,
         reason: "save_failed",
-        message: error instanceof SkillsRegistryError ? error.userMessage : `Failed to save: ${error}`
+        message:
+          error instanceof SkillsRegistryError
+            ? error.userMessage
+            : `Failed to save: ${error}`,
       };
     }
   }

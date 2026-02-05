@@ -55,13 +55,27 @@ const DEFAULT_CONFIG: RetentionConfig = {
 
 export function parseRetentionConfig(): RetentionConfig {
   return {
-    chatRetentionDays: parseInt(process.env.RETENTION_CHAT_DAYS || "", 10) || DEFAULT_CONFIG.chatRetentionDays,
-    hourlySummaryRetentionDays: parseInt(process.env.RETENTION_HOURLY_DAYS || "", 10) || DEFAULT_CONFIG.hourlySummaryRetentionDays,
-    dailySummaryRetentionDays: parseInt(process.env.RETENTION_DAILY_DAYS || "", 10) || DEFAULT_CONFIG.dailySummaryRetentionDays,
-    weeklySummaryRetentionDays: parseInt(process.env.RETENTION_WEEKLY_DAYS || "", 10) || DEFAULT_CONFIG.weeklySummaryRetentionDays,
-    monthlySummaryRetentionDays: parseInt(process.env.RETENTION_MONTHLY_DAYS || "", 10) || DEFAULT_CONFIG.monthlySummaryRetentionDays,
-    maxChatFiles: parseInt(process.env.RETENTION_MAX_CHAT_FILES || "", 10) || DEFAULT_CONFIG.maxChatFiles,
-    maxHourlySummaries: parseInt(process.env.RETENTION_MAX_HOURLY || "", 10) || DEFAULT_CONFIG.maxHourlySummaries,
+    chatRetentionDays:
+      parseInt(process.env.RETENTION_CHAT_DAYS || "", 10) ||
+      DEFAULT_CONFIG.chatRetentionDays,
+    hourlySummaryRetentionDays:
+      parseInt(process.env.RETENTION_HOURLY_DAYS || "", 10) ||
+      DEFAULT_CONFIG.hourlySummaryRetentionDays,
+    dailySummaryRetentionDays:
+      parseInt(process.env.RETENTION_DAILY_DAYS || "", 10) ||
+      DEFAULT_CONFIG.dailySummaryRetentionDays,
+    weeklySummaryRetentionDays:
+      parseInt(process.env.RETENTION_WEEKLY_DAYS || "", 10) ||
+      DEFAULT_CONFIG.weeklySummaryRetentionDays,
+    monthlySummaryRetentionDays:
+      parseInt(process.env.RETENTION_MONTHLY_DAYS || "", 10) ||
+      DEFAULT_CONFIG.monthlySummaryRetentionDays,
+    maxChatFiles:
+      parseInt(process.env.RETENTION_MAX_CHAT_FILES || "", 10) ||
+      DEFAULT_CONFIG.maxChatFiles,
+    maxHourlySummaries:
+      parseInt(process.env.RETENTION_MAX_HOURLY || "", 10) ||
+      DEFAULT_CONFIG.maxHourlySummaries,
   };
 }
 
@@ -152,13 +166,16 @@ export class RetentionCleanupService {
     }
 
     const mode = dryRun ? "DRY-RUN" : "CLEANUP";
-    const totalDeleted = result.chatFilesDeleted +
+    const totalDeleted =
+      result.chatFilesDeleted +
       result.summaryFilesDeleted.hourly +
       result.summaryFilesDeleted.daily +
       result.summaryFilesDeleted.weekly +
       result.summaryFilesDeleted.monthly;
 
-    console.log(`[RetentionCleanup] ${mode} complete: ${totalDeleted} files, ${this.formatBytes(result.bytesFreed)} freed`);
+    console.log(
+      `[RetentionCleanup] ${mode} complete: ${totalDeleted} files, ${this.formatBytes(result.bytesFreed)} freed`
+    );
 
     return result;
   }
@@ -169,8 +186,16 @@ export class RetentionCleanupService {
     maxFiles: number,
     pattern: RegExp,
     dryRun: boolean
-  ): Promise<{ deleted: number; bytesFreed: number; errors: Array<{ path: string; error: string }> }> {
-    const result = { deleted: 0, bytesFreed: 0, errors: [] as Array<{ path: string; error: string }> };
+  ): Promise<{
+    deleted: number;
+    bytesFreed: number;
+    errors: Array<{ path: string; error: string }>;
+  }> {
+    const result = {
+      deleted: 0,
+      bytesFreed: 0,
+      errors: [] as Array<{ path: string; error: string }>,
+    };
 
     if (!existsSync(dir)) {
       return result;
@@ -225,10 +250,14 @@ export class RetentionCleanupService {
           const stats = await stat(filePath);
 
           if (dryRun) {
-            console.log(`[RetentionCleanup] DRY-RUN: Would delete ${filePath} (${this.formatBytes(stats.size)})`);
+            console.log(
+              `[RetentionCleanup] DRY-RUN: Would delete ${filePath} (${this.formatBytes(stats.size)})`
+            );
           } else {
             await unlink(filePath);
-            console.log(`[RetentionCleanup] Deleted ${filePath} (${this.formatBytes(stats.size)})`);
+            console.log(
+              `[RetentionCleanup] Deleted ${filePath} (${this.formatBytes(stats.size)})`
+            );
           }
 
           result.deleted++;
@@ -268,7 +297,9 @@ export class RetentionCleanupService {
     lines.push(`• Hourly: ${this.config.hourlySummaryRetentionDays} days`);
     lines.push(`• Daily: ${this.config.dailySummaryRetentionDays} days`);
     lines.push(`• Weekly: ${this.config.weeklySummaryRetentionDays} days`);
-    lines.push(`• Monthly: ${this.config.monthlySummaryRetentionDays === -1 ? "forever" : `${this.config.monthlySummaryRetentionDays} days`}`);
+    lines.push(
+      `• Monthly: ${this.config.monthlySummaryRetentionDays === -1 ? "forever" : `${this.config.monthlySummaryRetentionDays} days`}`
+    );
 
     if (this.config.maxChatFiles > 0) {
       lines.push(`• Max chat files: ${this.config.maxChatFiles}`);

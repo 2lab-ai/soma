@@ -120,9 +120,7 @@ Another summary
     expect(result.ok).toBe(true);
     expect(result.data).toBeDefined();
     expect(result.data!.quotes.length).toBeGreaterThan(0);
-    expect(result.data!.quotes.some((q) => q.includes("consciousness"))).toBe(
-      true
-    );
+    expect(result.data!.quotes.some((q) => q.includes("consciousness"))).toBe(true);
   });
 
   it("should extract artifacts", async () => {
@@ -168,7 +166,9 @@ Another summary
       includeMonthly: false,
     });
 
-    expect(withMonthly.entries.length).toBeGreaterThanOrEqual(withoutMonthly.entries.length);
+    expect(withMonthly.entries.length).toBeGreaterThanOrEqual(
+      withoutMonthly.entries.length
+    );
   });
 
   it("should handle missing files gracefully", async () => {

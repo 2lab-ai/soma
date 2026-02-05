@@ -153,9 +153,15 @@ describe("FileChatStorage", () => {
     const base = new Date("2026-02-04T10:00:00Z");
 
     await storage.saveBatch([
-      createRecord({ timestamp: new Date(base.getTime() + 1000).toISOString(), content: "3" }),
+      createRecord({
+        timestamp: new Date(base.getTime() + 1000).toISOString(),
+        content: "3",
+      }),
       createRecord({ timestamp: new Date(base.getTime()).toISOString(), content: "1" }),
-      createRecord({ timestamp: new Date(base.getTime() + 500).toISOString(), content: "2" }),
+      createRecord({
+        timestamp: new Date(base.getTime() + 500).toISOString(),
+        content: "2",
+      }),
     ]);
 
     const results = await storage.search({
@@ -217,7 +223,11 @@ describe("FileChatStorage", () => {
     const results = await storage.getContextAround(base, 5, 5); // ±5 minutes
 
     expect(results.length).toBe(3);
-    expect(results.map((r) => r.content)).toEqual(["2 min before", "target", "2 min after"]);
+    expect(results.map((r) => r.content)).toEqual([
+      "2 min before",
+      "target",
+      "2 min after",
+    ]);
   });
 
   test("saveSessionReference and getSessionReference", async () => {

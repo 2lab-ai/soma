@@ -10,28 +10,28 @@ import { resolve } from "path";
 
 // Model IDs (user-provided)
 export const AVAILABLE_MODELS = [
-  'claude-sonnet-4-5-20250929',
-  'claude-opus-4-5-20251101',
-  'claude-haiku-4-5-20251001',
+  "claude-sonnet-4-5-20250929",
+  "claude-opus-4-5-20251101",
+  "claude-haiku-4-5-20251001",
 ] as const;
 
-export type ModelId = typeof AVAILABLE_MODELS[number];
+export type ModelId = (typeof AVAILABLE_MODELS)[number];
 
 // Model aliases for UI display
 export const MODEL_ALIASES: Record<string, ModelId> = {
-  'sonnet': 'claude-sonnet-4-5-20250929',
-  'opus': 'claude-opus-4-5-20251101',
-  'haiku': 'claude-haiku-4-5-20251001',
+  sonnet: "claude-sonnet-4-5-20250929",
+  opus: "claude-opus-4-5-20251101",
+  haiku: "claude-haiku-4-5-20251001",
 };
 
 // Reverse mapping for display
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
-  'claude-sonnet-4-5-20250929': 'Sonnet 4.5',
-  'claude-opus-4-5-20251101': 'Opus 4.5',
-  'claude-haiku-4-5-20251001': 'Haiku 4.5',
+  "claude-sonnet-4-5-20250929": "Sonnet 4.5",
+  "claude-opus-4-5-20251101": "Opus 4.5",
+  "claude-haiku-4-5-20251001": "Haiku 4.5",
 };
 
-export const DEFAULT_MODEL: ModelId = 'claude-opus-4-5-20251101';
+export const DEFAULT_MODEL: ModelId = "claude-opus-4-5-20251101";
 
 // Reasoning levels (user-provided token budgets)
 export type ReasoningLevel = "none" | "minimal" | "medium" | "high" | "xhigh";
@@ -90,16 +90,16 @@ function getDefaultConfig(): ModelConfig {
     },
     contexts: {
       general: {
-        model: 'claude-opus-4-5-20251101',
-        reasoning: 'high',
+        model: "claude-opus-4-5-20251101",
+        reasoning: "high",
       },
       summary: {
-        model: 'claude-sonnet-4-5-20250929',
-        reasoning: 'minimal',
+        model: "claude-sonnet-4-5-20250929",
+        reasoning: "minimal",
       },
       cron: {
-        model: 'claude-haiku-4-5-20251001',
-        reasoning: 'none',
+        model: "claude-haiku-4-5-20251001",
+        reasoning: "none",
       },
     },
   };
