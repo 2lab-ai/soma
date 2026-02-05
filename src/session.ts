@@ -251,6 +251,7 @@ export class ClaudeSession {
   pendingDirectInput: DirectInputState | null = null;
   parseTextChoiceState: ParseTextChoiceState | null = null;
   pendingRecovery: PendingRecovery | null = null;
+  nextQueryContext: string | null = null; // Context to prepend to next query
   private _activityState: ActivityState = "idle";
 
   private readonly preToolUseHook = async (
@@ -654,6 +655,13 @@ export class ClaudeSession {
         `[STEERING] Prepending ${pendingSteering.split("\n---\n").length} pending messages to query`
       );
       messageToSend = `[MESSAGES SENT DURING PREVIOUS EXECUTION - user sent these while you were working]\n${pendingSteering}\n[END PREVIOUS MESSAGES]\n\n[NEW MESSAGE]\n${messageToSend}`;
+    }
+
+    // Prepend context from recovered messages (e.g., from /new or !)
+    if (this.nextQueryContext) {
+      console.log("[CONTEXT] Prepending recovered context from previous session");
+      messageToSend = `${this.nextQueryContext}\n\n${messageToSend}`;
+      this.nextQueryContext = null; // Consume once
     }
 
     if (isNewSession) {

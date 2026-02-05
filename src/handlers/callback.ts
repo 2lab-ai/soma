@@ -518,6 +518,109 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
+  if (callbackData.startsWith("lost:")) {
+    await handleLostMessageCallback(ctx, callbackData, chatId, threadId, userId, username);
+    return;
+  }
+
   // Unknown callback format
   await ctx.answerCallbackQuery();
+}
+
+/**
+ * Handle lost message recovery callbacks
+ * Format: lost:{compressedKey}:{action}
+ * Actions: resend | discard | context
+ */
+async function handleLostMessageCallback(
+  ctx: Context,
+  callbackData: string,
+  chatId: number,
+  threadId: number | undefined,
+  userId: number,
+  username: string
+): Promise<void> {
+  const parts = callbackData.split(":");
+  if (parts.length !== 3) {
+    await ctx.answerCallbackQuery({ text: "Invalid callback format" });
+    return;
+  }
+
+  const [, compressedKey, action] = parts;
+  const session = sessionManager.getSession(chatId, threadId);
+
+  // Validate session key matches
+  const sessionKey = `${chatId}${threadId ? `:${threadId}` : ""}`;
+  const expectedKey = TelegramChoiceBuilder.compressSessionKey(sessionKey);
+
+  if (compressedKey !== expectedKey) {
+    await ctx.answerCallbackQuery({
+      text: "Session changed. Please try again.",
+    });
+    await removeKeyboardSilently(ctx, "mismatched session");
+    return;
+  }
+
+  // Check for pending recovery
+  const recovery = session.getPendingRecovery();
+  if (!recovery) {
+    await ctx.answerCallbackQuery({
+      text: "Recovery expired or already handled.",
+    });
+    await removeKeyboardSilently(ctx, "no pending recovery");
+    return;
+  }
+
+  const messages = recovery.messages;
+  const messageCount = messages.length;
+
+  switch (action) {
+    case "resend": {
+      // Get messages and add them to steering buffer for next processing
+      const resolved = session.resolvePendingRecovery();
+      if (resolved) {
+        // Add messages as steering (they'll be sent with next query)
+        for (const msg of resolved) {
+          session.addSteering(msg.content, msg.messageId, "recovered");
+        }
+      }
+      await ctx.editMessageText(
+        `📨 ${messageCount}개 메시지가 다시 전송됩니다.\n\n다음 메시지를 보내면 함께 처리됩니다.`
+      );
+      await ctx.answerCallbackQuery({ text: "Messages queued for resend" });
+      break;
+    }
+
+    case "discard": {
+      session.clearPendingRecovery();
+      await ctx.editMessageText(`🗑️ ${messageCount}개 메시지가 삭제되었습니다.`);
+      await ctx.answerCallbackQuery({ text: "Messages discarded" });
+      break;
+    }
+
+    case "context": {
+      // Store messages as context for next query
+      const resolved = session.resolvePendingRecovery();
+      if (resolved) {
+        const formattedContext = resolved
+          .map((msg) => {
+            const time = new Date(msg.timestamp).toLocaleTimeString("en-US", {
+              hour12: false,
+            });
+            return `[${time}] ${msg.content}`;
+          })
+          .join("\n");
+
+        session.nextQueryContext = `[CONTEXT FROM PREVIOUS SESSION - 이전 세션에서 전달되지 않은 메시지입니다. 참고용으로 포함되었습니다.]\n${formattedContext}\n[END CONTEXT]`;
+      }
+      await ctx.editMessageText(
+        `📋 ${messageCount}개 메시지가 다음 대화의 참고 컨텍스트로 저장되었습니다.`
+      );
+      await ctx.answerCallbackQuery({ text: "Messages saved as context" });
+      break;
+    }
+
+    default:
+      await ctx.answerCallbackQuery({ text: "Unknown action" });
+  }
 }
