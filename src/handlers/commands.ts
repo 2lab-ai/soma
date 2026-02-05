@@ -23,6 +23,7 @@ import {
   ensureConfigExists,
 } from "../model-config";
 import { skillsRegistry } from "../services/skills-registry";
+import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 
 function formatDuration(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -220,10 +221,32 @@ export async function handleNew(ctx: Context): Promise<void> {
     return;
   }
 
-  // Kill session for this chat
-  await sessionManager.killSession(chatId!, threadId);
+  // Get session before killing to set pending recovery
+  const session = sessionManager.getSession(chatId!, threadId);
+  const sessionKey = `${chatId}${threadId ? `:${threadId}` : ""}`;
 
-  await ctx.reply("🆕 Session cleared. Next message starts fresh.");
+  // Kill session and get lost messages
+  const { count, messages } = await sessionManager.killSession(chatId!, threadId);
+
+  if (count > 0 && messages.length > 0) {
+    // Set pending recovery on the NEW session (getSession creates if not exists)
+    const newSession = sessionManager.getSession(chatId!, threadId);
+    newSession.setPendingRecovery(messages, chatId!);
+
+    // Show inline buttons for recovery
+    const keyboard = TelegramChoiceBuilder.buildLostMessageKeyboard(sessionKey);
+    const messageText = TelegramChoiceBuilder.buildLostMessageText(messages, false);
+
+    const sentMsg = await ctx.reply(messageText, {
+      reply_markup: keyboard,
+      parse_mode: "Markdown",
+    });
+
+    // Update pending recovery with message ID
+    newSession.setPendingRecovery(messages, chatId!, sentMsg.message_id);
+  } else {
+    await ctx.reply("🆕 Session cleared. Next message starts fresh.");
+  }
 }
 
 /**
