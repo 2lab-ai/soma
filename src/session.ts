@@ -279,7 +279,10 @@ export class ClaudeSession {
     const toolName = (input as { tool_name?: string }).tool_name || "unknown";
     console.log(`[HOOK] PostToolUse fired for: ${toolName}`);
 
-    if (!this.steeringBuffer.length) {
+    const bufferSize = this.steeringBuffer.length;
+    console.log(`[HOOK DEBUG] Buffer size at hook: ${bufferSize}`);
+
+    if (!bufferSize) {
       return {};
     }
 
@@ -293,7 +296,7 @@ export class ClaudeSession {
     }
 
     console.log(
-      `[STEERING] Injecting ${messagesToInject.length} message(s) after ${toolName} (also saved for fallback)`
+      `[STEERING] Injecting ${messagesToInject.length} message(s) after ${toolName} (tracked for fallback: ${this.injectedSteeringDuringQuery.length})`
     );
     return {
       systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
@@ -542,11 +545,16 @@ export class ClaudeSession {
       receivedDuringTool
     );
     this.steeringBuffer.push(steeringMessage);
+    console.log(`[STEERING DEBUG] Added message to buffer. Buffer now: ${this.steeringBuffer.length}, content: "${message.slice(0, 50)}"`);
     return evicted;
   }
 
   consumeSteering(): string | null {
-    if (!this.steeringBuffer.length) return null;
+    if (!this.steeringBuffer.length) {
+      console.log(`[STEERING DEBUG] consumeSteering called but buffer empty`);
+      return null;
+    }
+    const count = this.steeringBuffer.length;
     const formatted = this.steeringBuffer
       .map((msg) => {
         const ts = new Date(msg.timestamp).toLocaleTimeString("en-US", {
@@ -559,6 +567,7 @@ export class ClaudeSession {
       })
       .join("\n---\n");
     this.steeringBuffer = [];
+    console.log(`[STEERING DEBUG] Consumed ${count} message(s) from buffer`);
     return formatted;
   }
 
@@ -586,13 +595,21 @@ export class ClaudeSession {
    * Call this after query completes to ensure auto-continue handles them.
    */
   restoreInjectedSteering(): number {
-    if (!this.injectedSteeringDuringQuery.length) return 0;
-    const count = this.injectedSteeringDuringQuery.length;
+    const bufferBefore = this.steeringBuffer.length;
+    const injectedCount = this.injectedSteeringDuringQuery.length;
+    console.log(`[RESTORE DEBUG] Before: buffer=${bufferBefore}, injected=${injectedCount}`);
+
+    if (!injectedCount) {
+      console.log(`[RESTORE DEBUG] Nothing to restore`);
+      return 0;
+    }
+
     // Prepend to buffer (they were sent first)
     this.steeringBuffer = [...this.injectedSteeringDuringQuery, ...this.steeringBuffer];
     this.injectedSteeringDuringQuery = [];
-    console.log(`[STEERING] Restored ${count} injected message(s) to buffer for fallback processing`);
-    return count;
+
+    console.log(`[STEERING] Restored ${injectedCount} injected message(s) to buffer for fallback processing. Buffer now: ${this.steeringBuffer.length}`);
+    return injectedCount;
   }
 
   /**
@@ -633,6 +650,7 @@ export class ClaudeSession {
 
   getPendingSteering(): string | null {
     // Alias for consumeSteering - identical functionality
+    console.log(`[STEERING DEBUG] getPendingSteering called, buffer: ${this.steeringBuffer.length}`);
     return this.consumeSteering();
   }
 
@@ -679,7 +697,9 @@ export class ClaudeSession {
     if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);
 
     // Clear injected steering tracking from previous query
+    const prevInjectedCount = this.injectedSteeringDuringQuery.length;
     this.clearInjectedSteeringTracking();
+    console.log(`[QUERY START DEBUG] Cleared injected tracking (was: ${prevInjectedCount}), buffer: ${this.steeringBuffer.length}`);
 
     // Capture generation at query start to detect if session was killed mid-query
     const queryGeneration = this._generation;
@@ -1149,7 +1169,13 @@ export class ClaudeSession {
     );
 
     // Check for unconsumed steering (text-only response didn't trigger PreToolUse)
-    if (this.hasSteeringMessages()) {
+    const hasSteeringAtEnd = this.hasSteeringMessages();
+    const injectedCount = this.injectedSteeringDuringQuery.length;
+    console.log(
+      `[STEERING DEBUG] End of query - buffer: ${this.steeringBuffer.length}, injected tracking: ${injectedCount}`
+    );
+
+    if (hasSteeringAtEnd) {
       const steeringCount = this.getSteeringCount();
       const steeringContent = this.peekSteering();
       console.log(
