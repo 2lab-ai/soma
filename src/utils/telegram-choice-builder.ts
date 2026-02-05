@@ -201,7 +201,7 @@ export class TelegramChoiceBuilder {
     let currentLength = 0;
 
     for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
+      const msg = messages[i]!;
       const time = new Date(msg.timestamp).toLocaleTimeString("en-US", {
         hour12: false,
         hour: "2-digit",

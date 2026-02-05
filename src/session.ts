@@ -561,6 +561,17 @@ export class ClaudeSession {
     return this.steeringBuffer.length;
   }
 
+  /**
+   * Extract and clear all steering messages from buffer.
+   * Used for interrupt recovery flow - returns raw SteeringMessage[] instead of formatted string.
+   */
+  extractSteeringMessages(): SteeringMessage[] {
+    if (!this.steeringBuffer.length) return [];
+    const messages = [...this.steeringBuffer];
+    this.steeringBuffer = [];
+    return messages;
+  }
+
   peekSteering(): string | null {
     if (!this.steeringBuffer.length) return null;
     return this.steeringBuffer
