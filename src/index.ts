@@ -338,31 +338,41 @@ if (ALLOWED_USERS.length > 0) {
             }))
             .sort((a, b) => b.mtime - a.mtime);
 
-          console.log(`[STARTUP] Found ${files.length} restart-context file(s)`);
+          console.log(`[CONTEXT-RESTORE] Found ${files.length} restart-context file(s)`);
           if (files.length > 0) {
             const latestFile = files[0]!;
-            console.log(`[STARTUP] Using latest: ${latestFile.name} (mtime: ${new Date(latestFile.mtime).toISOString()})`);
+            const fileAge = Date.now() - latestFile.mtime;
+            const ageSeconds = Math.floor(fileAge / 1000);
+            console.log(`[CONTEXT-RESTORE] ========== RESTORING CONTEXT ==========`);
+            console.log(`[CONTEXT-RESTORE] File: ${latestFile.name}`);
+            console.log(`[CONTEXT-RESTORE] Age: ${ageSeconds}s (${new Date(latestFile.mtime).toISOString()})`);
             const content = readFileSync(latestFile.path, "utf-8");
+            console.log(`[CONTEXT-RESTORE] Content preview: ${content.slice(0, 200).replace(/\n/g, " ")}...`);
             contextMessage = `\n\n📋 **Saved Context Found:**\n${latestFile.name}\n\n${content}`;
+            console.log(`[CONTEXT-RESTORE] ========== RESTORE COMPLETE ==========`);
           }
         } catch (err) {
-          console.warn("[STARTUP] Failed to read restart context:", err);
+          console.warn("[CONTEXT-RESTORE] Failed to read restart context:", err);
         }
       } else {
-        console.log(`[STARTUP] Save directory does not exist`);
+        console.log(`[STARTUP] Save directory does not exist - no context to restore`);
       }
+
+      // Log session state
+      console.log(`[STARTUP] Session state: sessionId=${session.sessionId?.slice(0, 8) || "null"}, isActive=${session.isActive}, queries=${session.totalQueries}`);
+      console.log(`[STARTUP] Context: ${session.currentContextTokens.toLocaleString()}/${session.contextWindowSize.toLocaleString()} tokens (${((session.currentContextTokens / session.contextWindowSize) * 100).toFixed(1)}%)`);
 
       // Determine startup type for clear messaging
       let startupType = "";
       if (contextMessage.includes("restart-context")) {
         startupType = "🔄 **SIGTERM Restart** (graceful shutdown via make up)";
-        console.log(`[STARTUP] Type: SIGTERM Restart (found restart-context)`);
+        console.log(`[STARTUP] Type: SIGTERM Restart (found restart-context, session will resume)`);
       } else if (session.isActive) {
         startupType = "♻️ **Session Resumed** (no saved context found)";
-        console.log(`[STARTUP] Type: Session Resumed (active session exists)`);
+        console.log(`[STARTUP] Type: Session Resumed (active session but no restart-context)`);
       } else {
         startupType = "🆕 **Fresh Start** (new session)";
-        console.log(`[STARTUP] Type: Fresh Start (new session)`);
+        console.log(`[STARTUP] Type: Fresh Start (no active session)`);
       }
 
       const startupPrompt = session.isActive
@@ -408,10 +418,10 @@ const stopRunner = () => {
  * Save graceful shutdown context to be restored on next startup.
  */
 function saveShutdownContext(): void {
-  console.log("[SIGTERM-SAVE] Starting context save...");
+  console.log("\n[CONTEXT-SAVE] ========== SAVING CONTEXT ==========");
   try {
     const saveDir = `${WORKING_DIR}/docs/tasks/save`;
-    console.log(`[SIGTERM-SAVE] Save directory: ${saveDir}`);
+    console.log(`[CONTEXT-SAVE] Directory: ${saveDir}`);
     mkdirSync(saveDir, { recursive: true });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
@@ -419,8 +429,23 @@ function saveShutdownContext(): void {
 
     const now = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
     const stats = sessionManager.getGlobalStats();
-    const sessionInfo = `Active sessions: ${stats.totalSessions}`;
-    console.log(`[SIGTERM-SAVE] Stats: sessions=${stats.totalSessions}, totalQueries=${stats.totalQueries}`);
+
+    // Detailed session info for each session
+    console.log(`[CONTEXT-SAVE] Sessions: ${stats.totalSessions}`);
+    for (const sess of stats.sessions) {
+      console.log(`[CONTEXT-SAVE]   - ${sess.sessionKey}: queries=${sess.queries}, active=${sess.isActive}, running=${sess.isRunning}`);
+    }
+    console.log(`[CONTEXT-SAVE] Total queries: ${stats.totalQueries}`);
+    console.log(`[CONTEXT-SAVE] Total tokens: input=${stats.totalInputTokens}, output=${stats.totalOutputTokens}`);
+
+    // Get primary session context info
+    let contextInfo = "";
+    if (ALLOWED_USERS.length > 0) {
+      const session = sessionManager.getSession(ALLOWED_USERS[0]!);
+      const ctxPct = ((session.currentContextTokens / session.contextWindowSize) * 100).toFixed(1);
+      contextInfo = `Context: ${ctxPct}% (${session.currentContextTokens.toLocaleString()}/${session.contextWindowSize.toLocaleString()} tokens)`;
+      console.log(`[CONTEXT-SAVE] Primary session context: ${ctxPct}%`);
+    }
 
     const content = [
       `# Restart Context - ${now}`,
@@ -429,17 +454,20 @@ function saveShutdownContext(): void {
       ``,
       `Gracefully shut down via make up. Sessions will be restored automatically.`,
       ``,
-      sessionInfo,
+      `Active sessions: ${stats.totalSessions}`,
+      contextInfo,
+      `Total queries: ${stats.totalQueries}`,
       ``,
       `---`,
       `*Auto-generated by SIGTERM handler*`,
     ].join("\n");
 
     writeFileSync(saveFile, content, "utf-8");
-    console.log(`[SIGTERM-SAVE] ✅ Context saved to ${saveFile}`);
-    console.log(`[SIGTERM-SAVE] File content length: ${content.length} bytes`);
+    console.log(`[CONTEXT-SAVE] ✅ File saved: ${saveFile}`);
+    console.log(`[CONTEXT-SAVE] File size: ${content.length} bytes`);
+    console.log("[CONTEXT-SAVE] ========== SAVE COMPLETE ==========\n");
   } catch (error) {
-    console.error(`[SIGTERM-SAVE] ❌ Failed to save: ${error}`);
+    console.error(`[CONTEXT-SAVE] ❌ Failed to save: ${error}`);
   }
 }
 
@@ -452,11 +480,62 @@ process.on("SIGINT", () => {
   process.exit(0);
 });
 
-process.on("SIGTERM", () => {
+/**
+ * Send shutdown notification to user with session stats.
+ */
+async function sendShutdownMessage(): Promise<void> {
+  if (ALLOWED_USERS.length === 0) return;
+
+  const userId = ALLOWED_USERS[0]!;
+  const session = sessionManager.getSession(userId);
+  const now = new Date();
+
+  // Calculate session duration
+  let duration = "N/A";
+  let startTimeStr = "N/A";
+  let endTimeStr = now.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  if (session.sessionStartTime) {
+    startTimeStr = session.sessionStartTime.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const diffMs = now.getTime() - session.sessionStartTime.getTime();
+    const hours = Math.floor(diffMs / 3600000);
+    const minutes = Math.floor((diffMs % 3600000) / 60000);
+    const seconds = Math.floor((diffMs % 60000) / 1000);
+    duration = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  // Calculate context usage
+  const contextTokens = session.currentContextTokens;
+  const contextSize = session.contextWindowSize;
+  const contextPct = contextTokens > 0 ? ((contextTokens / contextSize) * 100).toFixed(1) : "0";
+
+  // Build message
+  const message = [
+    "━━━━━━━━━━━━━━━━━━━━━━",
+    "🔄 서비스를 재시작합니다.",
+    `⏰ ${startTimeStr} → ${endTimeStr} (${duration})`,
+    `📊 Context: ${contextPct}% (${contextTokens.toLocaleString()}/${contextSize.toLocaleString()} tokens)`,
+    `📈 Queries: ${session.totalQueries} | Tokens: ${(session.totalInputTokens + session.totalOutputTokens).toLocaleString()}`,
+    "━━━━━━━━━━━━━━━━━━━━━━",
+  ].join("\n");
+
+  try {
+    await bot.api.sendMessage(userId, message, { parse_mode: "HTML" });
+    console.log("[SIGTERM] Shutdown message sent to user");
+  } catch (err) {
+    console.error("[SIGTERM] Failed to send shutdown message:", err);
+  }
+}
+
+process.on("SIGTERM", async () => {
   const ts = new Date().toISOString();
   console.log(`\n[${ts}] ========== SIGTERM RECEIVED ==========`);
   console.log("[SIGTERM] Graceful shutdown initiated (likely from make up or systemctl)");
   console.log("[SIGTERM] PID:", process.pid);
+
+  // Send shutdown message to user FIRST (before saving context)
+  await sendShutdownMessage();
+
   saveShutdownContext();
   stopRunner();
   console.log("[SIGTERM] All cleanup complete, exiting with code 0");
