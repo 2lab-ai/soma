@@ -1082,6 +1082,9 @@ export class ClaudeSession {
     this._generation++;
     console.log(`[KILL] Generation incremented to ${this._generation}`);
 
+    // Block any pending tools via preToolUseHook
+    this.stopRequested = true;
+
     // Abort any in-flight query
     if (this.abortController) {
       this.abortController.abort();
