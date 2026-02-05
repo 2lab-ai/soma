@@ -767,8 +767,14 @@ export async function handleText(ctx: Context): Promise<void> {
 
       // Check if it was a cancellation
       if (await handleAbortError(ctx, error, session)) {
-        // Abort handled
+        // Abort handled (reaction added by handleAbortError)
       } else {
+        // Add error reaction for model/other errors
+        try {
+          await ctx.react(Reactions.ERROR_MODEL);
+        } catch {
+          // Ignore reaction errors
+        }
         await ctx.reply(formatErrorForUser(error));
       }
       break; // Exit loop after handling error

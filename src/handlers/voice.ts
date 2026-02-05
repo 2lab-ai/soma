@@ -154,8 +154,14 @@ export async function handleVoice(ctx: Context): Promise<void> {
     console.error("Error processing voice:", error);
 
     if (await handleAbortError(ctx, error, session)) {
-      // Abort handled
+      // Abort handled (reaction added by handleAbortError)
     } else {
+      // Add error reaction for non-abort errors
+      try {
+        await ctx.react(Reactions.ERROR_MODEL);
+      } catch {
+        // Ignore reaction errors
+      }
       await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
     }
   } finally {

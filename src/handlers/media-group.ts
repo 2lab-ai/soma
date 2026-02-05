@@ -13,6 +13,7 @@ import { rateLimiter } from "../security";
 import { auditLogRateLimit } from "../utils";
 import { sessionManager } from "../session-manager";
 import { isAbortError, handleAbortError } from "../utils/error-classification";
+import { Reactions } from "../constants/reactions";
 
 /**
  * Configuration for a media group handler.
@@ -202,13 +203,25 @@ export async function handleProcessingError(
   if (chatId) {
     const session = sessionManager.getSession(chatId, threadId);
     if (await handleAbortError(ctx, error, session)) {
-      // Abort handled
+      // Abort handled (reaction added by handleAbortError)
       return;
     }
   } else if (isAbortError(error)) {
     // No session available, show generic message
+    try {
+      await ctx.react(Reactions.INTERRUPTED);
+    } catch {
+      // Ignore reaction errors
+    }
     await ctx.reply("🛑 Query stopped.");
     return;
+  }
+
+  // Add error reaction for non-abort errors
+  try {
+    await ctx.react(Reactions.ERROR_MODEL);
+  } catch {
+    // Ignore reaction errors
   }
 
   const errorStr = String(error);
