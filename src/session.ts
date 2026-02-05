@@ -15,12 +15,23 @@ import {
   UI_ASKUSER_INSTRUCTIONS,
   WORKING_DIR,
 } from "./config";
-import { getModelForContext, getReasoningTokens, type ConfigContext } from "./model-config";
+import {
+  getModelForContext,
+  getReasoningTokens,
+  type ConfigContext,
+} from "./model-config";
 import { formatToolStatus } from "./formatting";
 import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import { createSteeringMessage } from "./types";
-import type { QueryMetadata, SessionData, StatusCallback, SteeringMessage, TokenUsage, UsageSnapshot } from "./types";
+import type {
+  QueryMetadata,
+  SessionData,
+  StatusCallback,
+  SteeringMessage,
+  TokenUsage,
+  UsageSnapshot,
+} from "./types";
 import { fetchClaudeUsage } from "./usage";
 import type {
   ChoiceState,
@@ -208,7 +219,10 @@ export class ClaudeSession {
   totalCacheCreateTokens = 0;
   totalQueries = 0;
 
-  constructor(sessionKey = "default", chatCaptureService: ChatCaptureService | null = null) {
+  constructor(
+    sessionKey = "default",
+    chatCaptureService: ChatCaptureService | null = null
+  ) {
     this.sessionKey = sessionKey;
     this.workingDir = WORKING_DIR;
     this.chatCaptureService = chatCaptureService;
@@ -242,7 +256,12 @@ export class ClaudeSession {
   ): Promise<Record<string, unknown>> => {
     const toolName = (input as { tool_name?: string }).tool_name || "unknown";
     console.log(`[HOOK] PreToolUse fired for: ${toolName}`);
-    // Steering injection moved to PostToolUse for immediate processing
+
+    if (this.stopRequested) {
+      console.log(`[HOOK] Abort requested - blocking tool: ${toolName}`);
+      throw new Error("Abort requested by user");
+    }
+
     return {};
   };
 
@@ -375,7 +394,11 @@ export class ClaudeSession {
   }
 
   get isProcessing(): boolean {
-    return this._queryState === "preparing" || this._queryState === "running" || this._queryState === "completing";
+    return (
+      this._queryState === "preparing" ||
+      this._queryState === "running" ||
+      this._queryState === "completing"
+    );
   }
 
   consumeInterruptFlag(): boolean {
@@ -657,7 +680,10 @@ export class ClaudeSession {
     const closeCurrentTool = () => {
       if (currentToolStart) {
         const duration = Date.now() - currentToolStart.startMs;
-        const existing = toolDurations[currentToolStart.name] || { count: 0, totalMs: 0 };
+        const existing = toolDurations[currentToolStart.name] || {
+          count: 0,
+          totalMs: 0,
+        };
         toolDurations[currentToolStart.name] = {
           count: existing.count + 1,
           totalMs: existing.totalMs + duration,
@@ -672,15 +698,23 @@ export class ClaudeSession {
 
     try {
       // Capture usage before query (non-blocking, don't delay query start)
-      captureUsageSnapshot().then(u => { usageBefore = u; }).catch(() => {});
+      captureUsageSnapshot()
+        .then((u) => {
+          usageBefore = u;
+        })
+        .catch(() => {});
       // Capture user message
       if (this.chatCaptureService && this.sessionId) {
-        this.chatCaptureService.captureUserMessage(
-          this.sessionKey,
-          this.sessionId,
-          getModelForContext(modelContext),
-          message // Original user message, not the preprocessed one
-        ).catch(err => console.error("[ChatCapture] Failed to capture user message:", err));
+        this.chatCaptureService
+          .captureUserMessage(
+            this.sessionKey,
+            this.sessionId,
+            getModelForContext(modelContext),
+            message // Original user message, not the preprocessed one
+          )
+          .catch((err) =>
+            console.error("[ChatCapture] Failed to capture user message:", err)
+          );
       }
 
       const queryInstance = query({
@@ -718,7 +752,9 @@ export class ClaudeSession {
         // But only if session wasn't killed mid-query (generation check)
         if (!this.sessionId && event.session_id) {
           if (queryGeneration !== this._generation) {
-            console.log(`[GENERATION] Session killed mid-query (gen ${queryGeneration} vs ${this._generation}), ignoring session_id`);
+            console.log(
+              `[GENERATION] Session killed mid-query (gen ${queryGeneration} vs ${this._generation}), ignoring session_id`
+            );
             break;
           }
           this.sessionId = event.session_id;
@@ -1016,18 +1052,24 @@ export class ClaudeSession {
 
     // Capture assistant response
     if (this.chatCaptureService && this.sessionId) {
-      this.chatCaptureService.captureAssistantMessage(
-        this.sessionKey,
-        this.sessionId,
-        getModelForContext(modelContext),
-        fullResponse,
-        {
-          tokenUsage: this.lastUsage ? {
-            input: this.lastUsage.input_tokens,
-            output: this.lastUsage.output_tokens,
-          } : undefined,
-        }
-      ).catch(err => console.error("[ChatCapture] Failed to capture assistant message:", err));
+      this.chatCaptureService
+        .captureAssistantMessage(
+          this.sessionKey,
+          this.sessionId,
+          getModelForContext(modelContext),
+          fullResponse,
+          {
+            tokenUsage: this.lastUsage
+              ? {
+                  input: this.lastUsage.input_tokens,
+                  output: this.lastUsage.output_tokens,
+                }
+              : undefined,
+          }
+        )
+        .catch((err) =>
+          console.error("[ChatCapture] Failed to capture assistant message:", err)
+        );
     }
 
     // Only now set idle - all post-processing complete
@@ -1049,7 +1091,9 @@ export class ClaudeSession {
     // Return count of lost steering messages for caller to notify user
     const lostSteeringCount = this.steeringBuffer.length;
     if (lostSteeringCount > 0) {
-      console.warn(`[STEERING] Clearing ${lostSteeringCount} message(s) during session kill`);
+      console.warn(
+        `[STEERING] Clearing ${lostSteeringCount} message(s) during session kill`
+      );
     }
 
     this.sessionId = null;
@@ -1086,7 +1130,9 @@ export class ClaudeSession {
     // Return count of lost steering messages for caller to notify user
     const lostSteeringCount = this.steeringBuffer.length;
     if (lostSteeringCount > 0) {
-      console.warn(`[STEERING] Clearing ${lostSteeringCount} message(s) during session restore`);
+      console.warn(
+        `[STEERING] Clearing ${lostSteeringCount} message(s) during session restore`
+      );
     }
 
     this.sessionId = data.session_id;
