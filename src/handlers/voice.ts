@@ -85,6 +85,13 @@ export async function handleVoice(ctx: Context): Promise<void> {
   // 4. Mark processing started (allows /stop to work during transcription/classification)
   const stopProcessing = session.startProcessing();
 
+  // 4.5. Update reaction to show processing
+  try {
+    await ctx.react(Reactions.PROCESSING);
+  } catch {
+    // Ignore reaction errors
+  }
+
   // 5. Start typing indicator for transcription
   const typing = startTypingIndicator(ctx);
   const state = new StreamingState();
@@ -136,6 +143,13 @@ export async function handleVoice(ctx: Context): Promise<void> {
 
     // 11. Audit log
     await auditLog(userId, username, "VOICE", transcript, claudeResponse);
+
+    // 12. Update reaction to show complete
+    try {
+      await ctx.react(Reactions.COMPLETE);
+    } catch {
+      // Ignore reaction errors
+    }
   } catch (error) {
     console.error("Error processing voice:", error);
 
