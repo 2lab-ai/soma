@@ -224,6 +224,7 @@ export class ClaudeSession {
   private abortController: AbortController | null = null;
   private _queryState: QueryState = "idle";
   private stopRequested = false;
+  private _generation = 0;
   private _wasInterruptedByNewMessage = false;
   private _isInterrupting = false;
   private readonly MAX_STEERING_MESSAGES = 20;
@@ -550,6 +551,9 @@ export class ClaudeSession {
   ): Promise<string> {
     if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);
 
+    // Capture generation at query start to detect if session was killed mid-query
+    const queryGeneration = this._generation;
+
     const isNewSession = !this.isActive;
     const thinkingTokens = getThinkingLevel(message);
     const thinkingLabel =
@@ -711,7 +715,12 @@ export class ClaudeSession {
         }
 
         // Capture session_id from first message
+        // But only if session wasn't killed mid-query (generation check)
         if (!this.sessionId && event.session_id) {
+          if (queryGeneration !== this._generation) {
+            console.log(`[GENERATION] Session killed mid-query (gen ${queryGeneration} vs ${this._generation}), ignoring session_id`);
+            break;
+          }
           this.sessionId = event.session_id;
           console.log(`GOT session_id: ${this.sessionId!.slice(0, 8)}...`);
           this.saveSession();
@@ -1027,6 +1036,16 @@ export class ClaudeSession {
   }
 
   async kill(): Promise<number> {
+    // Increment generation to invalidate any in-flight queries
+    this._generation++;
+    console.log(`[KILL] Generation incremented to ${this._generation}`);
+
+    // Abort any in-flight query
+    if (this.abortController) {
+      this.abortController.abort();
+      console.log("[KILL] Aborted in-flight query");
+    }
+
     // Return count of lost steering messages for caller to notify user
     const lostSteeringCount = this.steeringBuffer.length;
     if (lostSteeringCount > 0) {
