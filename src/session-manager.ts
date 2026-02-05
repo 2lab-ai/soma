@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readdirSync, unlinkSync, readFileSync } from "fs";
 import { ClaudeSession } from "./session";
-import type { SessionData } from "./types";
+import type { KillResult, SessionData } from "./types";
 import { ChatCaptureService } from "./services/chat-capture-service";
 import { FileChatStorage } from "./storage/chat-storage";
 import { CHAT_HISTORY_ENABLED, CHAT_HISTORY_DATA_DIR } from "./config";
@@ -97,13 +97,15 @@ class SessionManager {
 
   /**
    * Kill (clear) a specific session.
+   * @returns Lost messages for recovery UI
    */
-  async killSession(chatId: number, threadId?: number): Promise<void> {
+  async killSession(chatId: number, threadId?: number): Promise<KillResult> {
     const key = this.deriveKey(chatId, threadId);
     const session = this.sessions.get(key);
 
+    let result: KillResult = { count: 0, messages: [] };
     if (session) {
-      await session.kill();
+      result = await session.kill();
       this.sessions.delete(key);
     }
 
@@ -113,7 +115,8 @@ class SessionManager {
       unlinkSync(filePath);
     }
 
-    console.log(`[SessionManager] Killed session for ${key}`);
+    console.log(`[SessionManager] Killed session for ${key}, lost ${result.count} messages`);
+    return result;
   }
 
   /**
