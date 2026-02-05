@@ -705,6 +705,8 @@ export class ClaudeSession {
     const queryGeneration = this._generation;
 
     const isNewSession = !this.isActive;
+    console.log(`[QUERY] Starting: sessionId=${this.sessionId?.slice(0, 8) || "null"}, isNewSession=${isNewSession}, isActive=${this.isActive}`);
+
     const thinkingTokens = getThinkingLevel(message);
     const thinkingLabel =
       { 0: "off", 10000: "normal", 50000: "deep" }[thinkingTokens] ??
