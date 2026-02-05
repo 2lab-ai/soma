@@ -278,17 +278,16 @@ export class ClaudeSession {
     const toolName = (input as { tool_name?: string }).tool_name || "unknown";
     console.log(`[HOOK] PostToolUse fired for: ${toolName}`);
 
-    const steering = this.consumeSteering();
-    if (!steering) {
-      return {};
+    // Don't consume steering here - it will be handled by auto-continue after query completes.
+    // Consuming here causes issues when MCP tools are the last/only tool, as the systemMessage
+    // may not be processed by the model and steering is lost.
+    if (this.hasSteeringMessages()) {
+      console.log(
+        `[STEERING] ${this.getSteeringCount()} message(s) pending - will be handled after query completes`
+      );
     }
 
-    console.log(
-      `[STEERING] Injecting ${steering.split("\n---\n").length} message(s) after ${toolName}`
-    );
-    return {
-      systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
-    };
+    return {};
   };
 
   get activityState(): ActivityState {
