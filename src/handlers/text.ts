@@ -585,20 +585,37 @@ export async function handleText(ctx: Context): Promise<void> {
 
       // 9.0.5 Restore injected steering for fallback processing
       // (steering injected via postToolUseHook may not have been processed by model)
-      session.restoreInjectedSteering();
+      const bufferBeforeRestore = session.getSteeringCount();
+      const restoredCount = session.restoreInjectedSteering();
+      const bufferAfterRestore = session.getSteeringCount();
+      console.log(
+        `[STEERING DEBUG] Before restore: ${bufferBeforeRestore}, Restored: ${restoredCount}, After: ${bufferAfterRestore}`
+      );
 
       // 9.1 Check for unconsumed steering and auto-continue
-      if (session.hasSteeringMessages()) {
+      const hasSteering = session.hasSteeringMessages();
+      console.log(`[AUTO-CONTINUE] Check: hasSteeringMessages() = ${hasSteering}, buffer count = ${session.getSteeringCount()}`);
+
+      if (hasSteering) {
         const steeringCount = session.getSteeringCount();
-        console.log(
-          `[STEERING] Auto-continuing with ${steeringCount} pending message(s)`
-        );
+        console.log(`[AUTO-CONTINUE] Processing ${steeringCount} pending message(s)`);
 
         // Get the steering content and consume it
         const steeringContent = session.consumeSteering();
+        console.log(`[AUTO-CONTINUE] Consumed: "${steeringContent?.slice(0, 100)}..."`);
+
         if (steeringContent) {
+          // Notify user that we're processing their queued messages
+          try {
+            await ctx.reply(`💬 <i>대기 메시지 ${steeringCount}개 처리 중...</i>`, {
+              parse_mode: "HTML",
+            });
+          } catch {
+            // Notification failed, continue anyway
+          }
+
           // Send follow-up with the steering messages
-          const followUpMessage = `[이전 응답 중 보낸 메시지]\n${steeringContent}`;
+          const followUpMessage = `[이전 응답 중 보낸 메시지 - 지금 처리합니다]\n${steeringContent}`;
 
           const followUpState = new StreamingState();
           const followUpCallback = await createStatusCallback(
@@ -608,6 +625,7 @@ export async function handleText(ctx: Context): Promise<void> {
           );
 
           try {
+            console.log(`[AUTO-CONTINUE] Sending follow-up query...`);
             const followUpResponse = await session.sendMessageStreaming(
               followUpMessage,
               username,
@@ -616,6 +634,7 @@ export async function handleText(ctx: Context): Promise<void> {
               chatId,
               ctx
             );
+            console.log(`[AUTO-CONTINUE] Follow-up complete, response length: ${followUpResponse.length}`);
             await auditLog(
               userId,
               username,
@@ -624,10 +643,14 @@ export async function handleText(ctx: Context): Promise<void> {
               followUpResponse
             );
           } catch (followUpError) {
-            console.error("[STEERING] Follow-up failed:", followUpError);
+            console.error("[AUTO-CONTINUE] Follow-up FAILED:", followUpError);
             await ctx.reply("⚠️ 대기 중인 메시지 처리 실패. 다시 보내주세요.");
           }
+        } else {
+          console.warn(`[AUTO-CONTINUE] consumeSteering returned null/empty despite hasSteering=true`);
         }
+      } else {
+        console.log(`[AUTO-CONTINUE] No pending steering messages`);
       }
 
       // 9.5. Check context limit and trigger auto-save

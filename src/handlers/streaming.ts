@@ -485,23 +485,15 @@ export async function createStatusCallback(
       if (statusType === "steering_pending") {
         // User sent messages during execution but Claude responded with text-only
         // Their messages weren't delivered via PreToolUse hook
+        // Auto-continue in text.ts will handle processing immediately
         const steeringCount =
           (metadata as { steeringCount?: number })?.steeringCount || 0;
         console.log(
-          `[STEERING] ${steeringCount} message(s) pending - will be processed in follow-up`
+          `[STEERING PENDING] ${steeringCount} message(s) in buffer - auto-continue will process after sendMessageStreaming returns`
         );
 
-        // Notify user their message is queued
-        try {
-          await ctx.reply(
-            `💬 <i>${steeringCount}개 메시지 대기 중 - 다음 응답에서 처리됩니다</i>`,
-            { parse_mode: "HTML" }
-          );
-        } catch {
-          // Notification failed
-        }
-
-        // Store flag for text handler to trigger follow-up
+        // Store flag but don't show notification - auto-continue handles immediately
+        // Old behavior showed "다음 응답에서 처리됩니다" which was misleading
         state.hasSteeringPending = true;
         state.steeringPendingCount = steeringCount;
         return;
