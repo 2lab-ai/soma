@@ -229,7 +229,13 @@ if (existsSync(RESTART_FILE)) {
 }
 
 // Start with concurrent runner (commands work immediately)
+const startTs = new Date().toISOString();
+console.log(`\n[${startTs}] ========== BOT STARTUP ==========`);
+console.log(`[STARTUP] PID: ${process.pid}`);
+console.log(`[STARTUP] Working dir: ${WORKING_DIR}`);
+console.log(`[STARTUP] Allowed users: ${ALLOWED_USERS.length}`);
 const runner = run(bot);
+console.log(`[STARTUP] Bot runner started`);
 
 // Send startup notification to Claude and user
 if (ALLOWED_USERS.length > 0) {
@@ -318,6 +324,7 @@ if (ALLOWED_USERS.length > 0) {
       }
 
       // PRIORITY 2: Check for saved restart context (manual save-and-restart.sh)
+      console.log(`[STARTUP] Checking for restart context in ${WORKING_DIR}/docs/tasks/save`);
       let contextMessage = "";
       const saveDir = `${WORKING_DIR}/docs/tasks/save`;
       if (existsSync(saveDir)) {
@@ -331,24 +338,31 @@ if (ALLOWED_USERS.length > 0) {
             }))
             .sort((a, b) => b.mtime - a.mtime);
 
+          console.log(`[STARTUP] Found ${files.length} restart-context file(s)`);
           if (files.length > 0) {
             const latestFile = files[0]!;
+            console.log(`[STARTUP] Using latest: ${latestFile.name} (mtime: ${new Date(latestFile.mtime).toISOString()})`);
             const content = readFileSync(latestFile.path, "utf-8");
             contextMessage = `\n\n📋 **Saved Context Found:**\n${latestFile.name}\n\n${content}`;
           }
         } catch (err) {
-          console.warn("Failed to read restart context:", err);
+          console.warn("[STARTUP] Failed to read restart context:", err);
         }
+      } else {
+        console.log(`[STARTUP] Save directory does not exist`);
       }
 
       // Determine startup type for clear messaging
       let startupType = "";
       if (contextMessage.includes("restart-context")) {
         startupType = "🔄 **SIGTERM Restart** (graceful shutdown via make up)";
+        console.log(`[STARTUP] Type: SIGTERM Restart (found restart-context)`);
       } else if (session.isActive) {
         startupType = "♻️ **Session Resumed** (no saved context found)";
+        console.log(`[STARTUP] Type: Session Resumed (active session exists)`);
       } else {
         startupType = "🆕 **Fresh Start** (new session)";
+        console.log(`[STARTUP] Type: Fresh Start (new session)`);
       }
 
       const startupPrompt = session.isActive
@@ -374,11 +388,19 @@ if (ALLOWED_USERS.length > 0) {
 
 // Graceful shutdown
 const stopRunner = () => {
+  console.log("[SHUTDOWN] Step 1: Stopping scheduler...");
   stopScheduler();
+  console.log("[SHUTDOWN] Step 2: Saving all sessions...");
+  const stats = sessionManager.getGlobalStats();
+  console.log(`[SHUTDOWN] Sessions to save: ${stats.totalSessions}, Total queries: ${stats.totalQueries}`);
   sessionManager.saveAllSessions();
+  console.log("[SHUTDOWN] Step 3: Sessions saved");
   if (runner.isRunning()) {
-    console.log("Stopping bot...");
+    console.log("[SHUTDOWN] Step 4: Stopping bot runner...");
     runner.stop();
+    console.log("[SHUTDOWN] Step 5: Bot runner stopped");
+  } else {
+    console.log("[SHUTDOWN] Step 4: Bot runner already stopped");
   }
 };
 
@@ -386,8 +408,10 @@ const stopRunner = () => {
  * Save graceful shutdown context to be restored on next startup.
  */
 function saveShutdownContext(): void {
+  console.log("[SIGTERM-SAVE] Starting context save...");
   try {
     const saveDir = `${WORKING_DIR}/docs/tasks/save`;
+    console.log(`[SIGTERM-SAVE] Save directory: ${saveDir}`);
     mkdirSync(saveDir, { recursive: true });
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
@@ -396,6 +420,7 @@ function saveShutdownContext(): void {
     const now = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
     const stats = sessionManager.getGlobalStats();
     const sessionInfo = `Active sessions: ${stats.totalSessions}`;
+    console.log(`[SIGTERM-SAVE] Stats: sessions=${stats.totalSessions}, totalQueries=${stats.totalQueries}`);
 
     const content = [
       `# Restart Context - ${now}`,
@@ -411,21 +436,29 @@ function saveShutdownContext(): void {
     ].join("\n");
 
     writeFileSync(saveFile, content, "utf-8");
-    console.log(`✅ Context saved to ${saveFile}`);
+    console.log(`[SIGTERM-SAVE] ✅ Context saved to ${saveFile}`);
+    console.log(`[SIGTERM-SAVE] File content length: ${content.length} bytes`);
   } catch (error) {
-    console.warn(`Failed to save shutdown context: ${error}`);
+    console.error(`[SIGTERM-SAVE] ❌ Failed to save: ${error}`);
   }
 }
 
 process.on("SIGINT", () => {
-  console.log("Received SIGINT");
+  const ts = new Date().toISOString();
+  console.log(`\n[${ts}] ========== SIGINT RECEIVED ==========`);
+  console.log("[SIGINT] Ctrl+C detected, stopping without save...");
   stopRunner();
+  console.log("[SIGINT] Exiting with code 0");
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
-  console.log("Received SIGTERM");
+  const ts = new Date().toISOString();
+  console.log(`\n[${ts}] ========== SIGTERM RECEIVED ==========`);
+  console.log("[SIGTERM] Graceful shutdown initiated (likely from make up or systemctl)");
+  console.log("[SIGTERM] PID:", process.pid);
   saveShutdownContext();
   stopRunner();
+  console.log("[SIGTERM] All cleanup complete, exiting with code 0");
   process.exit(0);
 });
