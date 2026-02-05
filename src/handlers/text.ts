@@ -498,6 +498,43 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
+  // 3.5. Handle pending recovery race condition
+  // If user sends a new message while recovery UI is displayed, auto-resolve as context
+  if (session.hasPendingRecovery()) {
+    const recovery = session.getPendingRecovery();
+    if (recovery) {
+      console.log(`[RECOVERY] Auto-resolving pending recovery (${recovery.messages.length} messages) as context for new message`);
+
+      // Format lost messages as context
+      const resolved = session.resolvePendingRecovery();
+      if (resolved && resolved.length > 0) {
+        const formattedContext = resolved
+          .map((m) => {
+            const ts = new Date(m.timestamp).toLocaleTimeString("en-US", {
+              hour12: false,
+            });
+            return `[${ts}] ${m.content}`;
+          })
+          .join("\n");
+        session.nextQueryContext = `[CONTEXT FROM INTERRUPTED SESSION - ${resolved.length} message(s)]\n${formattedContext}\n[END CONTEXT]`;
+      }
+
+      // Try to delete the inline button message
+      if (recovery.messageId) {
+        try {
+          await ctx.api.deleteMessage(chatId!, recovery.messageId);
+        } catch (deleteError) {
+          console.debug("[RECOVERY] Failed to delete inline button message:", deleteError);
+        }
+      }
+
+      // Brief notification
+      try {
+        await ctx.reply("📋 Previous messages added as context.");
+      } catch {}
+    }
+  }
+
   // 4. Store message for retry
   session.lastMessage = message;
 
