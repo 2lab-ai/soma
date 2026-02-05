@@ -26,6 +26,7 @@ import { checkCommandSafety, isPathAllowed } from "./security";
 import { createSteeringMessage } from "./types";
 import type {
   KillResult,
+  PendingRecovery,
   QueryMetadata,
   SessionData,
   StatusCallback,
@@ -33,6 +34,7 @@ import type {
   TokenUsage,
   UsageSnapshot,
 } from "./types";
+import { PENDING_RECOVERY_TIMEOUT_MS } from "./types";
 import { fetchClaudeUsage } from "./usage";
 import type {
   ChoiceState,
@@ -248,6 +250,7 @@ export class ClaudeSession {
   choiceState: ChoiceState | null = null;
   pendingDirectInput: DirectInputState | null = null;
   parseTextChoiceState: ParseTextChoiceState | null = null;
+  pendingRecovery: PendingRecovery | null = null;
   private _activityState: ActivityState = "idle";
 
   private readonly preToolUseHook = async (
@@ -451,6 +454,64 @@ export class ClaudeSession {
   }
   clearParseTextChoice(): void {
     this.parseTextChoiceState = null;
+  }
+
+  // Pending recovery methods for lost message handling
+  setPendingRecovery(
+    messages: SteeringMessage[],
+    chatId: number,
+    messageId?: number
+  ): void {
+    this.pendingRecovery = {
+      messages,
+      promptedAt: Date.now(),
+      state: "awaiting",
+      chatId,
+      messageId,
+    };
+    console.log(
+      `[RECOVERY] Set pending recovery: ${messages.length} messages for chat ${chatId}`
+    );
+  }
+
+  getPendingRecovery(): PendingRecovery | null {
+    if (!this.pendingRecovery) return null;
+
+    // Check expiration
+    const elapsed = Date.now() - this.pendingRecovery.promptedAt;
+    if (elapsed > PENDING_RECOVERY_TIMEOUT_MS) {
+      console.log(
+        `[RECOVERY] Expired after ${Math.round(elapsed / 1000)}s, clearing`
+      );
+      this.pendingRecovery = null;
+      return null;
+    }
+
+    return this.pendingRecovery;
+  }
+
+  resolvePendingRecovery(): SteeringMessage[] | null {
+    const recovery = this.getPendingRecovery();
+    if (!recovery || recovery.state === "resolved") return null;
+
+    recovery.state = "resolved";
+    const messages = recovery.messages;
+    this.pendingRecovery = null;
+    console.log(`[RECOVERY] Resolved: ${messages.length} messages`);
+    return messages;
+  }
+
+  clearPendingRecovery(): void {
+    if (this.pendingRecovery) {
+      console.log(
+        `[RECOVERY] Cleared: ${this.pendingRecovery.messages.length} messages discarded`
+      );
+    }
+    this.pendingRecovery = null;
+  }
+
+  hasPendingRecovery(): boolean {
+    return this.getPendingRecovery() !== null;
   }
 
   addSteering(
