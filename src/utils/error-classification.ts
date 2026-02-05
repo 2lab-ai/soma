@@ -70,7 +70,7 @@ export function extractErrorDetails(error: unknown): ErrorDetails {
 
   // Extract exit code from message
   const exitMatch = error.message.match(/exited with code (\d+)/);
-  if (exitMatch) {
+  if (exitMatch?.[1]) {
     details.exitCode = parseInt(exitMatch[1], 10);
   }
 

@@ -26,6 +26,7 @@ import {
   formatErrorForUser,
 } from "../utils/error-classification";
 import type { ClaudeSession } from "../session";
+import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 
 const DIRECT_INPUT_EXPIRY_MS = 5 * 60 * 1000;
 
@@ -340,13 +341,39 @@ export async function handleText(ctx: Context): Promise<void> {
   if (!message.trim()) {
     // "!" alone - provide feedback that stop was requested
     if (wasInterrupt) {
-      try {
-        await ctx.reply("🛑 Stopped");
-      } catch {
-        // Fallback to reaction if reply fails (use valid Telegram emoji)
+      // Extract lost steering messages for recovery UI
+      const lostMessages = session.extractSteeringMessages();
+
+      if (lostMessages.length > 0) {
+        // Show inline buttons for lost message recovery
+        const sessionKey = `${chatId}${threadId ? `:${threadId}` : ""}`;
+        session.setPendingRecovery(lostMessages, chatId!);
+
+        const keyboard = TelegramChoiceBuilder.buildLostMessageKeyboard(sessionKey);
+        const messageText = TelegramChoiceBuilder.buildLostMessageText(lostMessages, true);
+
         try {
-          await ctx.react("👎");
-        } catch {}
+          const sentMsg = await ctx.reply(messageText, {
+            reply_markup: keyboard,
+            parse_mode: "Markdown",
+          });
+          session.setPendingRecovery(lostMessages, chatId!, sentMsg.message_id);
+        } catch (replyError) {
+          console.error("[INTERRUPT] Failed to send lost message UI:", replyError);
+          try {
+            await ctx.reply("🛑 Stopped (had undelivered messages)");
+          } catch {}
+        }
+      } else {
+        // No lost messages - simple stop feedback
+        try {
+          await ctx.reply("🛑 Stopped");
+        } catch {
+          // Fallback to reaction if reply fails (use valid Telegram emoji)
+          try {
+            await ctx.react("👎");
+          } catch {}
+        }
       }
     }
     return;
