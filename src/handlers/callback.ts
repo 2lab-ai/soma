@@ -97,7 +97,7 @@ async function sendMessageToClaude(
     await auditLog(userId, username, auditAction, message, response);
   } catch (error) {
     console.error(`Error processing ${auditAction.toLowerCase()}:`, error);
-    await cleanupToolMessages(ctx, state.toolMessages);
+    cleanupToolMessages(ctx, state.toolMessages);
 
     if (isAbortError(error)) {
       const wasInterrupt = session.consumeInterruptFlag();

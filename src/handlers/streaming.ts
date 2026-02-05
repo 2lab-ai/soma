@@ -133,16 +133,19 @@ async function deleteMessage(ctx: Context, msg: Message): Promise<void> {
   }
 }
 
-export async function cleanupToolMessages(
+/**
+ * Clean up tool status messages (fire-and-forget, doesn't block response).
+ * Deletion happens in background to improve responsiveness.
+ */
+export function cleanupToolMessages(
   ctx: Context,
   toolMessages: Message[]
-): Promise<void> {
+): void {
+  // Fire and forget - don't block on message deletion
   for (const toolMsg of toolMessages) {
-    try {
-      await ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id);
-    } catch (error) {
-      console.warn(`Failed to delete tool message ${toolMsg.message_id}:`, error);
-    }
+    ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id).catch((error) => {
+      console.debug(`Failed to delete tool message ${toolMsg.message_id}:`, error);
+    });
   }
 }
 

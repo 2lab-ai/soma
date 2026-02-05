@@ -208,7 +208,7 @@ async function sendDirectInputToClaude(
     console.error(formatErrorForLog(error));
 
     session.setActivityState("idle");
-    await cleanupToolMessages(ctx, state.toolMessages);
+    cleanupToolMessages(ctx, state.toolMessages);
 
     if (!(await handleAbortError(ctx, error, session))) {
       await ctx.reply(formatErrorForUser(error));
@@ -734,7 +734,7 @@ export async function handleText(ctx: Context): Promise<void> {
       const errorStr = String(error);
       const isClaudeCodeCrash = errorStr.includes("exited with code");
 
-      await cleanupToolMessages(ctx, state.toolMessages);
+      cleanupToolMessages(ctx, state.toolMessages);
 
       // Retry on Claude Code crash (not user cancellation)
       // Common cause: stale session ID from previous run
