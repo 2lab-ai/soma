@@ -22,6 +22,7 @@ import {
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { botUsername } from "./text";
+import { Reactions } from "../constants/reactions";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -149,7 +150,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
 
   // 1.5. React to user message to show it's received
   try {
-    await ctx.react("👀");
+    await ctx.react(Reactions.READ);
   } catch (error) {
     console.debug("Failed to add reaction to user message:", error);
   }
