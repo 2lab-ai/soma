@@ -668,8 +668,8 @@ describe("ClaudeSession - injected steering restore (auto-continue)", () => {
     const extracted = session.extractSteeringMessages();
 
     expect(extracted).toHaveLength(2);
-    expect(extracted[0].content).toBe("msg1");
-    expect(extracted[1].content).toBe("msg2");
+    expect(extracted[0]!.content).toBe("msg1");
+    expect(extracted[1]!.content).toBe("msg2");
     expect(session.hasSteeringMessages()).toBe(false);
     expect(session.getSteeringCount()).toBe(0);
   });
@@ -787,8 +787,8 @@ describe("ClaudeSession - injected steering restore (auto-continue)", () => {
 
     expect(result.count).toBe(2);
     expect(result.messages).toHaveLength(2);
-    expect(result.messages[0].content).toBe("important message 1");
-    expect(result.messages[1].content).toBe("important message 2");
+    expect(result.messages[0]!.content).toBe("important message 1");
+    expect(result.messages[1]!.content).toBe("important message 2");
 
     // Buffer should be cleared after kill
     expect(session.hasSteeringMessages()).toBe(false);
@@ -812,7 +812,7 @@ describe("ClaudeSession - injected steering restore (auto-continue)", () => {
 
     expect(result.count).toBe(1);
     expect(result.messages).toHaveLength(1);
-    expect(result.messages[0].content).toBe("message before restore");
+    expect(result.messages[0]!.content).toBe("message before restore");
   });
 });
 
