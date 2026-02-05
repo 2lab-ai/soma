@@ -221,12 +221,15 @@ export async function handleNew(ctx: Context): Promise<void> {
     return;
   }
 
-  // Get session before killing to set pending recovery
-  const session = sessionManager.getSession(chatId!, threadId);
+  // Get session info before killing
   const sessionKey = `${chatId}${threadId ? `:${threadId}` : ""}`;
+  const oldSession = sessionManager.getSession(chatId!, threadId);
+  const oldSessionId = oldSession.sessionId;
+  console.log(`[/new] Before kill: sessionId=${oldSessionId?.slice(0, 8) || "null"}`);
 
   // Kill session and get lost messages
   const { count, messages } = await sessionManager.killSession(chatId!, threadId);
+  console.log(`[/new] After kill: lost ${count} messages`);
 
   if (count > 0 && messages.length > 0) {
     // Set pending recovery on the NEW session (getSession creates if not exists)
@@ -247,6 +250,10 @@ export async function handleNew(ctx: Context): Promise<void> {
   } else {
     await ctx.reply("🆕 Session cleared. Next message starts fresh.");
   }
+
+  // Verify session is actually cleared
+  const verifySession = sessionManager.getSession(chatId!, threadId);
+  console.log(`[/new] Verify after: sessionId=${verifySession.sessionId?.slice(0, 8) || "null"}, isActive=${verifySession.isActive}`);
 }
 
 /**
