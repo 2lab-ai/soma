@@ -25,6 +25,7 @@ import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import { createSteeringMessage } from "./types";
 import type {
+  KillResult,
   QueryMetadata,
   SessionData,
   StatusCallback,
@@ -1077,7 +1078,7 @@ export class ClaudeSession {
     return fullResponse;
   }
 
-  async kill(): Promise<number> {
+  async kill(): Promise<KillResult> {
     // Increment generation to invalidate any in-flight queries
     this._generation++;
     console.log(`[KILL] Generation incremented to ${this._generation}`);
@@ -1091,11 +1092,11 @@ export class ClaudeSession {
       console.log("[KILL] Aborted in-flight query");
     }
 
-    // Return count of lost steering messages for caller to notify user
-    const lostSteeringCount = this.steeringBuffer.length;
-    if (lostSteeringCount > 0) {
+    // Extract lost steering messages for caller to offer recovery
+    const lostMessages = [...this.steeringBuffer];
+    if (lostMessages.length > 0) {
       console.warn(
-        `[STEERING] Clearing ${lostSteeringCount} message(s) during session kill`
+        `[STEERING] Extracted ${lostMessages.length} message(s) during session kill`
       );
     }
 
@@ -1110,7 +1111,7 @@ export class ClaudeSession {
     this.steeringBuffer = [];
     this.resetWarningFlags();
     console.log("Session cleared");
-    return lostSteeringCount;
+    return { count: lostMessages.length, messages: lostMessages };
   }
 
   markRestored(): void {
@@ -1129,12 +1130,12 @@ export class ClaudeSession {
     this.messagesSinceRestore = 0;
   }
 
-  restoreFromData(data: SessionData): number {
-    // Return count of lost steering messages for caller to notify user
-    const lostSteeringCount = this.steeringBuffer.length;
-    if (lostSteeringCount > 0) {
+  restoreFromData(data: SessionData): KillResult {
+    // Extract lost steering messages for caller to offer recovery
+    const lostMessages = [...this.steeringBuffer];
+    if (lostMessages.length > 0) {
       console.warn(
-        `[STEERING] Clearing ${lostSteeringCount} message(s) during session restore`
+        `[STEERING] Extracted ${lostMessages.length} message(s) during session restore`
       );
     }
 
@@ -1151,7 +1152,7 @@ export class ClaudeSession {
     if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0)
       this.contextWindowSize = data.contextWindowSize;
     this.steeringBuffer = [];
-    return lostSteeringCount;
+    return { count: lostMessages.length, messages: lostMessages };
   }
 
   private accumulateUsage(u: TokenUsage): void {

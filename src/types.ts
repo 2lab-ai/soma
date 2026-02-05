@@ -73,6 +73,12 @@ export interface SteeringMessage {
   receivedDuringTool?: string;
 }
 
+// Result from session.kill() - includes lost messages for recovery UI
+export interface KillResult {
+  count: number;
+  messages: SteeringMessage[];
+}
+
 // Factory function for creating validated SteeringMessage instances
 export function createSteeringMessage(
   content: string,
