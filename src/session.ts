@@ -246,6 +246,7 @@ export class ClaudeSession {
   private _isInterrupting = false;
   private readonly MAX_STEERING_MESSAGES = 20;
   private steeringBuffer: SteeringMessage[] = [];
+  private injectedSteeringDuringQuery: SteeringMessage[] = []; // Track messages injected via hook for fallback
 
   choiceState: ChoiceState | null = null;
   pendingDirectInput: DirectInputState | null = null;
@@ -278,16 +279,25 @@ export class ClaudeSession {
     const toolName = (input as { tool_name?: string }).tool_name || "unknown";
     console.log(`[HOOK] PostToolUse fired for: ${toolName}`);
 
-    // Don't consume steering here - it will be handled by auto-continue after query completes.
-    // Consuming here causes issues when MCP tools are the last/only tool, as the systemMessage
-    // may not be processed by the model and steering is lost.
-    if (this.hasSteeringMessages()) {
-      console.log(
-        `[STEERING] ${this.getSteeringCount()} message(s) pending - will be handled after query completes`
-      );
+    if (!this.steeringBuffer.length) {
+      return {};
     }
 
-    return {};
+    // Copy messages before consuming for fallback (in case systemMessage isn't processed)
+    const messagesToInject = [...this.steeringBuffer];
+    this.injectedSteeringDuringQuery.push(...messagesToInject);
+
+    const steering = this.consumeSteering();
+    if (!steering) {
+      return {};
+    }
+
+    console.log(
+      `[STEERING] Injecting ${messagesToInject.length} message(s) after ${toolName} (also saved for fallback)`
+    );
+    return {
+      systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
+    };
   };
 
   get activityState(): ActivityState {
@@ -571,6 +581,27 @@ export class ClaudeSession {
     return messages;
   }
 
+  /**
+   * Restore injected steering messages back to buffer for fallback processing.
+   * Call this after query completes to ensure auto-continue handles them.
+   */
+  restoreInjectedSteering(): number {
+    if (!this.injectedSteeringDuringQuery.length) return 0;
+    const count = this.injectedSteeringDuringQuery.length;
+    // Prepend to buffer (they were sent first)
+    this.steeringBuffer = [...this.injectedSteeringDuringQuery, ...this.steeringBuffer];
+    this.injectedSteeringDuringQuery = [];
+    console.log(`[STEERING] Restored ${count} injected message(s) to buffer for fallback processing`);
+    return count;
+  }
+
+  /**
+   * Clear injected steering tracking at start of new query.
+   */
+  clearInjectedSteeringTracking(): void {
+    this.injectedSteeringDuringQuery = [];
+  }
+
   peekSteering(): string | null {
     if (!this.steeringBuffer.length) return null;
     return this.steeringBuffer
@@ -646,6 +677,9 @@ export class ClaudeSession {
     modelContext: ConfigContext = "general"
   ): Promise<string> {
     if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);
+
+    // Clear injected steering tracking from previous query
+    this.clearInjectedSteeringTracking();
 
     // Capture generation at query start to detect if session was killed mid-query
     const queryGeneration = this._generation;

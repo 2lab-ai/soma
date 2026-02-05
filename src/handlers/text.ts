@@ -568,6 +568,10 @@ export async function handleText(ctx: Context): Promise<void> {
       // 9. Audit log
       await auditLog(userId, username, "TEXT", message, response);
 
+      // 9.0.5 Restore injected steering for fallback processing
+      // (steering injected via postToolUseHook may not have been processed by model)
+      session.restoreInjectedSteering();
+
       // 9.1 Check for unconsumed steering and auto-continue
       if (session.hasSteeringMessages()) {
         const steeringCount = session.getSteeringCount();
