@@ -75,6 +75,13 @@ async function processPhotos(
   // Mark processing started
   const stopProcessing = session.startProcessing();
 
+  // Update reaction to show processing
+  try {
+    await ctx.react(Reactions.PROCESSING);
+  } catch {
+    // Ignore reaction errors
+  }
+
   // Build prompt
   let prompt: string;
   if (photoPaths.length === 1) {
@@ -106,6 +113,13 @@ async function processPhotos(
     );
 
     await auditLog(userId, username, "PHOTO", prompt, response);
+
+    // Update reaction to show complete
+    try {
+      await ctx.react(Reactions.COMPLETE);
+    } catch {
+      // Ignore reaction errors
+    }
   } catch (error) {
     await handleProcessingError(ctx, error, state.toolMessages, chatId, threadId);
   } finally {

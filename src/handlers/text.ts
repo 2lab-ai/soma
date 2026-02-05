@@ -545,6 +545,13 @@ export async function handleText(ctx: Context): Promise<void> {
   // 5. Mark processing started
   const stopProcessing = session.startProcessing();
 
+  // 5.5. Update reaction to show processing
+  try {
+    await ctx.react(Reactions.PROCESSING);
+  } catch {
+    // Ignore reaction errors
+  }
+
   // 6. Start typing indicator
   const typing = startTypingIndicator(ctx);
 
@@ -568,6 +575,13 @@ export async function handleText(ctx: Context): Promise<void> {
 
       // 9. Audit log
       await auditLog(userId, username, "TEXT", message, response);
+
+      // 9.0.3 Update reaction to show complete
+      try {
+        await ctx.react(Reactions.COMPLETE);
+      } catch {
+        // Ignore reaction errors
+      }
 
       // 9.0.5 Restore injected steering for fallback processing
       // (steering injected via postToolUseHook may not have been processed by model)
