@@ -22,6 +22,7 @@ import {
 import { StreamingState, createStatusCallback } from "./streaming";
 import { botUsername } from "./text";
 import { handleAbortError } from "../utils/error-classification";
+import { Reactions } from "../constants/reactions";
 
 /**
  * Handle incoming voice messages.
@@ -57,7 +58,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
 
   // 1.5. React to user message to show it's received
   try {
-    await ctx.react("👀");
+    await ctx.react(Reactions.READ);
   } catch (error) {
     console.debug("Failed to add reaction to user message:", error);
   }

@@ -27,6 +27,7 @@ import {
 } from "../utils/error-classification";
 import type { ClaudeSession } from "../session";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
+import { Reactions } from "../constants/reactions";
 
 const DIRECT_INPUT_EXPIRY_MS = 5 * 60 * 1000;
 
@@ -259,7 +260,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 1.5. React to user message to show it's received
   try {
-    await ctx.react("👀");
+    await ctx.react(Reactions.READ);
   } catch (error) {
     console.debug("Failed to add reaction to user message:", error);
   }
@@ -369,9 +370,9 @@ export async function handleText(ctx: Context): Promise<void> {
         try {
           await ctx.reply("🛑 Stopped");
         } catch {
-          // Fallback to reaction if reply fails (use valid Telegram emoji)
+          // Fallback to reaction if reply fails
           try {
-            await ctx.react("👎");
+            await ctx.react(Reactions.INTERRUPTED);
           } catch {}
         }
       }
@@ -427,7 +428,7 @@ export async function handleText(ctx: Context): Promise<void> {
           );
           // Final fallback: attempt reaction
           try {
-            await ctx.react("👎");
+            await ctx.react(Reactions.ERROR_SOMA);
           } catch {}
         }
         return;
@@ -456,9 +457,9 @@ export async function handleText(ctx: Context): Promise<void> {
         } catch (replyError) {
           console.error("Failed to notify via reply:", replyError, steeringContext);
 
-          // Fallback to reaction (use valid Telegram emoji)
+          // Fallback to reaction - eviction means message was received but dropped
           try {
-            await ctx.react("🤔");
+            await ctx.react(Reactions.CANCELLED);
             notified = true;
           } catch (reactError) {
             console.error(
@@ -481,7 +482,7 @@ export async function handleText(ctx: Context): Promise<void> {
           steeringContext
         );
         try {
-          await ctx.react("👌");
+          await ctx.react(Reactions.STEERING_BUFFERED);
         } catch (error) {
           console.debug("Failed to add steering reaction:", error, steeringContext);
         }
