@@ -79,6 +79,17 @@ export interface KillResult {
   messages: SteeringMessage[];
 }
 
+// Pending recovery state for inline button flow
+export interface PendingRecovery {
+  messages: SteeringMessage[];
+  promptedAt: number;
+  state: "awaiting" | "resolved";
+  chatId: number;
+  messageId?: number; // Telegram message ID with buttons
+}
+
+export const PENDING_RECOVERY_TIMEOUT_MS = 60_000; // 60 seconds
+
 // Factory function for creating validated SteeringMessage instances
 export function createSteeringMessage(
   content: string,
