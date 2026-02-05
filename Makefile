@@ -46,7 +46,10 @@ up: install build preflight
 		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nEnvironmentFile=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(ENV_EXPANDED)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
 		$(SYSTEMCTL) daemon-reload; \
 		$(SYSTEMCTL) enable $(SERVICE_NAME) 2>/dev/null || true; \
-		echo "   Restarting service (will kill current process)..."; \
+		echo "   Killing any existing processes..."; \
+		pkill -f "bun run src/index.ts" 2>/dev/null && echo "   Killed orphan processes" || echo "   No orphan processes"; \
+		sleep 1; \
+		echo "   Starting service..."; \
 		$(SYSTEMCTL) restart $(SERVICE_NAME); \
 		echo "✅ Deployment complete"; \
 	else \
@@ -72,7 +75,10 @@ up-force: install build
 		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nEnvironmentFile=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(ENV_EXPANDED)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
 		$(SYSTEMCTL) daemon-reload; \
 		$(SYSTEMCTL) enable $(SERVICE_NAME) 2>/dev/null || true; \
-		echo "   Restarting service (will kill current process)..."; \
+		echo "   Killing any existing processes..."; \
+		pkill -f "bun run src/index.ts" 2>/dev/null && echo "   Killed orphan processes" || echo "   No orphan processes"; \
+		sleep 1; \
+		echo "   Starting service..."; \
 		$(SYSTEMCTL) restart $(SERVICE_NAME); \
 		echo "✅ Deployment complete"; \
 	else \
