@@ -116,7 +116,9 @@ CURRENT SECTIONS:
 export class MemoryAnalyzer {
   constructor(private claudePath: string = CLAUDE_CLI_PATH) {}
 
-  async extractLearnings(entries: ConversationEntry[]): Promise<LearningExtractionResult> {
+  async extractLearnings(
+    entries: ConversationEntry[]
+  ): Promise<LearningExtractionResult> {
     const content = this.formatConversationContent(entries);
     const prompt = EXTRACTION_PROMPT + content;
 
@@ -178,7 +180,9 @@ export class MemoryAnalyzer {
 
   private formatLearnings(learnings: Learning[]): string {
     return learnings
-      .map((l, i) => `${i + 1}. [${l.category}] ${l.content} (confidence: ${l.confidence})`)
+      .map(
+        (l, i) => `${i + 1}. [${l.category}] ${l.content} (confidence: ${l.confidence})`
+      )
       .join("\n");
   }
 
@@ -263,9 +267,13 @@ export class MemoryAnalyzer {
 
   private callClaude(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const proc = spawn(this.claudePath, ["--print", "--dangerously-skip-permissions"], {
-        env: { ...process.env },
-      });
+      const proc = spawn(
+        this.claudePath,
+        ["--print", "--dangerously-skip-permissions"],
+        {
+          env: { ...process.env },
+        }
+      );
 
       let stdout = "";
       let stderr = "";

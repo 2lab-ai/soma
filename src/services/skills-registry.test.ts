@@ -263,11 +263,16 @@ describe("SkillsRegistry", () => {
   it("should throw SIZE_EXCEEDED when trying to save too many skills", async () => {
     // Create array that exceeds MAX_REGISTRY_SIZE (10KB) when serialized
     // Each entry ~20 chars in JSON, need ~600 to exceed 10KB with formatting
-    const tooManySkills = Array.from({ length: 800 }, (_, i) => `skill-name-${i.toString().padStart(5, "0")}`);
+    const tooManySkills = Array.from(
+      { length: 800 },
+      (_, i) => `skill-name-${i.toString().padStart(5, "0")}`
+    );
     const serialized = JSON.stringify(tooManySkills, null, 2);
     expect(serialized.length).toBeGreaterThan(10 * 1024); // Verify our test data is large enough
 
-    await expect(skillsRegistry.save(tooManySkills)).rejects.toThrow(SkillsRegistryError);
+    await expect(skillsRegistry.save(tooManySkills)).rejects.toThrow(
+      SkillsRegistryError
+    );
 
     try {
       await skillsRegistry.save(tooManySkills);

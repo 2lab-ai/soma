@@ -42,7 +42,9 @@ describe("MemoryAnalyzer", () => {
 ]
 \`\`\``;
 
-      const parsed = (analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }).parseLearningsResponse(validResponse);
+      const parsed = (
+        analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }
+      ).parseLearningsResponse(validResponse);
 
       expect(parsed.length).toBe(2);
       expect(parsed[0]?.category).toBe("corrections");
@@ -60,7 +62,9 @@ describe("MemoryAnalyzer", () => {
 ]
 \`\`\``;
 
-      const parsed = (analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }).parseLearningsResponse(response);
+      const parsed = (
+        analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }
+      ).parseLearningsResponse(response);
 
       expect(parsed.length).toBe(2);
       expect(parsed.every((l) => l.confidence >= 0.4)).toBe(true);
@@ -72,7 +76,9 @@ describe("MemoryAnalyzer", () => {
 { not valid json }
 \`\`\``;
 
-      const parsed = (analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }).parseLearningsResponse(badResponse);
+      const parsed = (
+        analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }
+      ).parseLearningsResponse(badResponse);
       expect(parsed).toEqual([]);
     });
 
@@ -80,7 +86,9 @@ describe("MemoryAnalyzer", () => {
       const analyzer = new MemoryAnalyzer("/nonexistent");
       const emptyResponse = "No learnings found in this conversation.";
 
-      const parsed = (analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }).parseLearningsResponse(emptyResponse);
+      const parsed = (
+        analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }
+      ).parseLearningsResponse(emptyResponse);
       expect(parsed).toEqual([]);
     });
 
@@ -90,7 +98,9 @@ describe("MemoryAnalyzer", () => {
 [{"category": "invalid_category", "content": "test", "confidence": 0.8, "sourceQuotes": []}]
 \`\`\``;
 
-      const parsed = (analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }).parseLearningsResponse(response);
+      const parsed = (
+        analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }
+      ).parseLearningsResponse(response);
       expect(parsed[0]?.category).toBe("patterns");
     });
 
@@ -103,7 +113,9 @@ describe("MemoryAnalyzer", () => {
 ]
 \`\`\``;
 
-      const parsed = (analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }).parseLearningsResponse(response);
+      const parsed = (
+        analyzer as unknown as { parseLearningsResponse: (r: string) => Learning[] }
+      ).parseLearningsResponse(response);
       expect(parsed[0]?.confidence).toBe(1);
       expect(parsed.length).toBe(1);
     });
@@ -123,7 +135,9 @@ describe("MemoryAnalyzer", () => {
 ]
 \`\`\``;
 
-      const parsed = (analyzer as unknown as { parseDiffsResponse: (r: string) => unknown[] }).parseDiffsResponse(response);
+      const parsed = (
+        analyzer as unknown as { parseDiffsResponse: (r: string) => unknown[] }
+      ).parseDiffsResponse(response);
       expect(parsed.length).toBe(1);
       expect((parsed[0] as Record<string, string>).section).toBe("Workflow");
     });
@@ -138,7 +152,9 @@ describe("MemoryAnalyzer", () => {
 ]
 \`\`\``;
 
-      const parsed = (analyzer as unknown as { parseDiffsResponse: (r: string) => unknown[] }).parseDiffsResponse(response);
+      const parsed = (
+        analyzer as unknown as { parseDiffsResponse: (r: string) => unknown[] }
+      ).parseDiffsResponse(response);
       expect(parsed.length).toBe(1);
       expect((parsed[0] as Record<string, string>).section).toBe("Valid");
     });
@@ -147,7 +163,11 @@ describe("MemoryAnalyzer", () => {
   describe("formatConversationContent", () => {
     it("should format entries with headers", () => {
       const analyzer = new MemoryAnalyzer("/nonexistent");
-      const formatted = (analyzer as unknown as { formatConversationContent: (e: ConversationEntry[]) => string }).formatConversationContent([mockEntry]);
+      const formatted = (
+        analyzer as unknown as {
+          formatConversationContent: (e: ConversationEntry[]) => string;
+        }
+      ).formatConversationContent([mockEntry]);
 
       expect(formatted).toContain("--- 2025-01-15 (daily) ---");
       expect(formatted).toContain("always use bun");
@@ -160,7 +180,11 @@ describe("MemoryAnalyzer", () => {
         rawContent: "x".repeat(10000),
       };
 
-      const formatted = (analyzer as unknown as { formatConversationContent: (e: ConversationEntry[]) => string }).formatConversationContent([longEntry]);
+      const formatted = (
+        analyzer as unknown as {
+          formatConversationContent: (e: ConversationEntry[]) => string;
+        }
+      ).formatConversationContent([longEntry]);
       expect(formatted.length).toBeLessThan(9000);
     });
   });

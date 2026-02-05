@@ -48,8 +48,7 @@ describe("MemoryUpdater", () => {
       await execAsync("git config user.name 'Test'", { cwd: TEST_DIR });
       await execAsync("git add .", { cwd: TEST_DIR });
       await execAsync("git commit -m 'Initial commit'", { cwd: TEST_DIR });
-    } catch {
-    }
+    } catch {}
   });
 
   afterEach(async () => {
@@ -69,8 +68,7 @@ describe("MemoryUpdater", () => {
           await unlink(backup);
         }
       }
-    } catch {
-    }
+    } catch {}
   });
 
   describe("updateMemoryFiles", () => {
@@ -82,7 +80,12 @@ describe("MemoryUpdater", () => {
       });
 
       const learnings: Learning[] = [
-        { category: "commands", content: "Low confidence", confidence: 0.5, sourceQuotes: [] },
+        {
+          category: "commands",
+          content: "Low confidence",
+          confidence: 0.5,
+          sourceQuotes: [],
+        },
       ];
 
       const result = await updater.updateMemoryFiles(learnings);
@@ -101,7 +104,12 @@ describe("MemoryUpdater", () => {
       });
 
       const learnings: Learning[] = [
-        { category: "commands", content: "Use make up for deployment", confidence: 0.9, sourceQuotes: [] },
+        {
+          category: "commands",
+          content: "Use make up for deployment",
+          confidence: 0.9,
+          sourceQuotes: [],
+        },
       ];
 
       const result = await updater.updateMemoryFiles(learnings);
@@ -215,7 +223,10 @@ describe("MemoryUpdater", () => {
 
       const backupPath = `${TEST_CLAUDE_MD}.backup.${Date.now()}`;
       await writeFile(backupPath, originalContent);
-      (updater as unknown as { backupFiles: Map<string, string> }).backupFiles.set(TEST_CLAUDE_MD, backupPath);
+      (updater as unknown as { backupFiles: Map<string, string> }).backupFiles.set(
+        TEST_CLAUDE_MD,
+        backupPath
+      );
 
       await writeFile(TEST_CLAUDE_MD, "Modified content");
 

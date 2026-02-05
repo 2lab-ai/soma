@@ -149,7 +149,10 @@ export class MemoryUpdater {
     return true;
   }
 
-  async commitChanges(message: string, filePaths: string[]): Promise<string | undefined> {
+  async commitChanges(
+    message: string,
+    filePaths: string[]
+  ): Promise<string | undefined> {
     try {
       const relativePaths = filePaths.map((p) =>
         p.startsWith(this.config.workingDir)

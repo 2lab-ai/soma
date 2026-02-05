@@ -178,7 +178,10 @@ export class ConversationReader {
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
-        return { metadata: [], errors: [`History directory not found: ${this.historyDir}`] };
+        return {
+          metadata: [],
+          errors: [`History directory not found: ${this.historyDir}`],
+        };
       }
       if (code === "EACCES") {
         return { metadata: [], errors: [`Permission denied: ${this.historyDir}`] };
@@ -258,13 +261,21 @@ export class ConversationReader {
         return { ok: false, error: `Permission denied: ${resolvedPath}`, warnings: [] };
       }
       if (code === "EISDIR") {
-        return { ok: false, error: `Path is a directory: ${resolvedPath}`, warnings: [] };
+        return {
+          ok: false,
+          error: `Path is a directory: ${resolvedPath}`,
+          warnings: [],
+        };
       }
       if (code === "EMFILE" || code === "ENFILE") {
         return { ok: false, error: `Too many open files`, warnings: [] };
       }
 
-      return { ok: false, error: `Read failed [${code || "unknown"}]: ${err.message}`, warnings: [] };
+      return {
+        ok: false,
+        error: `Read failed [${code || "unknown"}]: ${err.message}`,
+        warnings: [],
+      };
     }
   }
 
@@ -278,7 +289,11 @@ export class ConversationReader {
     }
   }
 
-  private validateSections(sections: Map<string, string>, path: string, warnings: string[]): void {
+  private validateSections(
+    sections: Map<string, string>,
+    path: string,
+    warnings: string[]
+  ): void {
     if (sections.size === 0) {
       warnings.push(`${path}: No sections found`);
     }
@@ -328,7 +343,11 @@ export class ConversationReader {
     return null;
   }
 
-  private isInDateRange(meta: FileMetadata, range: DateRange, opts: ReaderOptions): boolean {
+  private isInDateRange(
+    meta: FileMetadata,
+    range: DateRange,
+    opts: ReaderOptions
+  ): boolean {
     if (meta.type === "daily") {
       return meta.date >= range.start && meta.date <= range.end;
     }
@@ -341,7 +360,10 @@ export class ConversationReader {
     return endDate >= range.start && meta.date <= range.end;
   }
 
-  private filterMetadata(metadata: FileMetadata[], opts: ReaderOptions): FileMetadata[] {
+  private filterMetadata(
+    metadata: FileMetadata[],
+    opts: ReaderOptions
+  ): FileMetadata[] {
     const range = this.buildDateRange(opts);
     if (!range) {
       return metadata;

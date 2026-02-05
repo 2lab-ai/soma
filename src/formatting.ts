@@ -270,11 +270,13 @@ export function formatToolStatus(
   }
 
   if (toolName === "TodoWrite") {
-    const todos = toolInput.todos as Array<{
-      content: string;
-      status: string;
-      activeForm?: string;
-    }> | undefined;
+    const todos = toolInput.todos as
+      | Array<{
+          content: string;
+          status: string;
+          activeForm?: string;
+        }>
+      | undefined;
 
     if (!todos || todos.length === 0) {
       return `📋 Task List (empty)`;
@@ -347,7 +349,10 @@ export function formatToolStatus(
         // Show config (other params)
         const config: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(toolInput)) {
-          if (!["prompt", "model", "cwd", "sessionId", "systemPrompt"].includes(key) && value !== undefined) {
+          if (
+            !["prompt", "model", "cwd", "sessionId", "systemPrompt"].includes(key) &&
+            value !== undefined
+          ) {
             config[key] = value;
           }
         }

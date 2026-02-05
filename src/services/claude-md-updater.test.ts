@@ -269,8 +269,18 @@ describe("ClaudeMdUpdater", () => {
     it("should filter low-confidence learnings", async () => {
       const updater = new ClaudeMdUpdater();
       const learnings: Learning[] = [
-        { category: "commands", content: "Low confidence", confidence: 0.5, sourceQuotes: [] },
-        { category: "commands", content: "High confidence cmd", confidence: 0.9, sourceQuotes: [] },
+        {
+          category: "commands",
+          content: "Low confidence",
+          confidence: 0.5,
+          sourceQuotes: [],
+        },
+        {
+          category: "commands",
+          content: "High confidence cmd",
+          confidence: 0.9,
+          sourceQuotes: [],
+        },
       ];
 
       const { result } = await updater.update(TEST_FILE, learnings);

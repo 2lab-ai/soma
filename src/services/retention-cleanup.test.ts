@@ -84,8 +84,14 @@ describe("RetentionCleanupService", () => {
     });
 
     it("should delete old hourly summaries", async () => {
-      await createTestFile(join(TEST_DIR, "summaries", "hourly", "2020-01-01-00.json"), 100);
-      await createTestFile(join(TEST_DIR, "summaries", "hourly", "2026-02-01-00.json"), 1);
+      await createTestFile(
+        join(TEST_DIR, "summaries", "hourly", "2020-01-01-00.json"),
+        100
+      );
+      await createTestFile(
+        join(TEST_DIR, "summaries", "hourly", "2026-02-01-00.json"),
+        1
+      );
 
       const service = new RetentionCleanupService(TEST_DIR, {
         hourlySummaryRetentionDays: 7,
@@ -94,8 +100,12 @@ describe("RetentionCleanupService", () => {
       const result = await service.runCleanup(false);
 
       expect(result.summaryFilesDeleted.hourly).toBe(1);
-      expect(existsSync(join(TEST_DIR, "summaries", "hourly", "2020-01-01-00.json"))).toBe(false);
-      expect(existsSync(join(TEST_DIR, "summaries", "hourly", "2026-02-01-00.json"))).toBe(true);
+      expect(
+        existsSync(join(TEST_DIR, "summaries", "hourly", "2020-01-01-00.json"))
+      ).toBe(false);
+      expect(
+        existsSync(join(TEST_DIR, "summaries", "hourly", "2026-02-01-00.json"))
+      ).toBe(true);
     });
 
     it("should respect maxFiles limit", async () => {
@@ -117,7 +127,10 @@ describe("RetentionCleanupService", () => {
     });
 
     it("should not delete monthly summaries when retention is -1", async () => {
-      await createTestFile(join(TEST_DIR, "summaries", "monthly", "2020-01.json"), 2000);
+      await createTestFile(
+        join(TEST_DIR, "summaries", "monthly", "2020-01.json"),
+        2000
+      );
 
       const service = new RetentionCleanupService(TEST_DIR, {
         monthlySummaryRetentionDays: -1,
@@ -126,7 +139,9 @@ describe("RetentionCleanupService", () => {
       const result = await service.runCleanup(false);
 
       expect(result.summaryFilesDeleted.monthly).toBe(0);
-      expect(existsSync(join(TEST_DIR, "summaries", "monthly", "2020-01.json"))).toBe(true);
+      expect(existsSync(join(TEST_DIR, "summaries", "monthly", "2020-01.json"))).toBe(
+        true
+      );
     });
   });
 

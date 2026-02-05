@@ -57,10 +57,7 @@ function isAiMcpTool(content: string): boolean {
   return /🔮.*MCP.*(?:codex|gemini|claude)/i.test(content);
 }
 
-function buildEnhancedFooter(
-  startTime: Date,
-  metadata?: QueryMetadata
-): string {
+function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string {
   const endTime = new Date();
   const timeOpts = { hour: "2-digit", minute: "2-digit", second: "2-digit" } as const;
   const startStr = startTime.toLocaleTimeString("ko-KR", timeOpts);
@@ -90,18 +87,24 @@ function buildEnhancedFooter(
     const sign7 = d7 >= 0 ? "+" : "";
     const ctxPart = (() => {
       if (metadata?.contextUsagePercent === undefined) return "";
-      const ctxBefore = metadata.contextUsagePercentBefore ?? metadata.contextUsagePercent;
+      const ctxBefore =
+        metadata.contextUsagePercentBefore ?? metadata.contextUsagePercent;
       const dCtx = Math.round((metadata.contextUsagePercent - ctxBefore) * 10) / 10;
       const signCtx = dCtx >= 0 ? "+" : "";
       return `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% (${signCtx}${dCtx.toFixed(1)}%) | `;
     })();
-    lines.push(`📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% (${sign5}${d5}%) | 7d: ${Math.round(a.sevenDay)}% (${sign7}${d7}%)`);
+    lines.push(
+      `📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% (${sign5}${d5}%) | 7d: ${Math.round(a.sevenDay)}% (${sign7}${d7}%)`
+    );
   } else if (shouldShowUsage && metadata?.usageAfter) {
     const a = metadata.usageAfter;
-    const ctxPart = metadata?.contextUsagePercent !== undefined
-      ? `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% | `
-      : "";
-    lines.push(`📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% | 7d: ${Math.round(a.sevenDay)}%`);
+    const ctxPart =
+      metadata?.contextUsagePercent !== undefined
+        ? `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% | `
+        : "";
+    lines.push(
+      `📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% | 7d: ${Math.round(a.sevenDay)}%`
+    );
   }
 
   // Tools line (if available)
@@ -111,7 +114,10 @@ function buildEnhancedFooter(
       const parts = tools
         .sort((x, y) => y[1].totalMs - x[1].totalMs) // Sort by total time desc
         .slice(0, 5) // Top 5 tools
-        .map(([name, { count, totalMs }]) => `${name}×${count}: ${formatDurationMs(totalMs)}`);
+        .map(
+          ([name, { count, totalMs }]) =>
+            `${name}×${count}: ${formatDurationMs(totalMs)}`
+        );
       lines.push(`🔧 ${parts.join(" | ")}`);
     }
   }
@@ -297,7 +303,12 @@ export async function createStatusCallback(
     }
   }
 
-  return async (statusType: string, content: string, segmentId?: number, metadata?: QueryMetadata) => {
+  return async (
+    statusType: string,
+    content: string,
+    segmentId?: number,
+    metadata?: QueryMetadata
+  ) => {
     try {
       if (statusType === "thinking") {
         state.stopMcpProgress(); // Stop any MCP progress timer
@@ -325,7 +336,12 @@ export async function createStatusCallback(
 
           // Update every 10 seconds
           state.mcpProgressTimer = setInterval(async () => {
-            if (!state.mcpToolMessage || !state.mcpToolStartTime || !state.mcpToolBaseContent) return;
+            if (
+              !state.mcpToolMessage ||
+              !state.mcpToolStartTime ||
+              !state.mcpToolBaseContent
+            )
+              return;
 
             const elapsed = Date.now() - state.mcpToolStartTime;
             const progressLine = `\n\n🔮 <b>MCP 실행 중</b>\n${buildProgressBar(elapsed)}`;
@@ -466,8 +482,11 @@ export async function createStatusCallback(
       if (statusType === "steering_pending") {
         // User sent messages during execution but Claude responded with text-only
         // Their messages weren't delivered via PreToolUse hook
-        const steeringCount = (metadata as { steeringCount?: number })?.steeringCount || 0;
-        console.log(`[STEERING] ${steeringCount} message(s) pending - will be processed in follow-up`);
+        const steeringCount =
+          (metadata as { steeringCount?: number })?.steeringCount || 0;
+        console.log(
+          `[STEERING] ${steeringCount} message(s) pending - will be processed in follow-up`
+        );
 
         // Notify user their message is queued
         try {

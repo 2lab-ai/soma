@@ -2,7 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { SummaryGenerator } from "./summary-generator";
 import { existsSync, rmSync, mkdirSync } from "fs";
 import { readFile } from "fs/promises";
-import type { ChatRecord, IChatStorage, ISummaryStorage, Summary } from "../types/chat-history";
+import type {
+  ChatRecord,
+  IChatStorage,
+  ISummaryStorage,
+  Summary,
+} from "../types/chat-history";
 
 class MockChatStorage implements IChatStorage {
   records: ChatRecord[] = [];
@@ -158,9 +163,33 @@ describe("SummaryGenerator", () => {
   describe("getChatCount", () => {
     it("should return count of chats in range", async () => {
       chatStorage.records = [
-        { id: "1", sessionId: "s1", claudeSessionId: "c1", model: "sonnet", timestamp: "2025-01-01T12:00:00Z", speaker: "user", content: "Hello" },
-        { id: "2", sessionId: "s1", claudeSessionId: "c1", model: "sonnet", timestamp: "2025-01-01T12:01:00Z", speaker: "assistant", content: "Hi" },
-        { id: "3", sessionId: "s1", claudeSessionId: "c1", model: "sonnet", timestamp: "2025-01-01T12:02:00Z", speaker: "user", content: "Bye" },
+        {
+          id: "1",
+          sessionId: "s1",
+          claudeSessionId: "c1",
+          model: "sonnet",
+          timestamp: "2025-01-01T12:00:00Z",
+          speaker: "user",
+          content: "Hello",
+        },
+        {
+          id: "2",
+          sessionId: "s1",
+          claudeSessionId: "c1",
+          model: "sonnet",
+          timestamp: "2025-01-01T12:01:00Z",
+          speaker: "assistant",
+          content: "Hi",
+        },
+        {
+          id: "3",
+          sessionId: "s1",
+          claudeSessionId: "c1",
+          model: "sonnet",
+          timestamp: "2025-01-01T12:02:00Z",
+          speaker: "user",
+          content: "Bye",
+        },
       ];
 
       const count = await generator.getChatCount(
