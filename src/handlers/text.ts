@@ -392,6 +392,8 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 2.5. Real-time steering: buffer message if Claude is currently executing
   if (session.isProcessing) {
+    console.log(`[STEERING] Message gated by isProcessing=true, queryState=${session.queryState}, msg="${message.slice(0, 50)}"`);
+
     // Interrupt messages should never be buffered as steering, otherwise they can be cleared by
     // the prior request's stopProcessing() cleanup before being consumed.
     if (wasInterrupt) {
