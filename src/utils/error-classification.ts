@@ -4,8 +4,126 @@
 
 import type { Context } from "grammy";
 import type { ClaudeSession } from "../session";
+import type { ClaudeUsage } from "../types";
 import { Reactions } from "../constants/reactions";
 import { sendSystemMessage } from "./system-message";
+import { fetchClaudeUsage } from "../usage";
+
+// Rate limit error detection patterns
+const RATE_LIMIT_PATTERNS = [
+  "429",
+  "rate_limit",
+  "rate limit",
+  "too many requests",
+  "overloaded",
+  "capacity",
+  "credit",
+  "quota",
+  "exceeded",
+  "usage limit",
+  "token limit",
+];
+
+export interface RateLimitInfo {
+  isRateLimit: boolean;
+  bucket: "opus" | "sonnet" | "unknown" | null;
+  rawMessage: string;
+}
+
+export function isRateLimitError(error: unknown): RateLimitInfo {
+  const msg = error instanceof Error ? error.message : String(error);
+  const name = error instanceof Error ? error.name : "";
+  const lower = (msg + " " + name).toLowerCase();
+
+  const matched = RATE_LIMIT_PATTERNS.some((p) => lower.includes(p));
+  if (!matched) return { isRateLimit: false, bucket: null, rawMessage: msg };
+
+  let bucket: RateLimitInfo["bucket"] = "unknown";
+  if (lower.includes("opus")) bucket = "opus";
+  else if (lower.includes("sonnet")) bucket = "sonnet";
+
+  return { isRateLimit: true, bucket, rawMessage: msg };
+}
+
+function formatTimeRemaining(resetAt: string | null): string {
+  if (!resetAt) return "알 수 없음";
+  const diff = new Date(resetAt).getTime() - Date.now();
+  if (diff <= 0) return "곧 리셋";
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  if (h > 24) {
+    const d = Math.floor(h / 24);
+    const rh = h % 24;
+    return `${d}일 ${rh}시간`;
+  }
+  return h > 0 ? `${h}시간 ${m}분` : `${m}분`;
+}
+
+function formatUtilization(pct: number): string {
+  return `${Math.round(pct * 100)}%`;
+}
+
+export async function formatRateLimitForUser(
+  error: unknown,
+  usage?: ClaudeUsage | null
+): Promise<string> {
+  const info = isRateLimitError(error);
+  if (!usage) {
+    try {
+      usage = await fetchClaudeUsage(10);
+    } catch {
+      // ignore
+    }
+  }
+
+  const lines: string[] = ["⚠️ **Rate Limit**"];
+
+  if (usage) {
+    lines.push("", "📊 Token Usage:");
+
+    if (usage.five_hour) {
+      const pct = formatUtilization(usage.five_hour.utilization);
+      const reset = formatTimeRemaining(usage.five_hour.resets_at);
+      lines.push(`  5h: ${pct} → 리셋 ${reset}`);
+    }
+    if (usage.seven_day) {
+      const pct = formatUtilization(usage.seven_day.utilization);
+      const reset = formatTimeRemaining(usage.seven_day.resets_at);
+      lines.push(`  7d: ${pct} → 리셋 ${reset}`);
+    }
+    if (usage.seven_day_sonnet) {
+      const pct = formatUtilization(usage.seven_day_sonnet.utilization);
+      const reset = formatTimeRemaining(usage.seven_day_sonnet.resets_at);
+      lines.push(`  7d Sonnet: ${pct} → 리셋 ${reset}`);
+    }
+
+    // Find soonest reset
+    const resets = [
+      usage.five_hour?.resets_at,
+      usage.seven_day?.resets_at,
+    ].filter(Boolean) as string[];
+
+    if (resets.length > 0) {
+      const soonest = resets
+        .map((r) => new Date(r).getTime())
+        .sort((a, b) => a - b)[0];
+      const diff = soonest! - Date.now();
+      if (diff > 0) {
+        lines.push("", `⏰ 예상 복구: ${formatTimeRemaining(new Date(soonest!).toISOString())}`);
+      }
+    }
+  } else {
+    lines.push("", `❌ 사용량 조회 실패`);
+    lines.push(`Raw: ${info.rawMessage.slice(0, 150)}`);
+  }
+
+  return lines.join("\n");
+}
+
+export function isSonnetAvailable(usage: ClaudeUsage | null): boolean {
+  if (!usage?.seven_day_sonnet) return false;
+  return usage.seven_day_sonnet.utilization < 0.80;
+}
 
 /**
  * Check if an error is an abort/cancellation error

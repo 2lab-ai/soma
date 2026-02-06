@@ -20,6 +20,7 @@ import {
   getReasoningTokens,
   MODEL_DISPLAY_NAMES,
   type ConfigContext,
+  type ModelId,
 } from "./model-config";
 import { formatToolStatus } from "./formatting";
 import { processQueuedJobs } from "./scheduler";
@@ -258,6 +259,14 @@ export class ClaudeSession {
   pendingRecovery: PendingRecovery | null = null;
   nextQueryContext: string | null = null; // Context to prepend to next query
   private _activityState: ActivityState = "idle";
+
+  // Rate limit fallback state
+  temporaryModelOverride: ModelId | null = null;
+  rateLimitState = {
+    consecutiveFailures: 0,
+    cooldownUntil: null as number | null,
+    opusResetsAt: null as string | null,
+  };
 
   private readonly preToolUseHook = async (
     input: unknown,
@@ -766,8 +775,25 @@ export class ClaudeSession {
       messageToSend = datePrefix + messageToSend;
     }
 
+    // RL-5: Recovery check - clear override if resets_at has passed
+    if (this.temporaryModelOverride && this.rateLimitState.opusResetsAt) {
+      const resetTime = new Date(this.rateLimitState.opusResetsAt).getTime();
+      if (Date.now() >= resetTime) {
+        console.log(`[RATE-LIMIT] Opus reset time passed, clearing override`);
+        this.temporaryModelOverride = null;
+        this.rateLimitState.opusResetsAt = null;
+        this.rateLimitState.consecutiveFailures = 0;
+      }
+    }
+
+    // RL-3: Apply temporary model override if set
+    const effectiveModel = this.temporaryModelOverride ?? getModelForContext(modelContext);
+    if (this.temporaryModelOverride) {
+      console.log(`[RATE-LIMIT] Using fallback model: ${MODEL_DISPLAY_NAMES[this.temporaryModelOverride] || this.temporaryModelOverride}`);
+    }
+
     const options: Options = {
-      model: getModelForContext(modelContext),
+      model: effectiveModel,
       cwd: WORKING_DIR,
       settingSources: ["user", "project"],
       permissionMode: "bypassPermissions",
