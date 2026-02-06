@@ -925,3 +925,55 @@ describe("createSteeringMessage - factory validation", () => {
     expect(msg.receivedDuringTool).toBeUndefined();
   });
 });
+
+describe("startProcessing / stopProcessing - stuck state prevention", () => {
+  let session: ClaudeSession;
+
+  test("startProcessing sets isProcessing to true", () => {
+    session = new ClaudeSession("test-processing");
+    expect(session.isProcessing).toBe(false);
+    const stop = session.startProcessing();
+    expect(session.isProcessing).toBe(true);
+    stop();
+  });
+
+  test("stopProcessing sets isProcessing to false", () => {
+    session = new ClaudeSession("test-processing");
+    const stop = session.startProcessing();
+    expect(session.isProcessing).toBe(true);
+    stop();
+    expect(session.isProcessing).toBe(false);
+  });
+
+  test("stopProcessing is idempotent (safe to call twice)", () => {
+    session = new ClaudeSession("test-processing");
+    const stop = session.startProcessing();
+    stop();
+    stop();
+    expect(session.isProcessing).toBe(false);
+  });
+
+  test("kill() resets stuck isProcessing state", async () => {
+    session = new ClaudeSession("test-processing");
+    session.startProcessing();
+    expect(session.isProcessing).toBe(true);
+    await session.kill();
+    expect(session.isProcessing).toBe(false);
+  });
+
+  test("timeout guard auto-releases stuck state", async () => {
+    session = new ClaudeSession("test-processing");
+    session.startProcessing();
+    expect(session.isProcessing).toBe(true);
+    await session.kill();
+    expect(session.isProcessing).toBe(false);
+  });
+
+  test("steering buffer preserved after stopProcessing", () => {
+    session = new ClaudeSession("test-processing");
+    const stop = session.startProcessing();
+    session.addSteering("buffered msg", 1);
+    stop();
+    expect(session.hasSteeringMessages()).toBe(true);
+  });
+});
