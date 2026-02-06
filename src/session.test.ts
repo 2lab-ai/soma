@@ -977,3 +977,192 @@ describe("startProcessing / stopProcessing - stuck state prevention", () => {
     expect(session.hasSteeringMessages()).toBe(true);
   });
 });
+
+describe("BUG REPRODUCTION: steering message loss via hook→inject→clear cycle (soma-vig7)", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-vig7-repro");
+  });
+
+  async function simulateHookFiring(s: ClaudeSession, toolName = "Bash") {
+    const hook = (s as any).postToolUseHook;
+    return hook({ tool_name: toolName }, "tool-use-id-1", {});
+  }
+
+  test("REPRO: single message injected via hook is recoverable via restoreInjectedSteering", async () => {
+    // 1. User sends "음" while processing
+    session.addSteering("음", 1);
+    expect(session.getSteeringCount()).toBe(1);
+
+    // 2. Hook fires → consumes buffer → injects as systemMessage
+    const hookResult = await simulateHookFiring(session);
+    expect(hookResult.systemMessage).toContain("음");
+    expect(session.getSteeringCount()).toBe(0); // buffer consumed
+
+    // 3. Query ends → restoreInjectedSteering
+    const restored = session.restoreInjectedSteering();
+    expect(restored).toBe(1);
+    expect(session.getSteeringCount()).toBe(1);
+
+    // 4. Auto-continue can now consume
+    const content = session.consumeSteering();
+    expect(content).toContain("음");
+  });
+
+  test("REPRO: multiple messages injected via separate hooks all recoverable", async () => {
+    // 1. "음" arrives → buffer=[음]
+    session.addSteering("음", 1);
+
+    // 2. Hook fires → consumes "음" → injects → injectedTracking=[음]
+    const hook1 = await simulateHookFiring(session, "Grep");
+    expect(hook1.systemMessage).toContain("음");
+    expect(session.getSteeringCount()).toBe(0);
+
+    // 3. "야호 외쳐봐" arrives → buffer=[야호]
+    session.addSteering("야호 외쳐봐", 2);
+
+    // 4. Hook fires → consumes "야호" → injects → injectedTracking=[음, 야호]
+    const hook2 = await simulateHookFiring(session, "Read");
+    expect(hook2.systemMessage).toContain("야호 외쳐봐");
+    expect(session.getSteeringCount()).toBe(0);
+
+    // 5. "어디" arrives after last tool → buffer=[어디]
+    session.addSteering("어디", 3);
+
+    // 6. Query ends → restoreInjectedSteering → buffer=[음, 야호, 어디]
+    const restored = session.restoreInjectedSteering();
+    expect(restored).toBe(2); // 음 + 야호 restored from injected
+    expect(session.getSteeringCount()).toBe(3); // 음 + 야호 + 어디
+
+    // 7. Auto-continue consumes ALL
+    const content = session.consumeSteering();
+    expect(content).toContain("음");
+    expect(content).toContain("야호 외쳐봐");
+    expect(content).toContain("어디");
+  });
+
+  test("BUG: clearInjectedSteeringTracking used to wipe messages before restore", async () => {
+    // This reproduces the EXACT bug from production logs:
+    // - Messages injected via hook into injectedSteeringDuringQuery
+    // - sendMessageStreaming (auto-continue) calls clearInjectedSteeringTracking at start
+    // - Messages lost forever
+
+    // 1. Simulate messages injected via hooks during query
+    session.addSteering("음", 1);
+    await simulateHookFiring(session);
+    session.addSteering("야호 외쳐봐", 2);
+    await simulateHookFiring(session);
+    session.addSteering("codex로 인사해", 3);
+    await simulateHookFiring(session);
+    session.addSteering("보임 그건", 4);
+    await simulateHookFiring(session);
+
+    // At this point: buffer=[], injectedSteeringDuringQuery=[음, 야호, codex, 보임]
+    expect(session.getSteeringCount()).toBe(0);
+
+    // 2. OLD BUG: clearInjectedSteeringTracking() was called, wiping everything
+    // NEW FIX: sendMessageStreaming restores before clearing
+    // Simulate what sendMessageStreaming does at line 740-747:
+    const injected = (session as any).injectedSteeringDuringQuery as any[];
+    expect(injected.length).toBe(4); // 4 messages tracked
+
+    // Simulate the NEW behavior (restore before clear):
+    if (injected.length > 0) {
+      (session as any).steeringBuffer = [...injected, ...(session as any).steeringBuffer];
+    }
+    (session as any).injectedSteeringDuringQuery = [];
+
+    // 3. Now buffer should have all 4 messages
+    expect(session.getSteeringCount()).toBe(4);
+    const content = session.consumeSteering();
+    expect(content).toContain("음");
+    expect(content).toContain("야호 외쳐봐");
+    expect(content).toContain("codex로 인사해");
+    expect(content).toContain("보임 그건");
+  });
+
+  test("BUG VERIFICATION: restoreInjectedSteering after hook correctly restores all", async () => {
+    // Same as above but using the actual public API
+    session.addSteering("msg1", 1);
+    await simulateHookFiring(session);
+    session.addSteering("msg2", 2);
+    await simulateHookFiring(session);
+
+    // restoreInjectedSteering should bring back msg1 + msg2
+    const restored = session.restoreInjectedSteering();
+    expect(restored).toBe(2);
+
+    // Buffer should have both
+    const content = session.consumeSteering();
+    expect(content).toContain("msg1");
+    expect(content).toContain("msg2");
+  });
+
+  test("hook returns empty when buffer is empty", async () => {
+    const result = await simulateHookFiring(session);
+    expect(result).toEqual({});
+  });
+
+  test("hook does not inject when no steering messages", async () => {
+    const result = await simulateHookFiring(session);
+    expect(result.systemMessage).toBeUndefined();
+  });
+
+  test("OLD BUG CONFIRMED: clear-then-restore loses all messages", async () => {
+    // Simulate the OLD behavior that caused the bug
+    session.addSteering("음", 1);
+    await simulateHookFiring(session);
+    session.addSteering("야호", 2);
+    await simulateHookFiring(session);
+
+    // OLD: clear FIRST, then restore → 0 messages
+    session.clearInjectedSteeringTracking(); // wipes injectedSteeringDuringQuery
+    const restored = session.restoreInjectedSteering(); // nothing to restore
+    expect(restored).toBe(0);
+    expect(session.getSteeringCount()).toBe(0); // MESSAGES LOST — this IS the bug
+  });
+
+  test("REPRO: messages arriving DURING auto-continue follow-up are NOT lost", async () => {
+    // Scenario:
+    // 1. Main query has 2 injected messages
+    // 2. Auto-continue fires sendMessageStreaming for them
+    // 3. During that follow-up, 2 MORE messages arrive and get injected
+    // 4. Follow-up completes → second round should catch them
+
+    // Round 1: main query
+    session.addSteering("msg1", 1);
+    await simulateHookFiring(session);
+    session.addSteering("msg2", 2);
+    await simulateHookFiring(session);
+
+    // Query ends, restore
+    const r1 = session.restoreInjectedSteering();
+    expect(r1).toBe(2);
+    expect(session.getSteeringCount()).toBe(2);
+
+    // Auto-continue consumes for follow-up
+    const round1Content = session.consumeSteering();
+    expect(round1Content).toContain("msg1");
+    expect(round1Content).toContain("msg2");
+
+    // Simulate sendMessageStreaming start (clear tracking)
+    session.clearInjectedSteeringTracking();
+
+    // During follow-up, 2 more messages arrive + hook fires
+    session.addSteering("msg3", 3);
+    await simulateHookFiring(session);
+    session.addSteering("msg4", 4);
+    await simulateHookFiring(session);
+
+    // Follow-up completes, restore round 2
+    const r2 = session.restoreInjectedSteering();
+    expect(r2).toBe(2);
+    expect(session.getSteeringCount()).toBe(2);
+
+    // Round 2 auto-continue
+    const round2Content = session.consumeSteering();
+    expect(round2Content).toContain("msg3");
+    expect(round2Content).toContain("msg4");
+  });
+});
