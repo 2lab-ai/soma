@@ -667,10 +667,18 @@ export class ClaudeSession {
 
   startProcessing(): () => void {
     this._queryState = "preparing";
+    const PROCESSING_TIMEOUT_MS = 120_000;
+    let released = false;
+    const timer = setTimeout(() => {
+      if (!released && this.isProcessing) {
+        console.error(`[STUCK] isProcessing stuck for ${PROCESSING_TIMEOUT_MS / 1000}s, auto-releasing`);
+        this._queryState = "idle";
+      }
+    }, PROCESSING_TIMEOUT_MS);
     return () => {
+      released = true;
+      clearTimeout(timer);
       this._queryState = "idle";
-      // Don't clear steering - keep for next query if not consumed
-      // (PreToolUse only fires when tools are used, so steering can be missed)
       if (this.steeringBuffer.length) {
         console.log(
           `[STEERING] Keeping ${this.steeringBuffer.length} unconsumed messages for next query`
@@ -1300,6 +1308,7 @@ export class ClaudeSession {
       );
     }
 
+    this._queryState = "idle";
     this.sessionId = null;
     this.lastActivity = null;
     this.sessionStartTime = null;

@@ -567,6 +567,7 @@ export async function handleText(ctx: Context): Promise<void> {
   // 8. Send to Claude with retry logic for crashes
   const MAX_RETRIES = 1;
 
+  try {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await session.sendMessageStreaming(
@@ -694,7 +695,7 @@ export async function handleText(ctx: Context): Promise<void> {
               await ctx.reply(
                 `❌ Save ID validation failed: ${saveId}\n\nFull response logged.`
               );
-              return;
+              break;
             }
 
             const saveIdFile = `${WORKING_DIR}/.last-save-id`;
@@ -897,9 +898,10 @@ export async function handleText(ctx: Context): Promise<void> {
       break; // Exit loop after handling error
     }
   }
-
-  // 10. Cleanup
-  state.cleanup();
-  stopProcessing();
-  typing.stop();
+  } finally {
+    // 10. Cleanup - ALWAYS runs even if early return/throw
+    state.cleanup();
+    stopProcessing();
+    typing.stop();
+  }
 }
