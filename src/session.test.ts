@@ -816,6 +816,64 @@ describe("ClaudeSession - injected steering restore (auto-continue)", () => {
   });
 });
 
+describe("ClaudeSession - generation guard (soma-phy)", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-generation");
+  });
+
+  test("kill increments generation counter", async () => {
+    const before = (session as any)._generation;
+    await session.kill();
+    const after = (session as any)._generation;
+    expect(after).toBe(before + 1);
+  });
+
+  test("kill clears sessionId", async () => {
+    (session as any).sessionId = "test-session-abc";
+    expect(session.sessionId).toBe("test-session-abc");
+
+    await session.kill();
+    expect(session.sessionId).toBeNull();
+  });
+
+  test("kill sets stopRequested", async () => {
+    expect((session as any).stopRequested).toBe(false);
+    await session.kill();
+    expect((session as any).stopRequested).toBe(true);
+  });
+
+  test("multiple kills increment generation each time", async () => {
+    const initial = (session as any)._generation;
+    await session.kill();
+    await session.kill();
+    await session.kill();
+    expect((session as any)._generation).toBe(initial + 3);
+  });
+
+  test("kill resets all session state", async () => {
+    (session as any).sessionId = "session-xyz";
+    (session as any).totalInputTokens = 5000;
+    (session as any).totalOutputTokens = 3000;
+    (session as any).totalQueries = 10;
+    session.addSteering("message", 1);
+
+    await session.kill();
+
+    expect(session.sessionId).toBeNull();
+    expect(session.hasSteeringMessages()).toBe(false);
+  });
+
+  test("isActive returns false after kill", async () => {
+    (session as any).sessionId = "active-session";
+    expect(session.isActive).toBe(true);
+
+    await session.kill();
+    expect(session.isActive).toBe(false);
+  });
+});
+
 describe("createSteeringMessage - factory validation", () => {
   test("creates valid steering message with all fields", () => {
     const msg = createSteeringMessage("test content", 123, "Bash");
