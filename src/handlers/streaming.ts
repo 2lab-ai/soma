@@ -503,6 +503,30 @@ export async function createStatusCallback(
         state.cleanup();
         if (state.progressMessage) await deleteMessage(ctx, state.progressMessage);
 
+        if (metadata?.modelDisplayName && state.textMessages.size > 0) {
+          const firstSegmentId = Math.min(...state.textMessages.keys());
+          const firstMsg = state.textMessages.get(firstSegmentId);
+          const firstContent = state.lastContent.get(firstSegmentId);
+
+          if (firstMsg && firstContent) {
+            const modelHeader = `<code>${escapeHtml(metadata.modelDisplayName)}</code>\n`;
+            const newContent = modelHeader + firstContent;
+            if (newContent.length <= TELEGRAM_MESSAGE_LIMIT) {
+              try {
+                await ctx.api.editMessageText(
+                  firstMsg.chat.id,
+                  firstMsg.message_id,
+                  newContent,
+                  { parse_mode: "HTML" }
+                );
+                state.lastContent.set(firstSegmentId, newContent);
+              } catch {
+                // Model header prepend failed
+              }
+            }
+          }
+        }
+
         if (SHOW_ELAPSED_TIME && state.startTime && state.textMessages.size > 0) {
           const footer = buildEnhancedFooter(state.startTime, metadata);
 

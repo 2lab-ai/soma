@@ -1,6 +1,7 @@
-import { describe, test, expect } from "bun:test";
-import { StreamingState } from "./streaming";
+import { describe, test, expect, mock } from "bun:test";
+import { StreamingState, createStatusCallback } from "./streaming";
 import { UserChoiceExtractor } from "../utils/user-choice-extractor";
+import type { QueryMetadata } from "../types";
 
 describe("StreamingState - JSON extraction", () => {
   test("initializes with no extracted choice", () => {
@@ -118,5 +119,109 @@ describe("StreamingState - JSON extraction", () => {
     expect(state.extractedChoice).not.toBeNull();
     expect(state.hasUserChoice).toBe(true);
     expect(state.progressTimer).toBeNull();
+  });
+});
+
+describe("Model name header in done handler", () => {
+  function createMockCtx() {
+    const editCalls: Array<{ chatId: number; msgId: number; text: string }> = [];
+    const replyCalls: Array<{ text: string }> = [];
+    const reactionCalls: Array<{ emoji: string }> = [];
+
+    return {
+      editCalls,
+      replyCalls,
+      reactionCalls,
+      ctx: {
+        chat: { id: 123 },
+        message: { message_id: 1 },
+        api: {
+          editMessageText: mock(async (chatId: number, msgId: number, text: string) => {
+            editCalls.push({ chatId, msgId, text });
+            return true;
+          }),
+          setMessageReaction: mock(async () => true),
+          deleteMessage: mock(async () => true),
+        },
+        reply: mock(async (text: string) => {
+          replyCalls.push({ text });
+          return { chat: { id: 123 }, message_id: replyCalls.length + 100 };
+        }),
+        react: mock(async (emoji: string) => {
+          reactionCalls.push({ emoji });
+        }),
+      },
+    };
+  }
+
+  test("prepends model name to first segment on done", async () => {
+    const { ctx, editCalls } = createMockCtx();
+    const state = new StreamingState();
+
+    const callback = await createStatusCallback(ctx as any, state);
+
+    await callback("text", "Hello world", 0);
+    expect(state.textMessages.size).toBeGreaterThan(0);
+
+    const metadata: QueryMetadata = {
+      usageBefore: null,
+      usageAfter: null,
+      toolDurations: {},
+      queryDurationMs: 1000,
+      modelDisplayName: "Opus 4.6",
+    };
+
+    await callback("segment_end", "Hello world", 0);
+    await callback("done", "", undefined, metadata);
+
+    const headerEdit = editCalls.find((c) => c.text.includes("Opus 4.6"));
+    expect(headerEdit).toBeTruthy();
+    expect(headerEdit!.text.startsWith("<code>Opus 4.6</code>\n")).toBe(true);
+  });
+
+  test("skips header when modelDisplayName is undefined", async () => {
+    const { ctx, editCalls } = createMockCtx();
+    const state = new StreamingState();
+
+    const callback = await createStatusCallback(ctx as any, state);
+
+    await callback("text", "Response", 0);
+    await callback("segment_end", "Response", 0);
+
+    const metadata: QueryMetadata = {
+      usageBefore: null,
+      usageAfter: null,
+      toolDurations: {},
+      queryDurationMs: 1000,
+    };
+
+    await callback("done", "", undefined, metadata);
+
+    const headerEdit = editCalls.find((c) => c.text.includes("<code>"));
+    expect(headerEdit).toBeUndefined();
+  });
+
+  test("skips header when combined length exceeds Telegram limit", async () => {
+    const { ctx, editCalls } = createMockCtx();
+    const state = new StreamingState();
+
+    const callback = await createStatusCallback(ctx as any, state);
+
+    const longContent = "x".repeat(4090);
+    await callback("text", longContent, 0);
+    await callback("segment_end", longContent, 0);
+
+    const metadata: QueryMetadata = {
+      usageBefore: null,
+      usageAfter: null,
+      toolDurations: {},
+      queryDurationMs: 1000,
+      modelDisplayName: "Opus 4.6",
+    };
+
+    await callback("done", "", undefined, metadata);
+
+    const headerEdit = editCalls.find((c) => c.text.includes("<code>Opus 4.6</code>"));
+    expect(headerEdit).toBeUndefined();
   });
 });

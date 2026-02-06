@@ -22,6 +22,7 @@ export interface QueryMetadata {
   contextUsagePercentBefore?: number;
   currentProvider?: Provider;
   resetTimeMs?: number;
+  modelDisplayName?: string;
 }
 
 // Status callback for streaming updates

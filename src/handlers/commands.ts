@@ -8,6 +8,7 @@ import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { sessionManager } from "../session-manager";
 import { WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "../config";
+import { sendSystemMessage, addSystemReaction } from "../utils/system-message";
 import { type ChatType, isAuthorizedForChat } from "../security";
 import { getSchedulerStatus, reloadScheduler } from "../scheduler";
 import { fetchAllUsage } from "../usage";
@@ -248,7 +249,7 @@ export async function handleNew(ctx: Context): Promise<void> {
     // Update pending recovery with message ID
     newSession.setPendingRecovery(messages, chatId!, sentMsg.message_id);
   } else {
-    await ctx.reply("🆕 Session cleared. Next message starts fresh.");
+    await sendSystemMessage(ctx, "🆕 Session cleared. Next message starts fresh.");
   }
 
   // Verify session is actually cleared
@@ -389,9 +390,9 @@ export async function handleResume(ctx: Context): Promise<void> {
 
   // Try to load persisted session for this chat
   if (sessionManager.hasSession(chatId!, threadId)) {
-    await ctx.reply(`✅ Session resumed for this chat.`);
+    await sendSystemMessage(ctx, `✅ Session resumed for this chat.`);
   } else {
-    await ctx.reply(`❌ No saved session found for this chat.`);
+    await sendSystemMessage(ctx, `❌ No saved session found for this chat.`);
   }
 }
 
@@ -409,6 +410,7 @@ export async function handleRestart(ctx: Context): Promise<void> {
   }
 
   const msg = await ctx.reply("🔄 Restarting bot...");
+  addSystemReaction(ctx.api, msg.chat.id, msg.message_id).catch(() => {});
 
   // Save message info so we can update it after restart
   if (chatId && msg.message_id) {
@@ -451,9 +453,9 @@ export async function handleCron(ctx: Context): Promise<void> {
   if (arg === "reload") {
     const count = reloadScheduler();
     if (count === 0) {
-      await ctx.reply("⚠️ No schedules found in cron.yaml");
+      await sendSystemMessage(ctx, "⚠️ No schedules found in cron.yaml");
     } else {
-      await ctx.reply(`🔄 Reloaded ${count} scheduled job${count > 1 ? "s" : ""}`);
+      await sendSystemMessage(ctx, `🔄 Reloaded ${count} scheduled job${count > 1 ? "s" : ""}`);
     }
     return;
   }

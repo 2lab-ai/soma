@@ -8,6 +8,7 @@ import { auditLog, startTypingIndicator } from "../utils";
 import { StreamingState, createStatusCallback, cleanupToolMessages } from "./streaming";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import { isAbortError } from "../utils/error-classification";
+import { sendSystemMessage } from "../utils/system-message";
 import {
   getCurrentConfig,
   updateContextModel,
@@ -102,7 +103,7 @@ async function sendMessageToClaude(
     if (isAbortError(error)) {
       const wasInterrupt = session.consumeInterruptFlag();
       if (!wasInterrupt) {
-        await ctx.reply("🛑 Query stopped.");
+        await sendSystemMessage(ctx, "🛑 Query stopped.");
       }
     } else {
       const errorStr = String(error);

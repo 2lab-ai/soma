@@ -13,6 +13,7 @@ import { rateLimiter } from "../security";
 import { auditLogRateLimit } from "../utils";
 import { sessionManager } from "../session-manager";
 import { isAbortError, handleAbortError } from "../utils/error-classification";
+import { sendSystemMessage } from "../utils/system-message";
 import { Reactions } from "../constants/reactions";
 
 /**
@@ -213,7 +214,7 @@ export async function handleProcessingError(
     } catch {
       // Ignore reaction errors
     }
-    await ctx.reply("🛑 Query stopped.");
+    await sendSystemMessage(ctx, "🛑 Query stopped.");
     return;
   }
 
