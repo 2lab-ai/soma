@@ -53,6 +53,12 @@ function buildProgressBar(elapsedMs: number): string {
   return `⏱️ ${elapsedSec}s [${bar}]`;
 }
 
+export function renderBar(percent: number, width = 14): string {
+  const clamped = Math.max(0, Math.min(100, percent));
+  const filled = Math.round((clamped / 100) * width);
+  return "▓".repeat(filled) + "░".repeat(width - filled);
+}
+
 function isAiMcpTool(content: string): boolean {
   return /🔮.*MCP.*(?:codex|gemini|claude)/i.test(content);
 }
@@ -85,26 +91,19 @@ function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string 
     const d7 = Math.round(a.sevenDay - b.sevenDay);
     const sign5 = d5 >= 0 ? "+" : "";
     const sign7 = d7 >= 0 ? "+" : "";
-    const ctxPart = (() => {
-      if (metadata?.contextUsagePercent === undefined) return "";
-      const ctxBefore =
-        metadata.contextUsagePercentBefore ?? metadata.contextUsagePercent;
+    if (metadata?.contextUsagePercent !== undefined) {
+      const ctxBefore = metadata.contextUsagePercentBefore ?? metadata.contextUsagePercent;
       const dCtx = Math.round((metadata.contextUsagePercent - ctxBefore) * 10) / 10;
       const signCtx = dCtx >= 0 ? "+" : "";
-      return `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% (${signCtx}${dCtx.toFixed(1)}%) | `;
-    })();
-    lines.push(
-      `📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% (${sign5}${d5}%) | 7d: ${Math.round(a.sevenDay)}% (${sign7}${d7}%)`
-    );
+      lines.push(`<code>Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}% ${signCtx}${dCtx.toFixed(1)}</code>`);
+    }
+    lines.push(`<code>5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}% ${sign5}${d5}  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}% ${sign7}${d7}</code>`);
   } else if (shouldShowUsage && metadata?.usageAfter) {
     const a = metadata.usageAfter;
-    const ctxPart =
-      metadata?.contextUsagePercent !== undefined
-        ? `Ctx: ${metadata.contextUsagePercent.toFixed(1)}% | `
-        : "";
-    lines.push(
-      `📊 ${ctxPart}5h: ${Math.round(a.fiveHour)}% | 7d: ${Math.round(a.sevenDay)}%`
-    );
+    if (metadata?.contextUsagePercent !== undefined) {
+      lines.push(`<code>Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}%</code>`);
+    }
+    lines.push(`<code>5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}%  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}%</code>`);
   }
 
   // Tools line (if available)
@@ -122,7 +121,8 @@ function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string 
     }
   }
 
-  return `\n\n<i>${lines.join("\n")}</i>`;
+  const formatted = lines.map(l => l.startsWith("<code>") ? l : `<i>${l}</i>`).join("\n");
+  return `\n\n${formatted}`;
 }
 
 async function deleteMessage(ctx: Context, msg: Message): Promise<void> {
