@@ -666,6 +666,8 @@ export async function handleText(ctx: Context): Promise<void> {
               steeringContent,
               followUpResponse
             );
+            // Settle delay: let in-flight messages arrive before checking buffer again
+            await Bun.sleep(500);
           } catch (followUpError) {
             console.error(`[AUTO-CONTINUE] Round ${autoContinueRound}: Follow-up FAILED:`, followUpError);
             await sendSystemMessage(ctx, "⚠️ 대기 중인 메시지 처리 실패. 다시 보내주세요.");

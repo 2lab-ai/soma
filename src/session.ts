@@ -737,9 +737,14 @@ export class ClaudeSession {
   ): Promise<string> {
     if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);
 
-    // Clear injected steering tracking from previous query
+    // Restore any unprocessed injected steering back to buffer BEFORE clearing
+    // This prevents message loss when auto-continue fires sendMessageStreaming again
     const prevInjectedCount = this.injectedSteeringDuringQuery.length;
-    this.clearInjectedSteeringTracking();
+    if (prevInjectedCount > 0) {
+      this.steeringBuffer = [...this.injectedSteeringDuringQuery, ...this.steeringBuffer];
+      console.log(`[QUERY START] Restored ${prevInjectedCount} injected message(s) to buffer before new query. Buffer now: ${this.steeringBuffer.length}`);
+    }
+    this.injectedSteeringDuringQuery = [];
     console.log(`[QUERY START DEBUG] Cleared injected tracking (was: ${prevInjectedCount}), buffer: ${this.steeringBuffer.length}`);
 
     // Capture generation at query start to detect if session was killed mid-query
