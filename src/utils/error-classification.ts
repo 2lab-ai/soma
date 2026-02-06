@@ -5,6 +5,7 @@
 import type { Context } from "grammy";
 import type { ClaudeSession } from "../session";
 import { Reactions } from "../constants/reactions";
+import { sendSystemMessage } from "./system-message";
 
 /**
  * Check if an error is an abort/cancellation error
@@ -49,7 +50,7 @@ export async function handleAbortError(
   // Only show "Query stopped" if it was an explicit stop, not an interrupt
   const wasInterrupt = session.consumeInterruptFlag();
   if (!wasInterrupt) {
-    await ctx.reply("🛑 Query stopped.");
+    await sendSystemMessage(ctx, "🛑 Query stopped.");
   }
   return true;
 }

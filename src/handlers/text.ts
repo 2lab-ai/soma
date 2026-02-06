@@ -5,6 +5,7 @@
 import type { Context } from "grammy";
 import { sessionManager } from "../session-manager";
 import { WORKING_DIR } from "../config";
+import { sendSystemMessage } from "../utils/system-message";
 import {
   type ChatType,
   isAuthorizedForChat,
@@ -67,7 +68,7 @@ async function handleDirectInput(
   if (isExpired(directInput.createdAt)) {
     session.clearDirectInput();
     session.clearChoiceState();
-    await ctx.reply("⏱️ Direct input expired (5 min). Please ask again.");
+    await sendSystemMessage(ctx, "⏱️ Direct input expired (5 min). Please ask again.");
     return { handled: true };
   }
 
@@ -122,19 +123,19 @@ async function handleMultiFormInput(
   message: string
 ): Promise<MultiFormResult> {
   if (!session.choiceState || !directInput.questionId) {
-    await ctx.reply("⚠️ Form expired. Please ask again.");
+    await sendSystemMessage(ctx, "⚠️ Form expired. Please ask again.");
     return { complete: false, selectedLabel: "" };
   }
 
   const choices = session.choiceState.extractedChoices;
   if (!choices) {
-    await ctx.reply("⚠️ Form data not found.");
+    await sendSystemMessage(ctx, "⚠️ Form data not found.");
     return { complete: false, selectedLabel: "" };
   }
 
   const question = choices.questions.find((q) => q.id === directInput.questionId);
   if (!question) {
-    await ctx.reply("⚠️ Invalid question ID.");
+    await sendSystemMessage(ctx, "⚠️ Invalid question ID.");
     return { complete: false, selectedLabel: "" };
   }
 
@@ -186,7 +187,7 @@ async function sendDirectInputToClaude(
   const [allowed, retryAfter] = rateLimiter.check(userId);
   if (!allowed) {
     await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(`⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`);
+    await sendSystemMessage(ctx, `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`);
     return;
   }
 
@@ -288,7 +289,7 @@ export async function handleText(ctx: Context): Promise<void> {
     // Check expiration (5 minutes)
     if (isExpired(parseState.createdAt)) {
       session.clearParseTextChoice();
-      await ctx.reply("⏱️ Choice expired (5 min). Please ask again.");
+      await sendSystemMessage(ctx, "⏱️ Choice expired (5 min). Please ask again.");
       return;
     }
 
@@ -362,13 +363,12 @@ export async function handleText(ctx: Context): Promise<void> {
         } catch (replyError) {
           console.error("[INTERRUPT] Failed to send lost message UI:", replyError);
           try {
-            await ctx.reply("🛑 Stopped (had undelivered messages)");
+            await sendSystemMessage(ctx, "🛑 Stopped (had undelivered messages)");
           } catch {}
         }
       } else {
-        // No lost messages - simple stop feedback
         try {
-          await ctx.reply("🛑 Stopped");
+          await sendSystemMessage(ctx, "🛑 Stopped");
         } catch {
           // Fallback to reaction if reply fails
           try {
@@ -495,7 +495,7 @@ export async function handleText(ctx: Context): Promise<void> {
   const [allowed, retryAfter] = rateLimiter.check(userId);
   if (!allowed) {
     await auditLogRateLimit(userId, username, retryAfter!);
-    await ctx.reply(`⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`);
+    await sendSystemMessage(ctx, `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`);
     return;
   }
 
@@ -531,7 +531,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
       // Brief notification
       try {
-        await ctx.reply("📋 Previous messages added as context.");
+        await sendSystemMessage(ctx, "📋 Previous messages added as context.");
       } catch {}
     }
   }
@@ -607,7 +607,7 @@ export async function handleText(ctx: Context): Promise<void> {
         if (steeringContent) {
           // Notify user that we're processing their queued messages
           try {
-            await ctx.reply(`💬 <i>대기 메시지 ${steeringCount}개 처리 중...</i>`, {
+            await sendSystemMessage(ctx, `💬 <i>대기 메시지 ${steeringCount}개 처리 중...</i>`, {
               parse_mode: "HTML",
             });
           } catch {
@@ -644,7 +644,7 @@ export async function handleText(ctx: Context): Promise<void> {
             );
           } catch (followUpError) {
             console.error("[AUTO-CONTINUE] Follow-up FAILED:", followUpError);
-            await ctx.reply("⚠️ 대기 중인 메시지 처리 실패. 다시 보내주세요.");
+            await sendSystemMessage(ctx, "⚠️ 대기 중인 메시지 처리 실패. 다시 보내주세요.");
           }
         } else {
           console.warn(`[AUTO-CONTINUE] consumeSteering returned null/empty despite hasSteering=true`);
@@ -657,7 +657,7 @@ export async function handleText(ctx: Context): Promise<void> {
       if (session.needsSave) {
         const currentTokens = session.currentContextTokens;
         const percentage = ((currentTokens / 200_000) * 100).toFixed(1);
-        await ctx.reply(
+        await sendSystemMessage(ctx,
           `⚠️ **Context Limit Approaching**\n\n` +
             `Current: ${currentTokens.toLocaleString()} / 200,000 tokens (${percentage}%)\n\n` +
             `Initiating automatic save...`,
@@ -715,7 +715,7 @@ export async function handleText(ctx: Context): Promise<void> {
               timestamp: new Date().toISOString(),
             });
 
-            await ctx.reply(
+            await sendSystemMessage(ctx,
               `✅ **Context Saved**\n\n` +
                 `Save ID: \`${saveId}\`\n\n` +
                 `Please run: \`make up\` to restart with restored context.`,
@@ -742,7 +742,7 @@ export async function handleText(ctx: Context): Promise<void> {
             "~"
           );
 
-          await ctx.reply(
+          await sendSystemMessage(ctx,
             `🚨 **CRITICAL: Auto-Save Failed**\n\n` +
               `Error: ${sanitized.slice(0, 300)}\n\n` +
               `⚠️ **YOUR WORK IS NOT SAVED**\n\n` +
@@ -766,7 +766,7 @@ export async function handleText(ctx: Context): Promise<void> {
           `Session expired or crashed, reconnecting (attempt ${attempt + 2}/${MAX_RETRIES + 1})...`
         );
         await session.kill(); // Clear corrupted session
-        await ctx.reply(`⚠️ Session expired, reconnecting...`);
+        await sendSystemMessage(ctx, `⚠️ Session expired, reconnecting...`);
         // Clean up old state before retry
         state.cleanup();
         // Reset state for retry

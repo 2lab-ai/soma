@@ -18,6 +18,7 @@ import {
 import {
   getModelForContext,
   getReasoningTokens,
+  MODEL_DISPLAY_NAMES,
   type ConfigContext,
 } from "./model-config";
 import { formatToolStatus } from "./formatting";
@@ -1172,6 +1173,7 @@ export class ClaudeSession {
     const contextUsagePercent = this.contextWindowUsage
       ? (this.currentContextTokens / this.contextWindowSize) * 100
       : undefined;
+    const currentModelId = getModelForContext(modelContext);
     const metadata: QueryMetadata = {
       usageBefore,
       usageAfter,
@@ -1180,6 +1182,7 @@ export class ClaudeSession {
       contextUsagePercent,
       contextUsagePercentBefore,
       currentProvider: "anthropic",
+      modelDisplayName: MODEL_DISPLAY_NAMES[currentModelId] || currentModelId,
     };
 
     // Accumulate tool stats for session-wide tracking

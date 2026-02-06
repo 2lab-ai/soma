@@ -8,7 +8,8 @@ import { Bot, GrammyError } from "grammy";
 import { run, sequentialize } from "@grammyjs/runner";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import Bottleneck from "bottleneck";
-import { TELEGRAM_TOKEN, WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "./config";
+import { TELEGRAM_TOKEN, WORKING_DIR, ALLOWED_USERS, RESTART_FILE, SYS_MSG_PREFIX } from "./config";
+import { sendSystemMessage, addSystemReaction } from "./utils/system-message";
 import {
   unlinkSync,
   readFileSync,
@@ -261,11 +262,12 @@ if (ALLOWED_USERS.length > 0) {
           console.log(`📥 Found .last-save-id: ${saveId} - Triggering auto-load`);
 
           // Send /load command to Claude
-          await bot.api.sendMessage(
-            userId,
-            `🔄 **Auto-restoring context**\n\nSave ID: \`${saveId}\`\n\nExecuting /load...`,
+          const restoreStartMsgId = await sendSystemMessage(
+            { api: bot.api, chatId: userId },
+            `**Auto-restoring context**\n\nSave ID: \`${saveId}\`\n\nExecuting /load...`,
             { parse_mode: "Markdown" }
           );
+          console.log(`[CONTEXT-RESTORE] Start notification: msg_id=${restoreStartMsgId || "failed"}`);
 
           const loadResponse = await session.sendMessageStreaming(
             `Skill tool with skill='oh-my-claude:load' and args='${saveId}'`,
@@ -294,11 +296,12 @@ if (ALLOWED_USERS.length > 0) {
           // C3 FIX: Delete .last-save-id AFTER verification
           unlinkSync(saveIdFile);
 
-          await bot.api.sendMessage(
-            userId,
-            `✅ **Context Restored**\n\nResumed from save: \`${saveId}\``,
+          const restoreDoneMsgId = await sendSystemMessage(
+            { api: bot.api, chatId: userId },
+            `━━━ **Context Restored** ━━━\n\nResumed from save: \`${saveId}\``,
             { parse_mode: "Markdown" }
           );
+          console.log(`[CONTEXT-RESTORE] Done notification: msg_id=${restoreDoneMsgId || "failed"}`);
 
           return; // Skip normal startup message
         } catch (err) {
@@ -312,9 +315,9 @@ if (ALLOWED_USERS.length > 0) {
             "~"
           );
 
-          await bot.api.sendMessage(
-            userId,
-            `🚨 **Auto-load Failed**\n\n` +
+          await sendSystemMessage(
+            { api: bot.api, chatId: userId },
+            `**Auto-load Failed**\n\n` +
               `Error: ${sanitized.slice(0, 300)}\n\n` +
               `⚠️ Starting fresh session. Check logs for recovery.`,
             { parse_mode: "Markdown" }
@@ -391,7 +394,7 @@ if (ALLOWED_USERS.length > 0) {
       }
     } catch (e) {
       console.error("Startup notification failed:", e);
-      await bot.api.sendMessage(userId, "✅ Bot restarted").catch(() => {});
+      await sendSystemMessage({ api: bot.api, chatId: userId }, "Bot restarted").catch(() => {});
     }
   }, 2000);
 }
@@ -416,9 +419,12 @@ const stopRunner = () => {
 
 /**
  * Save graceful shutdown context to be restored on next startup.
+ * Sends user notification about context save status.
  */
-function saveShutdownContext(): void {
+async function saveShutdownContext(): Promise<void> {
   console.log("\n[CONTEXT-SAVE] ========== SAVING CONTEXT ==========");
+  const userId = ALLOWED_USERS[0];
+
   try {
     const saveDir = `${WORKING_DIR}/docs/tasks/save`;
     console.log(`[CONTEXT-SAVE] Directory: ${saveDir}`);
@@ -440,9 +446,10 @@ function saveShutdownContext(): void {
 
     // Get primary session context info
     let contextInfo = "";
-    if (ALLOWED_USERS.length > 0) {
-      const session = sessionManager.getSession(ALLOWED_USERS[0]!);
-      const ctxPct = ((session.currentContextTokens / session.contextWindowSize) * 100).toFixed(1);
+    let ctxPct = "0";
+    if (userId) {
+      const session = sessionManager.getSession(userId);
+      ctxPct = ((session.currentContextTokens / session.contextWindowSize) * 100).toFixed(1);
       contextInfo = `Context: ${ctxPct}% (${session.currentContextTokens.toLocaleString()}/${session.contextWindowSize.toLocaleString()} tokens)`;
       console.log(`[CONTEXT-SAVE] Primary session context: ${ctxPct}%`);
     }
@@ -466,8 +473,37 @@ function saveShutdownContext(): void {
     console.log(`[CONTEXT-SAVE] ✅ File saved: ${saveFile}`);
     console.log(`[CONTEXT-SAVE] File size: ${content.length} bytes`);
     console.log("[CONTEXT-SAVE] ========== SAVE COMPLETE ==========\n");
+
+    // Send user notification about context save
+    if (userId) {
+      const shortFile = saveFile.replace(WORKING_DIR, ".");
+      const msgId = await Promise.race([
+        sendSystemMessage(
+          { api: bot.api, chatId: userId },
+          `**Context Saved**\n\n` +
+            `📁 \`${shortFile}\`\n` +
+            `📊 Context: ${ctxPct}%\n` +
+            `🔢 Queries: ${stats.totalQueries}`,
+          { parse_mode: "Markdown" }
+        ),
+        new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 3000)),
+      ]).catch((err) => {
+        console.error(`[CONTEXT-SAVE] Failed to notify user: ${err}`);
+        return null;
+      });
+      console.log(`[CONTEXT-SAVE] User notification: msg_id=${msgId || "failed"}`);
+    }
   } catch (error) {
     console.error(`[CONTEXT-SAVE] ❌ Failed to save: ${error}`);
+
+    // Notify user of save failure
+    if (userId) {
+      await sendSystemMessage(
+        { api: bot.api, chatId: userId },
+        `**Context Save Failed**\n\n⚠️ ${String(error).slice(0, 200)}`,
+        { parse_mode: "Markdown" }
+      ).catch(() => {});
+    }
   }
 }
 
@@ -482,13 +518,21 @@ process.on("SIGINT", () => {
 
 /**
  * Send shutdown notification to user with session stats.
+ * Uses Promise.race with timeout to ensure message is sent before process exits.
  */
 async function sendShutdownMessage(): Promise<void> {
-  if (ALLOWED_USERS.length === 0) return;
+  console.log("[SHUTDOWN-MSG] Starting shutdown message...");
+
+  if (ALLOWED_USERS.length === 0) {
+    console.log("[SHUTDOWN-MSG] No allowed users, skipping");
+    return;
+  }
 
   const userId = ALLOWED_USERS[0]!;
   const session = sessionManager.getSession(userId);
   const now = new Date();
+
+  console.log(`[SHUTDOWN-MSG] User: ${userId}, Session active: ${session.isActive}`);
 
   // Calculate session duration
   let duration = "N/A";
@@ -511,10 +555,11 @@ async function sendShutdownMessage(): Promise<void> {
 
   // Get tool stats
   const toolStats = session.formatToolStats();
+  console.log(`[SHUTDOWN-MSG] Stats - Duration: ${duration}, Context: ${contextPct}%, Tools: ${toolStats || "none"}`);
 
-  // Build message
+  // Build message (SYS_MSG_PREFIX distinguishes system messages from model responses)
   const lines = [
-    "━━━━━━━━━━━━━━━━━━━━━━",
+    `${SYS_MSG_PREFIX} ━━━━━━━━━━━━━━━━━━━━━━`,
     "🔄 서비스를 재시작합니다.",
     `⏰ ${startTimeStr} → ${endTimeStr} (${duration})`,
     `📊 Context: ${contextPct}% (${contextTokens.toLocaleString()}/${contextSize.toLocaleString()} tokens)`,
@@ -526,11 +571,22 @@ async function sendShutdownMessage(): Promise<void> {
   lines.push("━━━━━━━━━━━━━━━━━━━━━━");
   const message = lines.join("\n");
 
+  // Send with timeout to ensure we don't hang
+  const SEND_TIMEOUT = 5000;
   try {
-    await bot.api.sendMessage(userId, message, { parse_mode: "HTML" });
-    console.log("[SIGTERM] Shutdown message sent to user");
+    console.log(`[SHUTDOWN-MSG] Sending message (timeout: ${SEND_TIMEOUT}ms)...`);
+    const shutdownMsg = await Promise.race([
+      bot.api.sendMessage(userId, message, { parse_mode: "HTML" }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Timeout")), SEND_TIMEOUT)
+      ),
+    ]);
+    if (shutdownMsg?.message_id) {
+      addSystemReaction(bot.api, userId, shutdownMsg.message_id).catch(() => {});
+    }
+    console.log("[SHUTDOWN-MSG] ✅ Message sent successfully");
   } catch (err) {
-    console.error("[SIGTERM] Failed to send shutdown message:", err);
+    console.error("[SHUTDOWN-MSG] ❌ Failed:", err);
   }
 }
 
@@ -543,8 +599,11 @@ process.on("SIGTERM", async () => {
   // Send shutdown message to user FIRST (before saving context)
   await sendShutdownMessage();
 
-  saveShutdownContext();
+  // Save context and notify user
+  await saveShutdownContext();
   stopRunner();
+  // Allow Telegram API time to deliver messages before exit
+  await new Promise((r) => setTimeout(r, 1000));
   console.log("[SIGTERM] All cleanup complete, exiting with code 0");
   process.exit(0);
 });
