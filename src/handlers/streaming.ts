@@ -95,15 +95,15 @@ function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string 
       const ctxBefore = metadata.contextUsagePercentBefore ?? metadata.contextUsagePercent;
       const dCtx = Math.round((metadata.contextUsagePercent - ctxBefore) * 10) / 10;
       const signCtx = dCtx >= 0 ? "+" : "";
-      lines.push(`<code>Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}% ${signCtx}${dCtx.toFixed(1)}</code>`);
+      lines.push(`Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}% ${signCtx}${dCtx.toFixed(1)}`);
     }
-    lines.push(`<code>5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}% ${sign5}${d5}  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}% ${sign7}${d7}</code>`);
+    lines.push(`5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}% ${sign5}${d5}  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}% ${sign7}${d7}`);
   } else if (shouldShowUsage && metadata?.usageAfter) {
     const a = metadata.usageAfter;
     if (metadata?.contextUsagePercent !== undefined) {
-      lines.push(`<code>Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}%</code>`);
+      lines.push(`Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}%`);
     }
-    lines.push(`<code>5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}%  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}%</code>`);
+    lines.push(`5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}%  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}%`);
   }
 
   // Tools line (if available)
@@ -111,8 +111,8 @@ function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string 
     const tools = Object.entries(metadata.toolDurations);
     if (tools.length > 0) {
       const parts = tools
-        .sort((x, y) => y[1].totalMs - x[1].totalMs) // Sort by total time desc
-        .slice(0, 5) // Top 5 tools
+        .sort((x, y) => y[1].totalMs - x[1].totalMs)
+        .slice(0, 5)
         .map(
           ([name, { count, totalMs }]) =>
             `${name}×${count}: ${formatDurationMs(totalMs)}`
@@ -121,8 +121,7 @@ function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string 
     }
   }
 
-  const formatted = lines.map(l => l.startsWith("<code>") ? l : `<i>${l}</i>`).join("\n");
-  return `\n\n${formatted}`;
+  return `\n\n<pre>${lines.join("\n")}</pre>`;
 }
 
 async function deleteMessage(ctx: Context, msg: Message): Promise<void> {
@@ -509,7 +508,7 @@ export async function createStatusCallback(
           const firstContent = state.lastContent.get(firstSegmentId);
 
           if (firstMsg && firstContent) {
-            const modelHeader = `<code>${escapeHtml(metadata.modelDisplayName)}</code>\n`;
+            const modelHeader = `<pre>${escapeHtml(metadata.modelDisplayName)}</pre>\n`;
             const newContent = modelHeader + firstContent;
             if (newContent.length <= TELEGRAM_MESSAGE_LIMIT) {
               try {
