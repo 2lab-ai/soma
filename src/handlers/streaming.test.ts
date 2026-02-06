@@ -176,7 +176,7 @@ describe("Model name header in done handler", () => {
 
     const headerEdit = editCalls.find((c) => c.text.includes("Opus 4.6"));
     expect(headerEdit).toBeTruthy();
-    expect(headerEdit!.text.startsWith("<code>Opus 4.6</code>\n")).toBe(true);
+    expect(headerEdit!.text.startsWith("<pre>Opus 4.6</pre>\n")).toBe(true);
   });
 
   test("skips header when modelDisplayName is undefined", async () => {
@@ -197,7 +197,7 @@ describe("Model name header in done handler", () => {
 
     await callback("done", "", undefined, metadata);
 
-    const headerEdit = editCalls.find((c) => c.text.includes("<code>"));
+    const headerEdit = editCalls.find((c) => c.text.startsWith("<pre>") && c.text.includes("</pre>\n"));
     expect(headerEdit).toBeUndefined();
   });
 
@@ -221,7 +221,7 @@ describe("Model name header in done handler", () => {
 
     await callback("done", "", undefined, metadata);
 
-    const headerEdit = editCalls.find((c) => c.text.includes("<code>Opus 4.6</code>"));
+    const headerEdit = editCalls.find((c) => c.text.includes("<pre>Opus 4.6</pre>"));
     expect(headerEdit).toBeUndefined();
   });
 });
