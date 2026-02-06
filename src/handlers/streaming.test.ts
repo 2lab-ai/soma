@@ -225,3 +225,42 @@ describe("Model name header in done handler", () => {
     expect(headerEdit).toBeUndefined();
   });
 });
+
+describe("renderBar - progress bar visualization", () => {
+  const { renderBar } = require("./streaming");
+
+  test("0% returns all empty", () => {
+    expect(renderBar(0, 10)).toBe("░░░░░░░░░░");
+  });
+
+  test("100% returns all filled", () => {
+    expect(renderBar(100, 10)).toBe("▓▓▓▓▓▓▓▓▓▓");
+  });
+
+  test("50% returns half filled", () => {
+    expect(renderBar(50, 10)).toBe("▓▓▓▓▓░░░░░");
+  });
+
+  test("default width is 14", () => {
+    expect(renderBar(0).length).toBe(14);
+    expect(renderBar(100).length).toBe(14);
+  });
+
+  test("clamps negative to 0%", () => {
+    expect(renderBar(-10, 10)).toBe("░░░░░░░░░░");
+  });
+
+  test("clamps >100 to 100%", () => {
+    expect(renderBar(150, 10)).toBe("▓▓▓▓▓▓▓▓▓▓");
+  });
+
+  test("rounds partial fills correctly", () => {
+    const bar = renderBar(33, 10);
+    expect(bar.length).toBe(10);
+    expect(bar).toBe("▓▓▓░░░░░░░");
+  });
+
+  test("custom width 8", () => {
+    expect(renderBar(50, 8)).toBe("▓▓▓▓░░░░");
+  });
+});
