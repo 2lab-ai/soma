@@ -25,7 +25,12 @@ import {
   handleAbortError,
   formatErrorForLog,
   formatErrorForUser,
+  isRateLimitError,
+  formatRateLimitForUser,
+  isSonnetAvailable,
 } from "../utils/error-classification";
+import { fetchClaudeUsage } from "../usage";
+import { MODEL_DISPLAY_NAMES } from "../model-config";
 import type { ClaudeSession } from "../session";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import { Reactions } from "../constants/reactions";
@@ -773,6 +778,95 @@ export async function handleText(ctx: Context): Promise<void> {
         state = new StreamingState();
         statusCallback = await createStatusCallback(ctx, state, session);
         continue;
+      }
+
+      // RL-4: Rate limit detection + auto-fallback
+      const rateLimitInfo = isRateLimitError(error);
+      if (rateLimitInfo.isRateLimit) {
+        console.log(`[RATE-LIMIT] Detected: bucket=${rateLimitInfo.bucket}`);
+        session.rateLimitState.consecutiveFailures++;
+
+        const usage = await fetchClaudeUsage(10);
+        const richMessage = await formatRateLimitForUser(error, usage);
+
+        // Check cooldown
+        if (
+          session.rateLimitState.cooldownUntil &&
+          Date.now() < session.rateLimitState.cooldownUntil
+        ) {
+          await ctx.reply(richMessage + "\n\n🛑 연속 실패로 대기 중. 잠시 후 다시 시도해주세요.");
+          break;
+        }
+
+        // Cap at 3 consecutive failures
+        if (session.rateLimitState.consecutiveFailures >= 3) {
+          session.rateLimitState.cooldownUntil = Date.now() + 5 * 60 * 1000;
+          await ctx.reply(richMessage + "\n\n🛑 연속 3회 실패. 5분 후 다시 시도해주세요.");
+          break;
+        }
+
+        // Try Sonnet fallback (only if not already on Sonnet)
+        if (!session.temporaryModelOverride && usage && isSonnetAvailable(usage)) {
+          const sonnetModel = "claude-sonnet-4-5-20250929" as const;
+          session.temporaryModelOverride = sonnetModel;
+
+          // Store Opus reset time for recovery
+          if (usage.five_hour?.resets_at) {
+            session.rateLimitState.opusResetsAt = usage.five_hour.resets_at;
+          }
+
+          const sonnetPct = usage.seven_day_sonnet
+            ? `${Math.round(usage.seven_day_sonnet.utilization * 100)}%`
+            : "?";
+
+          await sendSystemMessage(ctx,
+            richMessage +
+            `\n\n💡 Sonnet 사용량 ${sonnetPct} → 자동 전환합니다.` +
+            `\n🔄 메시지 재전송 중...`
+          );
+
+          // Retry with Sonnet - reset state
+          state.cleanup();
+          state = new StreamingState();
+          statusCallback = await createStatusCallback(ctx, state, session);
+
+          try {
+            const retryResponse = await session.sendMessageStreaming(
+              messageWithTimestamp,
+              username,
+              userId,
+              statusCallback,
+              chatId,
+              ctx
+            );
+            await auditLog(userId, username, "TEXT_FALLBACK", message, retryResponse);
+            try { await ctx.react(Reactions.COMPLETE); } catch {}
+
+            const fallbackModel = session.temporaryModelOverride;
+            const modelName = fallbackModel ? MODEL_DISPLAY_NAMES[fallbackModel] || fallbackModel : "Sonnet";
+            await sendSystemMessage(ctx,
+              `✅ ${modelName}으로 응답 완료. Opus 복구 시 자동 전환됩니다.`
+            );
+            session.rateLimitState.consecutiveFailures = 0;
+            break;
+          } catch (retryError) {
+            console.error("[RATE-LIMIT] Sonnet fallback also failed:", retryError);
+            session.rateLimitState.consecutiveFailures++;
+            const retryRateLimitInfo = isRateLimitError(retryError);
+            if (retryRateLimitInfo.isRateLimit) {
+              const retryUsage = await fetchClaudeUsage(10);
+              const retryMessage = await formatRateLimitForUser(retryError, retryUsage);
+              await ctx.reply(retryMessage + "\n\n🛑 Sonnet도 한도 초과. 잠시 후 다시 시도해주세요.");
+            } else {
+              await ctx.reply(formatErrorForUser(retryError));
+            }
+            break;
+          }
+        } else {
+          // No Sonnet fallback available
+          await ctx.reply(richMessage);
+          break;
+        }
       }
 
       // Final attempt failed or non-retryable error
