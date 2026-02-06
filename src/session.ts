@@ -678,7 +678,9 @@ export class ClaudeSession {
     return () => {
       released = true;
       clearTimeout(timer);
+      const prevState = this._queryState;
       this._queryState = "idle";
+      console.log(`[PROCESSING] stopProcessing() called: ${prevState} → idle, steering=${this.steeringBuffer.length}`);
       if (this.steeringBuffer.length) {
         console.log(
           `[STEERING] Keeping ${this.steeringBuffer.length} unconsumed messages for next query`

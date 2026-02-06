@@ -392,6 +392,32 @@ if (ALLOWED_USERS.length > 0) {
       if (response && response !== "[Waiting for user selection]") {
         await bot.api.sendMessage(userId, escapeHtml(response), { parse_mode: "HTML" });
       }
+
+      // Restore pending steering messages saved during SIGTERM
+      const steeringFile = "/tmp/soma-pending-steering.json";
+      try {
+        if (existsSync(steeringFile)) {
+          const saved = JSON.parse(readFileSync(steeringFile, "utf-8"));
+          unlinkSync(steeringFile);
+          if (saved.content && session.isActive) {
+            console.log(`[STARTUP] Restoring ${saved.count} pending steering message(s) from SIGTERM`);
+            await sendSystemMessage({ api: bot.api, chatId: userId },
+              `💬 <i>재시작 전 대기 중이던 메시지 ${saved.count}개 복원 처리 중...</i>`,
+              { parse_mode: "HTML" }
+            );
+            const restoredResponse = await session.sendMessageStreaming(
+              `[재시작 전 보낸 메시지 - 지금 처리합니다]\n${saved.content}`,
+              "startup", userId, statusCallback
+            );
+            if (restoredResponse && restoredResponse !== "[Waiting for user selection]") {
+              await bot.api.sendMessage(userId, escapeHtml(restoredResponse), { parse_mode: "HTML" });
+            }
+            console.log(`[STARTUP] Steering restoration complete`);
+          }
+        }
+      } catch (steeringErr) {
+        console.error("[STARTUP] Failed to restore steering:", steeringErr);
+      }
     } catch (e) {
       console.error("Startup notification failed:", e);
       await sendSystemMessage({ api: bot.api, chatId: userId }, "Bot restarted").catch(() => {});
@@ -595,6 +621,21 @@ process.on("SIGTERM", async () => {
   console.log(`\n[${ts}] ========== SIGTERM RECEIVED ==========`);
   console.log("[SIGTERM] Graceful shutdown initiated (likely from make up or systemctl)");
   console.log("[SIGTERM] PID:", process.pid);
+
+  // Save pending steering messages to disk before shutdown
+  const userId = ALLOWED_USERS[0];
+  if (userId) {
+    const session = sessionManager.getSession(userId);
+    if (session.hasSteeringMessages()) {
+      const count = session.getSteeringCount();
+      const content = session.consumeSteering();
+      if (content) {
+        const steeringFile = "/tmp/soma-pending-steering.json";
+        writeFileSync(steeringFile, JSON.stringify({ count, content, timestamp: new Date().toISOString() }), "utf-8");
+        console.log(`[SIGTERM] Saved ${count} pending steering message(s) to ${steeringFile}`);
+      }
+    }
+  }
 
   // Send shutdown message to user FIRST (before saving context)
   await sendShutdownMessage();
