@@ -667,7 +667,7 @@ export class ClaudeSession {
 
   startProcessing(): () => void {
     this._queryState = "preparing";
-    const PROCESSING_TIMEOUT_MS = 120_000;
+    const PROCESSING_TIMEOUT_MS = 300_000;
     let released = false;
     const timer = setTimeout(() => {
       if (!released && this.isProcessing) {
