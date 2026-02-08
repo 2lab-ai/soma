@@ -113,6 +113,10 @@ flowchart LR
 | M-04 | backward compatibility 기간 | A) 즉시 전환, B) dual-path 1~2주 |
 | M-05 | dead code 정리 시점 | A) 마지막 phase 일괄, B) 단계별 즉시 제거 |
 
+## 3.6 Clarify 상세 문서
+- 각 질문별 문맥/트레이드오프/되돌리기 비용은 `docs/clairfy/INDEX.md`를 기준으로 관리한다.
+- 개별 파일은 `docs/clairfy/T-01.md` 형식으로 ID별 분리되어 있다.
+
 ---
 
 ## 4. Test Reset Inventory (현재 삭제 후보)
