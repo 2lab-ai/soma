@@ -150,32 +150,32 @@ flowchart LR
 
 ## 5. Execution Epics Graph (Multi-Team)
 
-메인 실행 에픽(`agi-vbj` 하위):
-- `agi-vbj.4` v3-exec-1: core contracts foundation
-- `agi-vbj.5` v3-exec-1b: domain/session-core extraction
-- `agi-vbj.6` v3-exec-2: provider boundary
-- `agi-vbj.7` v3-exec-3: telegram channel boundary
-- `agi-vbj.8` v3-exec-4: slack skeleton + tenant boundary
-- `agi-vbj.9` v3-exec-5: outbound orchestration + unified output port
-- `agi-vbj.10` v3-exec-6: storage/scheduler partition refactor
-- `agi-vbj.11` v3-exec-7: full test rewrite + quality gates
-- `agi-vbj.12` v3-exec-8: cutover cleanup + legacy deprecation
+메인 실행 에픽(`soma-vbj` 하위):
+- `soma-vbj.4` v3-exec-1: core contracts foundation
+- `soma-vbj.5` v3-exec-1b: domain/session-core extraction
+- `soma-vbj.6` v3-exec-2: provider boundary
+- `soma-vbj.7` v3-exec-3: telegram channel boundary
+- `soma-vbj.8` v3-exec-4: slack skeleton + tenant boundary
+- `soma-vbj.9` v3-exec-5: outbound orchestration + unified output port
+- `soma-vbj.10` v3-exec-6: storage/scheduler partition refactor
+- `soma-vbj.11` v3-exec-7: full test rewrite + quality gates
+- `soma-vbj.12` v3-exec-8: cutover cleanup + legacy deprecation
 
 옵션 트랙:
-- `agi-vbj.13` v3-track-x: optional openclaw compatibility (deferred, non-blocking)
+- `soma-vbj.13` v3-track-x: optional openclaw compatibility (deferred, non-blocking)
 
 ```mermaid
 flowchart LR
-  E1["agi-vbj.4 Core Contracts"]
-  E2["agi-vbj.5 Domain Session Core"]
-  E3["agi-vbj.6 Provider Boundary"]
-  E4["agi-vbj.7 Telegram Boundary"]
-  E5["agi-vbj.8 Slack Skeleton"]
-  E6["agi-vbj.10 Storage Scheduler Partition"]
-  E7["agi-vbj.9 Outbound Orchestrator"]
-  E8["agi-vbj.11 Test Rewrite + Gates"]
-  E9["agi-vbj.12 Cutover Cleanup"]
-  X["agi-vbj.13 OpenClaw Optional Track"]
+  E1["soma-vbj.4 Core Contracts"]
+  E2["soma-vbj.5 Domain Session Core"]
+  E3["soma-vbj.6 Provider Boundary"]
+  E4["soma-vbj.7 Telegram Boundary"]
+  E5["soma-vbj.8 Slack Skeleton"]
+  E6["soma-vbj.10 Storage Scheduler Partition"]
+  E7["soma-vbj.9 Outbound Orchestrator"]
+  E8["soma-vbj.11 Test Rewrite + Gates"]
+  E9["soma-vbj.12 Cutover Cleanup"]
+  X["soma-vbj.13 OpenClaw Optional Track"]
 
   E1 --> E2
   E1 --> E3
@@ -195,13 +195,13 @@ flowchart LR
 ```
 
 병렬 실행 가이드:
-- Lane A: `agi-vbj.6` (Provider)
-- Lane B: `agi-vbj.7` (Telegram)
-- Lane C: `agi-vbj.8` (Slack skeleton)
-- Lane D: `agi-vbj.10` (Storage/Scheduler)
-- 공통 선행: `agi-vbj.4`
-- 통합 병목: `agi-vbj.9` -> `agi-vbj.11` -> `agi-vbj.12`
-- `agi-vbj.13`은 메인 경로와 독립 실행
+- Lane A: `soma-vbj.6` (Provider)
+- Lane B: `soma-vbj.7` (Telegram)
+- Lane C: `soma-vbj.8` (Slack skeleton)
+- Lane D: `soma-vbj.10` (Storage/Scheduler)
+- 공통 선행: `soma-vbj.4`
+- 통합 병목: `soma-vbj.9` -> `soma-vbj.11` -> `soma-vbj.12`
+- `soma-vbj.13`은 메인 경로와 독립 실행
 
 ---
 
