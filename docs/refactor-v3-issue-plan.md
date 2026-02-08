@@ -3,6 +3,7 @@
 ## 0. Scope
 - 메인 v3 리팩토링은 OpenClaw 호환 트랙을 분리한 상태로 진행한다.
 - OpenClaw는 `agi-vbj.13` (optional/deferred)로 격리되어 메인 경로를 block하지 않는다.
+- 전체 시각화 다이어그램은 `docs/refactor-v3-visualization.md`를 참조한다.
 
 ## 1. Execution Epics
 - `agi-vbj.4` v3-exec-1: core contracts foundation
@@ -69,4 +70,3 @@ flowchart LR
 제안 처리:
 - 상태를 deprecated/superseded 처리하고, 대체 에픽 `agi-vbj.4`~`agi-vbj.12`에 링크
 - 세부 구현 지식이 필요한 항목은 코멘트로 migration mapping 남긴 뒤 close
-

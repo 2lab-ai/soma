@@ -268,3 +268,4 @@ src/
 - 결정 소스: `docs/ADR.md`
 - OpenClaw 옵션 트랙: `docs/tracks/openclaw-compatibility-v3-optional.md`
 - Clarify 상세 기록(archive): `docs/archive/refactor-pre-adr-2026-02/clairfy/INDEX.md`
+- v3 전체 시각화 다이어그램: `docs/refactor-v3-visualization.md`
