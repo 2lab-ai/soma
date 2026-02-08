@@ -10,6 +10,11 @@ import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import { isAbortError } from "../utils/error-classification";
 import { sendSystemMessage } from "../utils/system-message";
 import {
+  applyChoiceSelection,
+  ChoiceTransitionError,
+  createPendingDirectInput,
+} from "../core/session/choice-flow";
+import {
   getCurrentConfig,
   updateContextModel,
   MODEL_DISPLAY_NAMES,
@@ -173,101 +178,59 @@ async function handleChoiceCallback(
   const lastPart = parts[parts.length - 1]!;
   if (lastPart === "__direct") {
     const questionId = parts.length === 4 ? parts[2] : undefined;
-    session.pendingDirectInput = {
-      type: session.choiceState.type,
-      formId: session.choiceState.formId,
-      questionId,
-      messageId: callbackMessageId!, // The specific question message
-      createdAt: Date.now(), // For 5-minute expiration
-    };
+    if (!callbackMessageId) {
+      await ctx.answerCallbackQuery({ text: "Invalid callback message" });
+      return;
+    }
+    session.pendingDirectInput = createPendingDirectInput(
+      session.choiceState,
+      callbackMessageId,
+      Date.now(),
+      questionId
+    );
     await ctx.answerCallbackQuery({ text: "Type your answer:" });
     await ctx.editMessageText("✏️ Waiting for your input...");
     return;
   }
 
-  // Get selection based on single vs multi
   let selectedLabel: string;
-
-  if (session.choiceState.type === "single") {
-    // Single choice: parts[2] is optId
-    const optId = parts[2]!;
-    const choice = session.choiceState.extractedChoice;
-    if (!choice) {
-      await ctx.answerCallbackQuery({ text: "Choice data not found" });
-      return;
-    }
-
-    const option = choice.choices.find((opt) => opt.id === optId);
-    if (!option) {
-      await ctx.answerCallbackQuery({ text: "Invalid option" });
-      return;
-    }
-
-    selectedLabel = option.label;
-  } else {
-    // Multi choice: parts[2] is qId, parts[3] is optId
-    if (parts.length !== 4) {
-      await ctx.answerCallbackQuery({ text: "Invalid multi-form callback" });
-      return;
-    }
-
-    const questionId = parts[2]!;
-    const optId = parts[3]!;
-    const choices = session.choiceState.extractedChoices;
-    if (!choices) {
-      await ctx.answerCallbackQuery({ text: "Form data not found" });
-      return;
-    }
-
-    const question = choices.questions.find((q) => q.id === questionId);
-    if (!question) {
-      await ctx.answerCallbackQuery({ text: "Question not found" });
-      return;
-    }
-
-    const option = question.choices.find((opt) => opt.id === optId);
-    if (!option) {
-      await ctx.answerCallbackQuery({ text: "Invalid option" });
-      return;
-    }
-
-    selectedLabel = option.label;
-
-    // Store selection in choiceState
-    if (!session.choiceState.selections) {
-      session.choiceState.selections = {};
-    }
-    session.choiceState.selections[questionId] = {
-      choiceId: optId,
-      label: selectedLabel,
-    };
-
-    // Check if all questions answered
-    const allAnswered =
-      Object.keys(session.choiceState.selections).length === choices.questions.length;
-
-    if (!allAnswered) {
-      // Not all questions answered yet, just acknowledge
-      // Edit to show selection but keep question visible
-      await ctx.editMessageText(`${question.question}\n\n✓ ${selectedLabel}`);
-      // Remove keyboard from this question since it's answered
-      await ctx.editMessageReplyMarkup({ reply_markup: undefined });
-      await ctx.answerCallbackQuery({
-        text: `Selected: ${selectedLabel.slice(0, 50)}`,
+  try {
+    if (session.choiceState.type === "single") {
+      const transition = applyChoiceSelection(session.choiceState, {
+        mode: "single_option",
+        optionId: parts[2]!,
       });
+      selectedLabel = transition.selectedLabel;
+    } else {
+      if (parts.length !== 4) {
+        await ctx.answerCallbackQuery({ text: "Invalid multi-form callback" });
+        return;
+      }
+
+      const transition = applyChoiceSelection(session.choiceState, {
+        mode: "multi_option",
+        questionId: parts[2]!,
+        optionId: parts[3]!,
+      });
+
+      if (transition.status === "pending") {
+        session.choiceState = transition.nextChoiceState;
+        await ctx.editMessageText(`${transition.questionText}\n\n✓ ${transition.selectedLabel}`);
+        await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+        await ctx.answerCallbackQuery({
+          text: `Selected: ${transition.selectedLabel.slice(0, 50)}`,
+        });
+        return;
+      }
+
+      selectedLabel = transition.selectedLabel;
+    }
+  } catch (error) {
+    if (error instanceof ChoiceTransitionError) {
+      await ctx.answerCallbackQuery({ text: "Choice is invalid or expired" });
       return;
     }
-
-    // All answered - build combined message
-    const answers = choices.questions
-      .map((q) => {
-        const sel = session.choiceState?.selections?.[q.id];
-        return sel ? `${q.question}: ${sel.label}` : null;
-      })
-      .filter(Boolean)
-      .join("\n");
-
-    selectedLabel = `Answered all questions:\n${answers}`;
+    throw error;
   }
 
   // Clear choice state

@@ -25,6 +25,28 @@ import {
 import { formatToolStatus } from "./formatting";
 import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
+import {
+  beginInterruptTransition,
+  clearStopRequestedTransition,
+  completeQueryTransition,
+  consumeInterruptFlagTransition,
+  createInitialSessionRuntimeState,
+  endInterruptTransition,
+  finalizeQueryTransition,
+  incrementGenerationTransition,
+  isQueryProcessing,
+  isQueryRunning,
+  markInterruptFlag,
+  requestStopDuringPreparingTransition,
+  requestStopDuringRunningTransition,
+  startProcessingTransition,
+  startQueryTransition,
+  stopProcessingTransition,
+  transitionActivityState,
+  type ActivityState,
+  type QueryState,
+  type SessionRuntimeState,
+} from "./core/session/state-machine";
 import { createSteeringMessage } from "./types";
 import type {
   KillResult,
@@ -46,10 +68,10 @@ import type {
 import { isAbortError } from "./utils/error-classification";
 import type { ChatCaptureService } from "./services/chat-capture-service";
 
-export type ActivityState = "idle" | "working" | "waiting";
-export type QueryState = "idle" | "preparing" | "running" | "aborting" | "completing";
+export type { ActivityState, QueryState } from "./core/session/state-machine";
 
 type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
+const initialRuntimeState = createInitialSessionRuntimeState();
 
 function getThinkingLevel(message: string): number {
   const msgLower = message.toLowerCase();
@@ -244,11 +266,11 @@ export class ClaudeSession {
   messagesSinceRestore = 0;
 
   private abortController: AbortController | null = null;
-  private _queryState: QueryState = "idle";
-  private stopRequested = false;
-  private _generation = 0;
-  private _wasInterruptedByNewMessage = false;
-  private _isInterrupting = false;
+  private _queryState: QueryState = initialRuntimeState.queryState;
+  private stopRequested = initialRuntimeState.stopRequested;
+  private _generation = initialRuntimeState.generation;
+  private _wasInterruptedByNewMessage = initialRuntimeState.wasInterruptedByNewMessage;
+  private _isInterrupting = initialRuntimeState.isInterrupting;
   private readonly MAX_STEERING_MESSAGES = 20;
   private steeringBuffer: SteeringMessage[] = [];
   private injectedSteeringDuringQuery: SteeringMessage[] = []; // Track messages injected via hook for fallback
@@ -258,7 +280,7 @@ export class ClaudeSession {
   parseTextChoiceState: ParseTextChoiceState | null = null;
   pendingRecovery: PendingRecovery | null = null;
   nextQueryContext: string | null = null; // Context to prepend to next query
-  private _activityState: ActivityState = "idle";
+  private _activityState: ActivityState = initialRuntimeState.activityState;
 
   // Rate limit fallback state
   temporaryModelOverride: ModelId | null = null;
@@ -316,13 +338,33 @@ export class ClaudeSession {
     };
   };
 
+  private getRuntimeState(): SessionRuntimeState {
+    return {
+      activityState: this._activityState,
+      queryState: this._queryState,
+      stopRequested: this.stopRequested,
+      wasInterruptedByNewMessage: this._wasInterruptedByNewMessage,
+      isInterrupting: this._isInterrupting,
+      generation: this._generation,
+    };
+  }
+
+  private applyRuntimeState(nextState: SessionRuntimeState): void {
+    this._activityState = nextState.activityState;
+    this._queryState = nextState.queryState;
+    this.stopRequested = nextState.stopRequested;
+    this._wasInterruptedByNewMessage = nextState.wasInterruptedByNewMessage;
+    this._isInterrupting = nextState.isInterrupting;
+    this._generation = nextState.generation;
+  }
+
   get activityState(): ActivityState {
     return this._activityState;
   }
 
   setActivityState(state: ActivityState): void {
     console.log(`[ACTIVITY] ${this._activityState} → ${state}`);
-    this._activityState = state;
+    this.applyRuntimeState(transitionActivityState(this.getRuntimeState(), state));
   }
 
   private getTranscriptJsonlPath(): string | null {
@@ -379,7 +421,7 @@ export class ClaudeSession {
   }
 
   get isRunning(): boolean {
-    return this._queryState !== "idle";
+    return isQueryRunning(this.getRuntimeState());
   }
 
   get queryState(): QueryState {
@@ -442,26 +484,21 @@ export class ClaudeSession {
   }
 
   get isProcessing(): boolean {
-    return (
-      this._queryState === "preparing" ||
-      this._queryState === "running" ||
-      this._queryState === "completing"
-    );
+    return isQueryProcessing(this.getRuntimeState());
   }
 
   consumeInterruptFlag(): boolean {
-    const was = this._wasInterruptedByNewMessage;
-    this._wasInterruptedByNewMessage = false;
-    if (was) this.stopRequested = false;
-    return was;
+    const result = consumeInterruptFlagTransition(this.getRuntimeState());
+    this.applyRuntimeState(result.nextState);
+    return result.wasInterrupted;
   }
 
   markInterrupt(): void {
-    this._wasInterruptedByNewMessage = true;
+    this.applyRuntimeState(markInterruptFlag(this.getRuntimeState()));
   }
 
   clearStopRequested(): void {
-    this.stopRequested = false;
+    this.applyRuntimeState(clearStopRequestedTransition(this.getRuntimeState()));
   }
 
   get isInterrupting(): boolean {
@@ -469,16 +506,17 @@ export class ClaudeSession {
   }
 
   startInterrupt(): boolean {
-    if (this._isInterrupting) {
+    const result = beginInterruptTransition(this.getRuntimeState());
+    this.applyRuntimeState(result.nextState);
+    if (!result.started) {
       console.log("[INTERRUPT] Already interrupting, ignoring duplicate");
       return false;
     }
-    this._isInterrupting = true;
     return true;
   }
 
   endInterrupt(): void {
-    this._isInterrupting = false;
+    this.applyRuntimeState(endInterruptTransition(this.getRuntimeState()));
   }
 
   clearWarning70(): void {
@@ -666,20 +704,20 @@ export class ClaudeSession {
   }
 
   startProcessing(): () => void {
-    this._queryState = "preparing";
+    this.applyRuntimeState(startProcessingTransition(this.getRuntimeState()));
     const PROCESSING_TIMEOUT_MS = 300_000;
     let released = false;
     const timer = setTimeout(() => {
       if (!released && this.isProcessing) {
         console.error(`[STUCK] isProcessing stuck for ${PROCESSING_TIMEOUT_MS / 1000}s, auto-releasing`);
-        this._queryState = "idle";
+        this.applyRuntimeState(stopProcessingTransition(this.getRuntimeState()));
       }
     }, PROCESSING_TIMEOUT_MS);
     return () => {
       released = true;
       clearTimeout(timer);
       const prevState = this._queryState;
-      this._queryState = "idle";
+      this.applyRuntimeState(stopProcessingTransition(this.getRuntimeState()));
       console.log(`[PROCESSING] stopProcessing() called: ${prevState} → idle, steering=${this.steeringBuffer.length}`);
       if (this.steeringBuffer.length) {
         console.log(
@@ -697,8 +735,9 @@ export class ClaudeSession {
 
   async stop(): Promise<"stopped" | "pending" | false> {
     if (this._queryState === "running" && this.abortController) {
-      this.stopRequested = true;
-      this._queryState = "aborting";
+      this.applyRuntimeState(
+        requestStopDuringRunningTransition(this.getRuntimeState())
+      );
       this.abortController.abort();
       console.log("Stop requested - aborting current query");
 
@@ -718,7 +757,9 @@ export class ClaudeSession {
     }
 
     if (this._queryState === "preparing") {
-      this.stopRequested = true;
+      this.applyRuntimeState(
+        requestStopDuringPreparingTransition(this.getRuntimeState())
+      );
       console.log("Stop requested - will cancel before query starts");
       return "pending";
     }
@@ -849,14 +890,13 @@ export class ClaudeSession {
 
     if (this.stopRequested) {
       console.log("Query cancelled before starting");
-      this.stopRequested = false;
+      this.applyRuntimeState(clearStopRequestedTransition(this.getRuntimeState()));
       throw new Error("Query cancelled");
     }
 
     this.abortController = new AbortController();
-    this._queryState = "running";
+    this.applyRuntimeState(startQueryTransition(this.getRuntimeState()));
     this.setActivityState("working");
-    this.stopRequested = false;
     this.queryStarted = new Date();
     const queryStartedMs = this.queryStarted.getTime();
     this.currentTool = null;
@@ -1207,7 +1247,7 @@ export class ClaudeSession {
       // Set completing state to prevent race condition with new messages
       // Messages sent during completion will still be treated as steering
       // Note: For errors that throw, idle is set below
-      this._queryState = "completing";
+      this.applyRuntimeState(completeQueryTransition(this.getRuntimeState()));
       if (this._activityState !== "idle") {
         this.setActivityState("idle");
       }
@@ -1302,17 +1342,19 @@ export class ClaudeSession {
     }
 
     // Only now set idle - all post-processing complete
-    this._queryState = "idle";
+    this.applyRuntimeState(finalizeQueryTransition(this.getRuntimeState()));
     return fullResponse;
   }
 
   async kill(): Promise<KillResult> {
     // Increment generation to invalidate any in-flight queries
-    this._generation++;
+    this.applyRuntimeState(incrementGenerationTransition(this.getRuntimeState()));
     console.log(`[KILL] Generation incremented to ${this._generation}`);
 
     // Block any pending tools via preToolUseHook
-    this.stopRequested = true;
+    this.applyRuntimeState(
+      requestStopDuringPreparingTransition(this.getRuntimeState())
+    );
 
     // Abort any in-flight query
     if (this.abortController) {
@@ -1328,7 +1370,7 @@ export class ClaudeSession {
       );
     }
 
-    this._queryState = "idle";
+    this.applyRuntimeState(finalizeQueryTransition(this.getRuntimeState()));
     this.sessionId = null;
     this.lastActivity = null;
     this.sessionStartTime = null;
