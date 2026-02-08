@@ -10,16 +10,18 @@ import { resolve } from "path";
 import { parse as parseYaml } from "yaml";
 import type { Api } from "grammy";
 import { WORKING_DIR, ALLOWED_USERS } from "./config";
-import { session } from "./session";
 import { escapeHtml } from "./formatting";
 import { isPathAllowed } from "./security";
-import type { CronConfig, CronSchedule } from "./types";
+import type { CronConfig, CronSchedule, StatusCallback } from "./types";
 import { getModelForContext, MODEL_DISPLAY_NAMES } from "./model-config";
+import { buildSchedulerRoute } from "./scheduler/route";
+import { getSchedulerRuntime } from "./scheduler/runtime-boundary";
 
 const CRON_CONFIG_PATH = resolve(WORKING_DIR, "cron.yaml");
 const MAX_PROMPT_LENGTH = 10000;
 const MAX_JOBS_PER_HOUR = 60;
 const MAX_PENDING_QUEUE_SIZE = 100;
+const QUEUE_DRAIN_INTERVAL_MS = 2000;
 
 const activeJobs: Map<string, Cron> = new Map();
 let botApi: Api | null = null;
@@ -30,9 +32,30 @@ const pendingCronJobs: Array<{ schedule: CronSchedule; timestamp: number }> = []
 // File watcher state
 let fileWatcher: Timer | null = null;
 let lastModifiedTime: number | null = null;
+let queueDrainTimer: Timer | null = null;
 
 export function initScheduler(api: Api): void {
   botApi = api;
+}
+
+function startQueueDrainTimer(): void {
+  if (queueDrainTimer) {
+    return;
+  }
+
+  queueDrainTimer = setInterval(() => {
+    processQueuedJobs().catch((error) => {
+      console.error("[CRON] Queue drain failed:", error);
+    });
+  }, QUEUE_DRAIN_INTERVAL_MS);
+}
+
+function stopQueueDrainTimer(): void {
+  if (!queueDrainTimer) {
+    return;
+  }
+  clearInterval(queueDrainTimer);
+  queueDrainTimer = null;
 }
 
 function validateCronConfig(config: unknown): config is CronConfig {
@@ -101,11 +124,12 @@ function checkRateLimit(): boolean {
 async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
   const { name, prompt, notify } = schedule;
   const cronModel = getModelForContext("cron");
+  const runtime = getSchedulerRuntime();
   console.log(
     `[CRON] Executing scheduled job: ${name} (model: ${MODEL_DISPLAY_NAMES[cronModel]})`
   );
 
-  if (cronExecutionLock || session.isRunning) {
+  if (cronExecutionLock || runtime.isBusy()) {
     if (pendingCronJobs.length >= MAX_PENDING_QUEUE_SIZE) {
       console.warn(
         `[CRON] Queue full (${MAX_PENDING_QUEUE_SIZE}), dropping oldest job`
@@ -114,6 +138,7 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
     }
     console.log(`[CRON] Session busy - queuing job: ${name}`);
     pendingCronJobs.push({ schedule, timestamp: Date.now() });
+    startQueueDrainTimer();
     return;
   }
 
@@ -126,10 +151,10 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
   jobExecutions.push(Date.now());
 
   try {
-    const statusCallback = async (
-      type: "thinking" | "tool" | "text" | "segment_end" | "done" | "steering_pending" | "system",
-      content: string,
-      _segmentId?: number
+    const statusCallback: StatusCallback = async (
+      type,
+      content,
+      _segmentId
     ) => {
       if (type === "tool") {
         console.log(`[CRON:${name}] Tool: ${content}`);
@@ -137,15 +162,14 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
     };
 
     const userId = ALLOWED_USERS[0] || 0;
-    const result = await session.sendMessageStreaming(
+    const route = buildSchedulerRoute(name);
+    const result = await runtime.execute({
       prompt,
-      `cron:${name}`,
+      sessionKey: route.sessionKey as string,
       userId,
       statusCallback,
-      undefined, // chatId
-      undefined, // ctx
-      "cron" // modelContext - uses cron model from config
-    );
+      modelContext: "cron",
+    });
 
     console.log(`[CRON] Job ${name} completed`);
     console.log(
@@ -187,6 +211,14 @@ async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
     }
   } finally {
     cronExecutionLock = false;
+    if (pendingCronJobs.length > 0) {
+      processQueuedJobs().catch((error) =>
+        console.error("[CRON] Failed to process queued jobs:", error)
+      );
+      startQueueDrainTimer();
+    } else {
+      stopQueueDrainTimer();
+    }
   }
 }
 
@@ -275,16 +307,17 @@ export function startScheduler(): void {
 }
 
 export function stopScheduler(): void {
-  if (activeJobs.size === 0) return;
-
-  console.log(`[CRON] Stopping ${activeJobs.size} jobs`);
-  for (const [, job] of activeJobs) {
-    job.stop();
+  if (activeJobs.size > 0) {
+    console.log(`[CRON] Stopping ${activeJobs.size} jobs`);
+    for (const [, job] of activeJobs) {
+      job.stop();
+    }
+    activeJobs.clear();
   }
-  activeJobs.clear();
 
   // Stop file watcher
   stopFileWatcher();
+  stopQueueDrainTimer();
 }
 
 export function reloadScheduler(): number {
@@ -336,10 +369,12 @@ export function getSchedulerStatus(): string {
 
 export async function processQueuedJobs(): Promise<void> {
   if (pendingCronJobs.length === 0) {
+    stopQueueDrainTimer();
     return;
   }
 
-  if (session.isRunning || cronExecutionLock) {
+  if (cronExecutionLock || getSchedulerRuntime().isBusy()) {
+    startQueueDrainTimer();
     return;
   }
 
@@ -353,5 +388,10 @@ export async function processQueuedJobs(): Promise<void> {
 
   if (pendingCronJobs.length > 0) {
     console.log(`[CRON] ${pendingCronJobs.length} jobs remaining in queue`);
+    startQueueDrainTimer();
+  } else {
+    stopQueueDrainTimer();
   }
 }
+
+export { configureSchedulerRuntime } from "./scheduler/runtime-boundary";

@@ -41,7 +41,13 @@ import {
   handleDocument,
   handleCallback,
 } from "./handlers";
-import { initScheduler, startScheduler, stopScheduler } from "./scheduler";
+import {
+  configureSchedulerRuntime,
+  initScheduler,
+  startScheduler,
+  stopScheduler,
+} from "./scheduler";
+import { session } from "./session";
 import { sessionManager } from "./session-manager";
 import { escapeHtml } from "./formatting";
 import { PendingFormStore } from "./stores/pending-form-store";
@@ -200,6 +206,25 @@ if (botInfo.username) {
 // Load any persisted sessions (lazy - loaded on demand by sessionManager)
 
 // Initialize and start cron scheduler
+configureSchedulerRuntime({
+  isBusy: () => session.isRunning,
+  execute: async ({
+    prompt,
+    sessionKey,
+    userId,
+    statusCallback,
+    modelContext,
+  }) =>
+    session.sendMessageStreaming(
+      prompt,
+      sessionKey,
+      userId,
+      statusCallback,
+      undefined,
+      undefined,
+      modelContext
+    ),
+});
 initScheduler(bot.api);
 startScheduler();
 

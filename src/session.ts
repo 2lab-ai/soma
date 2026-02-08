@@ -23,7 +23,6 @@ import {
   type ModelId,
 } from "./model-config";
 import { formatToolStatus } from "./formatting";
-import { processQueuedJobs } from "./scheduler";
 import { checkCommandSafety, isPathAllowed } from "./security";
 import {
   beginInterruptTransition,
@@ -251,10 +250,11 @@ export class ClaudeSession {
 
   constructor(
     sessionKey = "default",
-    chatCaptureService: ChatCaptureService | null = null
+    chatCaptureService: ChatCaptureService | null = null,
+    options?: { workingDir?: string }
   ) {
     this.sessionKey = sessionKey;
-    this.workingDir = WORKING_DIR;
+    this.workingDir = options?.workingDir || WORKING_DIR;
     this.chatCaptureService = chatCaptureService;
   }
 
@@ -1293,9 +1293,6 @@ export class ClaudeSession {
     }
 
     await statusCallback("done", "", undefined, metadata);
-    processQueuedJobs().catch((err) =>
-      console.error("[CRON] Failed to process queued jobs:", err)
-    );
 
     // Check for unconsumed steering (text-only response didn't trigger PreToolUse)
     const hasSteeringAtEnd = this.hasSteeringMessages();
