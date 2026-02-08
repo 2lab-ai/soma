@@ -947,6 +947,19 @@ export class ClaudeSession {
           }
         }
 
+        if (event.type === "system") {
+          const sysEvent = event as { subtype?: string; compact_metadata?: { trigger: string; pre_tokens: number }; status?: string | null };
+          if (sysEvent.subtype === "compact_boundary") {
+            const trigger = sysEvent.compact_metadata?.trigger ?? "unknown";
+            const preTokens = sysEvent.compact_metadata?.pre_tokens ?? 0;
+            console.log(`[COMPACT] ${trigger} compact triggered (pre_tokens: ${preTokens})`);
+            await statusCallback("system", `🔄 Context compacting (${trigger}, ${preTokens} tokens)...`);
+          }
+          if (sysEvent.subtype === "status" && sysEvent.status === "compacting") {
+            console.log("[COMPACT] Compaction in progress...");
+          }
+        }
+
         // Capture session_id from first message
         // But only if session wasn't killed mid-query (generation check)
         if (!this.sessionId && event.session_id) {

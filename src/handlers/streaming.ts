@@ -496,6 +496,14 @@ export async function createStatusCallback(
         return;
       }
 
+      if (statusType === "system") {
+        state.stopMcpProgress();
+        const sysMsg = await ctx.reply(`⚡ ${content}`, { parse_mode: "HTML" });
+        state.toolMessages.push(sysMsg);
+        if (PROGRESS_SPINNER_ENABLED) await recreateProgressMessage();
+        return;
+      }
+
       if (statusType === "steering_pending") {
         // User sent messages during execution but Claude responded with text-only
         // Their messages weren't delivered via PreToolUse hook
