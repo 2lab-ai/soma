@@ -1,8 +1,9 @@
-# SOMA v3 OpenClaw Compatibility Blueprint
+# SOMA v3 OpenClaw Compatibility Blueprint (Optional / Deferred)
 
 ## 0. Goal
 - 목적: `openclaw`의 채널/라우팅/아웃바운드/모델 프로바이더 계약과 **이름·필드 수준 호환**을 맞춰, 코드 재사용을 복붙 수준으로 끌어올린다.
 - 비목표: 지금 당장 `soma` + `soma-work` + `openclaw`를 단일 런타임으로 합치는 것.
+- 상태: **메인 v3 리팩토링 범위에서 분리됨 (deferred track)**.
 
 ---
 

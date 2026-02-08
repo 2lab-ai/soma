@@ -13,7 +13,7 @@
    - User(s) -> Abstraction A (Channel Boundary) -> soma/soul Core
    - soma/soul Core -> Abstraction B (Provider Boundary) -> Model Providers
 3. `soma-work`는 지금 병합하지 않고, Slack + 멀티테넌트 최소 지원이 가능한 계약으로 설계한다.
-4. OpenClaw 계약명/필드명과 최대한 동일하게 맞춰 복사 호환(copy-compatible) 수준을 목표로 한다.
+4. OpenClaw 호환은 **메인 리팩토링 범위에서 분리**하며, 별도 옵션 트랙으로만 관리한다.
 5. 마이그레이션은 Big-bang으로 진행하며 dual-path를 두지 않는다. (`M-01=B`, `M-04=A`)
 
 ---
@@ -115,16 +115,11 @@ flowchart LR
   - provider별 retry/backoff는 orchestrator에서 라우팅
   - usage는 normalized DTO로만 core에 전달
 
-### 3.3 OpenClaw Compatibility Profile
-- 정렬 대상 계약명:
-  - `ChannelPlugin`
-  - `ChannelOutboundAdapter`
-  - `resolveAgentRoute`
-  - `deliverOutboundPayloads`
-  - `ModelApi`
-- 정렬 대상 필드:
-  - `accountId`, `peer`, `parentPeer`, `teamId`, `guildId`, `sessionKey`, `mainSessionKey`
-- 상세 매핑: `docs/openclaw-compatibility-v3.md`
+### 3.3 Optional Track: OpenClaw Compatibility (Deferred)
+- 메인 v3 실행의 필수 경로가 아니다.
+- 별도 트랙 문서로 분리 관리한다:
+  - `docs/tracks/openclaw-compatibility-v3-optional.md`
+- 본문 execution dependency에는 포함하지 않는다.
 
 ### 3.4 soma-work Compatibility Profile (Non-Merge)
 - 채널 매핑 규칙:
@@ -139,7 +134,7 @@ flowchart LR
 
 ## 4. Execution Plan (Big-bang)
 1. Decision freeze 적용 (완료)
-2. OpenClaw 호환 계약 스켈레톤 생성
+2. Core 계약 스켈레톤 생성 (Channel/Provider/Route/Identity)
 3. Provider boundary 구현 (Claude+Codex) — `M-02=C`
 4. Channel boundary 구현 (Telegram 우선 + Slack skeleton)
 5. Outbound orchestrator 중앙화
@@ -153,7 +148,64 @@ flowchart LR
 
 ---
 
-## 5. Test Reset Plan (Applied)
+## 5. Execution Epics Graph (Multi-Team)
+
+메인 실행 에픽(`agi-vbj` 하위):
+- `agi-vbj.4` v3-exec-1: core contracts foundation
+- `agi-vbj.5` v3-exec-1b: domain/session-core extraction
+- `agi-vbj.6` v3-exec-2: provider boundary
+- `agi-vbj.7` v3-exec-3: telegram channel boundary
+- `agi-vbj.8` v3-exec-4: slack skeleton + tenant boundary
+- `agi-vbj.9` v3-exec-5: outbound orchestration + unified output port
+- `agi-vbj.10` v3-exec-6: storage/scheduler partition refactor
+- `agi-vbj.11` v3-exec-7: full test rewrite + quality gates
+- `agi-vbj.12` v3-exec-8: cutover cleanup + legacy deprecation
+
+옵션 트랙:
+- `agi-vbj.13` v3-track-x: optional openclaw compatibility (deferred, non-blocking)
+
+```mermaid
+flowchart LR
+  E1["agi-vbj.4 Core Contracts"]
+  E2["agi-vbj.5 Domain Session Core"]
+  E3["agi-vbj.6 Provider Boundary"]
+  E4["agi-vbj.7 Telegram Boundary"]
+  E5["agi-vbj.8 Slack Skeleton"]
+  E6["agi-vbj.10 Storage Scheduler Partition"]
+  E7["agi-vbj.9 Outbound Orchestrator"]
+  E8["agi-vbj.11 Test Rewrite + Gates"]
+  E9["agi-vbj.12 Cutover Cleanup"]
+  X["agi-vbj.13 OpenClaw Optional Track"]
+
+  E1 --> E2
+  E1 --> E3
+  E1 --> E4
+  E1 --> E5
+  E1 --> E6
+  E3 --> E7
+  E4 --> E7
+  E5 --> E7
+  E2 --> E8
+  E3 --> E8
+  E4 --> E8
+  E5 --> E8
+  E6 --> E8
+  E7 --> E8
+  E8 --> E9
+```
+
+병렬 실행 가이드:
+- Lane A: `agi-vbj.6` (Provider)
+- Lane B: `agi-vbj.7` (Telegram)
+- Lane C: `agi-vbj.8` (Slack skeleton)
+- Lane D: `agi-vbj.10` (Storage/Scheduler)
+- 공통 선행: `agi-vbj.4`
+- 통합 병목: `agi-vbj.9` -> `agi-vbj.11` -> `agi-vbj.12`
+- `agi-vbj.13`은 메인 경로와 독립 실행
+
+---
+
+## 6. Test Reset Plan (Applied)
 
 ### 5.1 Reset
 - 레포 전체 테스트 파일 삭제
@@ -171,7 +223,7 @@ flowchart LR
 
 ---
 
-## 6. Directory Plan (TO-BE)
+## 7. Directory Plan (TO-BE)
 
 ```text
 src/
@@ -204,7 +256,7 @@ src/
 
 ---
 
-## 7. Legacy Plan Handling
+## 8. Legacy Plan Handling
 - 아래 2개 계획은 v3에 의해 superseded 상태로 유지한다.
   - v2 Hexagonal plan (`soma-zl7u`)
   - message-processing refactor (`soma-701o`)
@@ -212,7 +264,7 @@ src/
 
 ---
 
-## 8. References
+## 9. References
 - 결정 소스: `docs/ADR.md`
-- 호환 설계: `docs/openclaw-compatibility-v3.md`
-- Clarify 상세 기록: `docs/clairfy/INDEX.md`
+- OpenClaw 옵션 트랙: `docs/tracks/openclaw-compatibility-v3-optional.md`
+- Clarify 상세 기록(archive): `docs/archive/refactor-pre-adr-2026-02/clairfy/INDEX.md`
