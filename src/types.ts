@@ -27,7 +27,7 @@ export interface QueryMetadata {
 
 // Status callback for streaming updates
 export type StatusCallback = (
-  type: "thinking" | "tool" | "text" | "segment_end" | "done" | "steering_pending",
+  type: "thinking" | "tool" | "text" | "segment_end" | "done" | "steering_pending" | "system",
   content: string,
   segmentId?: number,
   metadata?: QueryMetadata & { steeringCount?: number }
