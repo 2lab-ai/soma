@@ -34,6 +34,10 @@ import { MODEL_DISPLAY_NAMES } from "../model-config";
 import type { ClaudeSession } from "../session";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import { Reactions } from "../constants/reactions";
+import {
+  applyChoiceSelection,
+  ChoiceTransitionError,
+} from "../core/session/choice-flow";
 
 const DIRECT_INPUT_EXPIRY_MS = 5 * 60 * 1000;
 
@@ -127,56 +131,40 @@ async function handleMultiFormInput(
   directInput: NonNullable<ClaudeSession["pendingDirectInput"]>,
   message: string
 ): Promise<MultiFormResult> {
-  if (!session.choiceState || !directInput.questionId) {
+  if (!directInput.questionId) {
     await sendSystemMessage(ctx, "⚠️ Form expired. Please ask again.");
     return { complete: false, selectedLabel: "" };
   }
 
-  const choices = session.choiceState.extractedChoices;
-  if (!choices) {
-    await sendSystemMessage(ctx, "⚠️ Form data not found.");
-    return { complete: false, selectedLabel: "" };
+  try {
+    const transition = applyChoiceSelection(session.choiceState, {
+      mode: "multi_direct_input",
+      questionId: directInput.questionId,
+      label: message,
+    });
+
+    if (transition.status === "pending") {
+      session.choiceState = transition.nextChoiceState;
+      await editMessageSilently(
+        ctx,
+        chatId,
+        directInput.messageId,
+        `✓ ${message.slice(0, 100)}`
+      );
+      await ctx.reply("👌 Answer recorded. Continue with other questions.");
+      return { complete: false, selectedLabel: "" };
+    }
+
+    session.clearChoiceState();
+    session.setActivityState("working");
+    return { complete: true, selectedLabel: transition.selectedLabel };
+  } catch (error) {
+    if (error instanceof ChoiceTransitionError) {
+      await sendSystemMessage(ctx, "⚠️ Form data expired. Please ask again.");
+      return { complete: false, selectedLabel: "" };
+    }
+    throw error;
   }
-
-  const question = choices.questions.find((q) => q.id === directInput.questionId);
-  if (!question) {
-    await sendSystemMessage(ctx, "⚠️ Invalid question ID.");
-    return { complete: false, selectedLabel: "" };
-  }
-
-  if (!session.choiceState.selections) {
-    session.choiceState.selections = {};
-  }
-  session.choiceState.selections[directInput.questionId] = {
-    choiceId: "__direct__",
-    label: message,
-  };
-
-  const allAnswered =
-    Object.keys(session.choiceState.selections).length === choices.questions.length;
-
-  if (!allAnswered) {
-    await editMessageSilently(
-      ctx,
-      chatId,
-      directInput.messageId,
-      `✓ ${message.slice(0, 100)}`
-    );
-    await ctx.reply("👌 Answer recorded. Continue with other questions.");
-    return { complete: false, selectedLabel: "" };
-  }
-
-  const answers = choices.questions
-    .map((q) => {
-      const sel = session.choiceState?.selections?.[q.id];
-      return sel ? `${q.question}: ${sel.label}` : null;
-    })
-    .filter(Boolean)
-    .join("\n");
-
-  session.clearChoiceState();
-  session.setActivityState("working");
-  return { complete: true, selectedLabel: `Answered all questions:\n${answers}` };
 }
 
 async function sendDirectInputToClaude(
