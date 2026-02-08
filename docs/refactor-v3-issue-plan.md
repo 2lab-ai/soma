@@ -5,6 +5,7 @@
 - OpenClaw는 `soma-vbj.13` (optional/deferred)로 격리되어 메인 경로를 block하지 않는다.
 - 전체 시각화 다이어그램은 `docs/refactor-v3-visualization.md`를 참조한다.
 - 멀티 에이전트 분배용 복붙 런북은 `docs/refactor-v3-agent-assignment.md`를 참조한다.
+- 에이전트별 독립 복붙 문서는 `docs/refactor-v3-agent-prompts/`를 참조한다.
 
 ## 1. Execution Epics
 - `soma-vbj.4` v3-exec-1: core contracts foundation
