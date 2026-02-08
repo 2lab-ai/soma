@@ -8,7 +8,6 @@ import { WORKING_DIR } from "../config";
 import { sendSystemMessage } from "../utils/system-message";
 import {
   type ChatType,
-  isAuthorizedForChat,
   rateLimiter,
   shouldRespond,
 } from "../security";
@@ -38,6 +37,11 @@ import {
   applyChoiceSelection,
   ChoiceTransitionError,
 } from "../core/session/choice-flow";
+import {
+  buildTelegramAgentRoute,
+  createTelegramBoundaryWithContext,
+  isTelegramBoundaryError,
+} from "../adapters/telegram/channel-boundary";
 
 const DIRECT_INPUT_EXPIRY_MS = 5 * 60 * 1000;
 
@@ -234,15 +238,6 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
-  // 1. Authorization check (per-chat)
-  if (!isAuthorizedForChat(userId, chatId, chatType)) {
-    // Only reply in private chats to avoid spam
-    if (chatType === "private") {
-      await ctx.reply("Unauthorized. Contact the bot owner for access.");
-    }
-    return;
-  }
-
   // 1.1. Check if bot should respond (for groups)
   const isReplyToBot = Boolean(
     ctx.message?.reply_to_message?.from?.is_bot &&
@@ -252,11 +247,57 @@ export async function handleText(ctx: Context): Promise<void> {
     return;
   }
 
+  const boundary = createTelegramBoundaryWithContext(ctx);
+  let inbound;
+  try {
+    inbound = boundary.normalizeInbound({
+      ctx,
+      tenantId: "default",
+    });
+  } catch (error) {
+    if (!isTelegramBoundaryError(error)) {
+      throw error;
+    }
+    if (error.code === "CHANNEL_UNAUTHORIZED") {
+      if (chatType === "private") {
+        await ctx.reply("Unauthorized. Contact the bot owner for access.");
+      }
+      return;
+    }
+    if (error.code === "CHANNEL_RATE_LIMITED") {
+      const retryAfter = Number(
+        (error as { metadata?: { retryAfterSeconds?: number } }).metadata
+          ?.retryAfterSeconds ?? 1
+      );
+      await auditLogRateLimit(userId, username, retryAfter);
+      await sendSystemMessage(ctx, `⏳ Rate limited. Please wait ${retryAfter.toFixed(1)} seconds.`);
+      return;
+    }
+
+    // Out-of-order messages are dropped by boundary policy.
+    if (error.code === "CHANNEL_INVALID_PAYLOAD") {
+      return;
+    }
+    throw error;
+  }
+
+  message = inbound.text || message;
+
+  const outboundRoute = buildTelegramAgentRoute(inbound);
+  const deliverInboundReaction = async (reaction: string): Promise<void> => {
+    await boundary.deliverOutbound({
+      type: "reaction",
+      route: outboundRoute,
+      targetMessageId: inbound.identity.messageId,
+      reaction,
+    });
+  };
+
   // 1.5. React to user message to show it's received
   try {
-    await ctx.react(Reactions.READ);
+    await deliverInboundReaction(Reactions.READ);
   } catch (error) {
-    console.debug("Failed to add reaction to user message:", error);
+    console.debug("Failed to add reaction to user message via boundary:", error);
   }
 
   // Get session for this chat/thread
@@ -365,7 +406,7 @@ export async function handleText(ctx: Context): Promise<void> {
         } catch {
           // Fallback to reaction if reply fails
           try {
-            await ctx.react(Reactions.INTERRUPTED);
+            await deliverInboundReaction(Reactions.INTERRUPTED);
           } catch {}
         }
       }
@@ -423,7 +464,7 @@ export async function handleText(ctx: Context): Promise<void> {
           );
           // Final fallback: attempt reaction
           try {
-            await ctx.react(Reactions.ERROR_SOMA);
+            await deliverInboundReaction(Reactions.ERROR_SOMA);
           } catch {}
         }
         return;
@@ -454,7 +495,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
           // Fallback to reaction - eviction means message was received but dropped
           try {
-            await ctx.react(Reactions.CANCELLED);
+            await deliverInboundReaction(Reactions.CANCELLED);
             notified = true;
           } catch (reactError) {
             console.error(
@@ -477,21 +518,13 @@ export async function handleText(ctx: Context): Promise<void> {
           steeringContext
         );
         try {
-          await ctx.react(Reactions.STEERING_BUFFERED);
+          await deliverInboundReaction(Reactions.STEERING_BUFFERED);
         } catch (error) {
           console.debug("Failed to add steering reaction:", error, steeringContext);
         }
       }
       return;
     }
-  }
-
-  // 3. Rate limit check
-  const [allowed, retryAfter] = rateLimiter.check(userId);
-  if (!allowed) {
-    await auditLogRateLimit(userId, username, retryAfter!);
-    await sendSystemMessage(ctx, `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`);
-    return;
   }
 
   // 3.5. Handle pending recovery race condition
@@ -542,7 +575,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
   // 5.5. Update reaction to show processing
   try {
-    await ctx.react(Reactions.PROCESSING);
+    await deliverInboundReaction(Reactions.PROCESSING);
   } catch {
     // Ignore reaction errors
   }
@@ -574,7 +607,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
       // 9.0.3 Update reaction to show complete
       try {
-        await ctx.react(Reactions.COMPLETE);
+        await deliverInboundReaction(Reactions.COMPLETE);
       } catch {
         // Ignore reaction errors
       }
@@ -848,7 +881,9 @@ export async function handleText(ctx: Context): Promise<void> {
               ctx
             );
             await auditLog(userId, username, "TEXT_FALLBACK", message, retryResponse);
-            try { await ctx.react(Reactions.COMPLETE); } catch {}
+            try {
+              await deliverInboundReaction(Reactions.COMPLETE);
+            } catch {}
 
             const fallbackModel = session.temporaryModelOverride;
             const modelName = fallbackModel ? MODEL_DISPLAY_NAMES[fallbackModel] || fallbackModel : "Sonnet";
@@ -896,7 +931,7 @@ export async function handleText(ctx: Context): Promise<void> {
       } else {
         // Add error reaction for model/other errors
         try {
-          await ctx.react(Reactions.ERROR_MODEL);
+          await deliverInboundReaction(Reactions.ERROR_MODEL);
         } catch {
           // Ignore reaction errors
         }
