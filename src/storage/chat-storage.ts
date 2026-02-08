@@ -1,12 +1,15 @@
 /**
  * File-based chat storage using daily NDJSON files
  *
- * Format: data/chats/YYYY-MM-DD.ndjson
+ * Format:
+ *   data/chats/{tenant}/{channel}/{thread}/YYYY-MM-DD.ndjson
+ * Legacy (read-only compatibility):
+ *   data/chats/YYYY-MM-DD.ndjson
  * Each line is a JSON-serialized ChatRecord
  */
 
-import { readFile, writeFile, appendFile, mkdir, readdir } from "fs/promises";
-import { join, resolve } from "path";
+import { appendFile, mkdir, readdir, readFile } from "fs/promises";
+import { basename, dirname, join, resolve } from "path";
 import { existsSync } from "fs";
 import type {
   ChatRecord,
@@ -14,6 +17,10 @@ import type {
   IChatStorage,
   ChatSearchOptions,
 } from "../types/chat-history";
+import { buildStoragePartitionKey, parseSessionKey } from "../routing/session-key";
+
+const LEGACY_PARTITION_KEY = "legacy/default/main";
+const DATE_FILE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})\.ndjson$/;
 
 export class FileChatStorage implements IChatStorage {
   private dataDir: string;
@@ -29,11 +36,31 @@ export class FileChatStorage implements IChatStorage {
     await mkdir(resolve(this.dataDir, ".."), { recursive: true });
   }
 
-  private getFilePath(date: Date): string {
+  private getPartitionDir(partitionKey: string): string {
+    return join(this.dataDir, ...partitionKey.split("/"));
+  }
+
+  private resolvePartitionKey(sessionId: string): string {
+    try {
+      return buildStoragePartitionKey(parseSessionKey(sessionId)) as string;
+    } catch {
+      return LEGACY_PARTITION_KEY;
+    }
+  }
+
+  private tryResolvePartitionKey(sessionId: string): string | null {
+    try {
+      return buildStoragePartitionKey(parseSessionKey(sessionId)) as string;
+    } catch {
+      return null;
+    }
+  }
+
+  private getFilePath(partitionKey: string, date: Date): string {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const day = String(date.getDate()).padStart(2, "0");
-    return join(this.dataDir, `${year}-${month}-${day}.ndjson`);
+    return join(this.getPartitionDir(partitionKey), `${year}-${month}-${day}.ndjson`);
   }
 
   async saveChat(record: ChatRecord): Promise<void> {
@@ -45,12 +72,13 @@ export class FileChatStorage implements IChatStorage {
 
     await this.init();
 
-    // Group by date
+    // Group by partition/date
     const byDate = new Map<string, ChatRecord[]>();
 
     for (const record of records) {
+      const partitionKey = this.resolvePartitionKey(record.sessionId);
       const date = new Date(record.timestamp);
-      const filePath = this.getFilePath(date);
+      const filePath = this.getFilePath(partitionKey, date);
 
       if (!byDate.has(filePath)) {
         byDate.set(filePath, []);
@@ -60,21 +88,32 @@ export class FileChatStorage implements IChatStorage {
 
     // Atomic append to each file
     for (const [filePath, fileRecords] of byDate.entries()) {
+      await mkdir(dirname(filePath), { recursive: true });
       const lines = fileRecords.map((r) => JSON.stringify(r)).join("\n") + "\n";
       await appendFile(filePath, lines, "utf-8");
     }
   }
 
   async search(options: ChatSearchOptions): Promise<ChatRecord[]> {
-    const { from, to, query, sessionId, speaker, limit = 100, offset = 0 } = options;
+    const {
+      from,
+      to,
+      query,
+      sessionId,
+      speaker,
+      storagePartitionKey,
+      limit = 100,
+      offset = 0,
+    } = options;
 
     await this.init();
 
     const records: ChatRecord[] = [];
-    const files = await this.getFilesInRange(from, to);
+    const partitionKey =
+      storagePartitionKey ?? (sessionId ? this.tryResolvePartitionKey(sessionId) : null);
+    const files = await this.getFilesInRange(from, to, partitionKey);
 
-    for (const file of files) {
-      const filePath = join(this.dataDir, file);
+    for (const filePath of files) {
       if (!existsSync(filePath)) continue;
 
       const content = await readFile(filePath, "utf-8");
@@ -96,7 +135,7 @@ export class FileChatStorage implements IChatStorage {
 
           records.push(record);
         } catch (e) {
-          console.warn(`[ChatStorage] Failed to parse record in ${file}:`, e);
+          console.warn(`[ChatStorage] Failed to parse record in ${filePath}:`, e);
         }
       }
     }
@@ -162,29 +201,82 @@ export class FileChatStorage implements IChatStorage {
     return null;
   }
 
-  private async getFilesInRange(from: Date, to: Date): Promise<string[]> {
+  private async listNdjsonFilesRecursive(dir: string): Promise<string[]> {
+    if (!existsSync(dir)) {
+      return [];
+    }
+
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files: string[] = [];
+
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...(await this.listNdjsonFilesRecursive(fullPath)));
+      } else if (entry.isFile() && entry.name.endsWith(".ndjson")) {
+        files.push(fullPath);
+      }
+    }
+
+    return files;
+  }
+
+  private isDateFileInRange(filePath: string, from: Date, to: Date): boolean {
+    const filename = basename(filePath);
+    const match = filename.match(DATE_FILE_PATTERN);
+    if (!match) return false;
+
+    const year = match[1];
+    const month = match[2];
+    const day = match[3];
+    if (!year || !month || !day) return false;
+
+    const fileDate = new Date(Number(year), Number(month) - 1, Number(day));
+    return fileDate >= from && fileDate <= to;
+  }
+
+  private async getFilesInRange(
+    from: Date,
+    to: Date,
+    partitionKey?: string | null
+  ): Promise<string[]> {
     if (!existsSync(this.dataDir)) {
       return [];
     }
 
-    const allFiles = await readdir(this.dataDir);
-    const ndjsonFiles = allFiles.filter((f) => f.endsWith(".ndjson"));
+    const roots = partitionKey ? [this.getPartitionDir(partitionKey)] : [this.dataDir];
 
     // Normalize dates to day boundaries
     const fromDay = new Date(from.getFullYear(), from.getMonth(), from.getDate());
     const toDay = new Date(to.getFullYear(), to.getMonth(), to.getDate());
 
-    return ndjsonFiles.filter((file) => {
-      const match = file.match(/^(\d{4})-(\d{2})-(\d{2})\.ndjson$/);
-      if (!match) return false;
+    const files: string[] = [];
+    for (const root of roots) {
+      const ndjsonFiles = await this.listNdjsonFilesRecursive(root);
+      for (const filePath of ndjsonFiles) {
+        if (this.isDateFileInRange(filePath, fromDay, toDay)) {
+          files.push(filePath);
+        }
+      }
+    }
 
-      const year = match[1];
-      const month = match[2];
-      const day = match[3];
-      if (!year || !month || !day) return false;
-      const fileDate = new Date(Number(year), Number(month) - 1, Number(day));
+    // Migration-safe: when searching in a specific partition, also include legacy flat files.
+    if (partitionKey) {
+      const topLevelEntries = await readdir(this.dataDir, { withFileTypes: true });
+      for (const entry of topLevelEntries) {
+        if (!entry.isFile()) {
+          continue;
+        }
+        if (!entry.name.endsWith(".ndjson")) {
+          continue;
+        }
+        const filePath = join(this.dataDir, entry.name);
+        if (this.isDateFileInRange(filePath, fromDay, toDay)) {
+          files.push(filePath);
+        }
+      }
+    }
 
-      return fileDate >= fromDay && fileDate <= toDay;
-    });
+    return Array.from(new Set(files));
   }
 }

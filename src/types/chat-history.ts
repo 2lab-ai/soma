@@ -41,6 +41,7 @@ export interface ChatSearchOptions {
   to: Date;
   query?: string;
   sessionId?: string;
+  storagePartitionKey?: string;
   speaker?: ChatRecord["speaker"];
   limit?: number;
   offset?: number;

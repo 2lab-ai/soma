@@ -1,21 +1,37 @@
 /**
  * Multi-session manager for Claude Telegram Bot.
  *
- * Manages multiple ClaudeSession instances keyed by chatId or chatId:threadId.
+ * Manages multiple ClaudeSession instances keyed by tenant:channel:thread.
  * Supports TTL-based expiration and LRU eviction.
  */
 
-import { existsSync, mkdirSync, readdirSync, unlinkSync, readFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  unlinkSync,
+  readFileSync,
+  symlinkSync,
+} from "fs";
 import { ClaudeSession } from "./session";
 import type { KillResult, SessionData } from "./types";
 import { ChatCaptureService } from "./services/chat-capture-service";
 import { FileChatStorage } from "./storage/chat-storage";
-import { CHAT_HISTORY_ENABLED, CHAT_HISTORY_DATA_DIR } from "./config";
+import { CHAT_HISTORY_ENABLED, CHAT_HISTORY_DATA_DIR, WORKING_DIR } from "./config";
+import {
+  buildSessionKey,
+  buildStoragePartitionKey,
+  createSessionIdentity,
+  parseSessionKey,
+} from "./routing/session-key";
 
 const SESSIONS_DIR = "/tmp/soma-sessions";
+const THREAD_WORKDIRS_DIR = "/tmp/soma-thread-workdirs";
 const LEGACY_SESSION_FILE = "/tmp/soma-session.json";
 const MAX_SESSIONS = 100;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DEFAULT_TENANT_ID = "default";
+const TELEGRAM_MAIN_THREAD_ID = 1;
 
 export interface SessionKey {
   chatId: number;
@@ -53,31 +69,39 @@ class SessionManager {
   }
 
   /**
-   * Derive session key from chatId and optional threadId.
-   * Format: "{chatId}" or "{chatId}:{threadId}"
+   * Derive canonical session key from chat/thread identity.
+   * Format: "tenant:channel:thread"
    */
   deriveKey(chatId: number, threadId?: number): string {
-    if (threadId && threadId !== 1) {
-      // threadId 1 is "General" topic, treat as main chat
-      return `${chatId}:${threadId}`;
-    }
-    return String(chatId);
+    return this.buildRoute(chatId, threadId).sessionKey;
   }
 
   /**
    * Get or create a session for the given chat/thread.
    */
   getSession(chatId: number, threadId?: number): ClaudeSession {
-    const key = this.deriveKey(chatId, threadId);
+    const route = this.buildRoute(chatId, threadId);
+    const key = route.sessionKey;
 
     if (!this.sessions.has(key)) {
-      const session = new ClaudeSession(key, this.chatCaptureService);
+      const session = new ClaudeSession(key, this.chatCaptureService, {
+        workingDir: this.getThreadWorkingDir(route.storagePartitionKey),
+      });
       this.sessions.set(key, session);
 
-      // Try to load persisted session
-      const loaded = this.loadSession(key);
+      // Try to load persisted session (new key first, then legacy key)
+      let loaded = this.loadSession(key);
+      const legacyKey = this.deriveLegacyKey(chatId, threadId);
+      const loadedFromLegacy = !loaded && legacyKey !== key;
+      if (!loaded && loadedFromLegacy) {
+        loaded = this.loadSession(legacyKey);
+      }
+
       if (loaded) {
         session.restoreFromData(loaded);
+        if (loadedFromLegacy && !this.sessionFileExists(key)) {
+          this.saveSession(key, session);
+        }
         console.log(`[SessionManager] Loaded session for ${key}`);
       } else {
         console.log(`[SessionManager] Created new session for ${key}`);
@@ -92,7 +116,12 @@ class SessionManager {
    */
   hasSession(chatId: number, threadId?: number): boolean {
     const key = this.deriveKey(chatId, threadId);
-    return this.sessions.has(key) || this.sessionFileExists(key);
+    const legacyKey = this.deriveLegacyKey(chatId, threadId);
+    return (
+      this.sessions.has(key) ||
+      this.sessionFileExists(key) ||
+      this.sessionFileExists(legacyKey)
+    );
   }
 
   /**
@@ -101,6 +130,7 @@ class SessionManager {
    */
   async killSession(chatId: number, threadId?: number): Promise<KillResult> {
     const key = this.deriveKey(chatId, threadId);
+    const legacyKey = this.deriveLegacyKey(chatId, threadId);
     const session = this.sessions.get(key);
 
     let result: KillResult = { count: 0, messages: [] };
@@ -110,9 +140,14 @@ class SessionManager {
     }
 
     // Delete persisted file
-    const filePath = this.getSessionFilePath(key);
-    if (existsSync(filePath)) {
-      unlinkSync(filePath);
+    const persistedPaths = [
+      this.getSessionFilePath(key),
+      this.getSessionFilePath(legacyKey),
+    ];
+    for (const filePath of persistedPaths) {
+      if (existsSync(filePath)) {
+        unlinkSync(filePath);
+      }
     }
 
     console.log(`[SessionManager] Killed session for ${key}, lost ${result.count} messages`);
@@ -205,11 +240,13 @@ class SessionManager {
     let loadedCount = 0;
 
     for (const file of files) {
-      const key = file.replace(".json", "");
+      const key = file.replace(".json", "").replace(/_/g, ":");
       const data = this.loadSession(key);
 
       if (data) {
-        const session = new ClaudeSession(key);
+        const session = new ClaudeSession(key, this.chatCaptureService, {
+          workingDir: this.getThreadWorkingDirFromSessionKey(key),
+        });
         session.restoreFromData(data);
         this.sessions.set(key, session);
         loadedCount++;
@@ -282,12 +319,69 @@ class SessionManager {
     if (!existsSync(SESSIONS_DIR)) {
       mkdirSync(SESSIONS_DIR, { recursive: true });
     }
+    if (!existsSync(THREAD_WORKDIRS_DIR)) {
+      mkdirSync(THREAD_WORKDIRS_DIR, { recursive: true });
+    }
   }
 
   private getSessionFilePath(key: string): string {
     // Sanitize key for filename (replace : with _)
     const safeKey = key.replace(/:/g, "_");
     return `${SESSIONS_DIR}/${safeKey}.json`;
+  }
+
+  private getThreadWorkingDir(storagePartitionKey: string): string {
+    const aliasName = storagePartitionKey.replace(/\//g, "__");
+    const aliasPath = `${THREAD_WORKDIRS_DIR}/${aliasName}`;
+    if (existsSync(aliasPath)) {
+      return aliasPath;
+    }
+
+    try {
+      symlinkSync(WORKING_DIR, aliasPath, "dir");
+      return aliasPath;
+    } catch (error) {
+      console.warn(`[SessionManager] Failed to create thread workdir for ${aliasName}: ${error}`);
+      return WORKING_DIR;
+    }
+  }
+
+  private getThreadWorkingDirFromSessionKey(key: string): string {
+    try {
+      const identity = parseSessionKey(key);
+      return this.getThreadWorkingDir(buildStoragePartitionKey(identity) as string);
+    } catch {
+      return WORKING_DIR;
+    }
+  }
+
+  private toThreadIdentity(threadId?: number): string {
+    if (!threadId || threadId === TELEGRAM_MAIN_THREAD_ID) {
+      return "main";
+    }
+    return String(threadId);
+  }
+
+  private deriveLegacyKey(chatId: number, threadId?: number): string {
+    if (threadId && threadId !== TELEGRAM_MAIN_THREAD_ID) {
+      return `${chatId}:${threadId}`;
+    }
+    return String(chatId);
+  }
+
+  private buildRoute(
+    chatId: number,
+    threadId?: number
+  ): { sessionKey: string; storagePartitionKey: string } {
+    const identity = createSessionIdentity({
+      tenantId: DEFAULT_TENANT_ID,
+      channelId: String(chatId),
+      threadId: this.toThreadIdentity(threadId),
+    });
+    return {
+      sessionKey: buildSessionKey(identity) as string,
+      storagePartitionKey: buildStoragePartitionKey(identity) as string,
+    };
   }
 
   private sessionFileExists(key: string): boolean {
@@ -365,7 +459,7 @@ class SessionManager {
       if (!data.session_id) return false;
 
       // Save to new location
-      const key = String(chatId);
+      const key = this.deriveKey(chatId);
       const newPath = this.getSessionFilePath(key);
 
       Bun.write(newPath, text);
