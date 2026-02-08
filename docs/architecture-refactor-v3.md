@@ -16,6 +16,7 @@
    - soma/soul -> (Abstraction B) -> Model Provider
 3. 불명확한 설계 포인트는 사용자에게 먼저 질문하고, 답변 기반으로만 확정한다.
 4. `../soma-work`와 **지금 당장 병합하지 않는다**. 다만 v3는 최소한의 Slack 채널 + 유저 멀티테넌트 지원을 고려한 형태로 설계한다.
+5. `openclaw`와 **소스 레벨 복사 호환(copy-compatible)** 을 목표로, 채널/라우팅/아웃바운드/프로바이더 계약의 이름과 필드 구조를 최대한 동일하게 유지한다.
 
 ---
 
@@ -53,6 +54,12 @@ flowchart LR
 - `WorkingDirectoryManager`는 `BASE_DIRECTORY/{userId}` 고정 전략을 사용한다.
 - v3에서 바로 코드 통합하지 않더라도, Abstraction A는 `tenant/channel/thread/user` 식별자를 수용할 수 있어야 한다.
 - 목표는 “즉시 병합”이 아니라, 나중에 Slack 멀티테넌트 요구를 흡수할 수 있는 계약을 먼저 고정하는 것이다.
+
+### 2.4 External Baseline: `../openclaw` (호환 타겟)
+- `openclaw`는 채널 경계를 `ChannelPlugin` 계약으로 통일하고, `resolveAgentRoute` + `deliverOutboundPayloads` + provider API mode를 중심으로 계층을 분리한다.
+- v3는 이 구조와 계약 이름을 맞춰 **복붙 가능한 수준**으로 정렬한다.
+- 상세 분석/적용 계획은 별도 문서에 고정:
+  - `docs/openclaw-compatibility-v3.md`
 
 ---
 
@@ -141,6 +148,18 @@ flowchart LR
 - 각 질문별 문맥/트레이드오프/되돌리기 비용은 `docs/clairfy/INDEX.md`를 기준으로 관리한다.
 - 개별 파일은 `docs/clairfy/T-01.md` 형식으로 ID별 분리되어 있다.
 
+## 3.8 OpenClaw 호환 결정 매핑
+- OpenClaw 호환은 별도 질문 세트를 추가하지 않고, 기존 질문 ID에 매핑한다.
+
+| OpenClaw 호환 포인트 | 기존 결정 ID |
+|---|---|
+| ChannelPlugin 수준으로 Abstraction A를 고정할지 | A-01, A-02, A-06, A-07, A-10 |
+| route 입력(`peer/parentPeer/teamId/guildId`) 수용 여부 | A-02, A-03, W-01 |
+| session key를 tenant/channel/thread/user 축으로 확장할지 | W-02, W-07 |
+| 중앙 outbound 오케스트레이터(`deliverOutboundPayloads` 유사) 채택 | A-06, W-06, M-02 |
+| provider API mode/이벤트/오류 taxonomy 표준화 | P-01, P-02, P-09, P-10 |
+| extension runtime 주입 패턴 채택 여부 | W-09, W-10, M-01 |
+
 ---
 
 ## 4. Test Reset Inventory (현재 삭제 후보)
@@ -179,10 +198,11 @@ flowchart LR
 1. Decision freeze (본 문서 3장 응답 확정)
 2. ADR 작성 (`docs/adr/`)
 3. 테스트 리셋 실행
-4. Abstraction A 계약 + adapter 분리
-5. Abstraction B 계약 + provider orchestration 분리
-6. `session/text/callback/streaming` 순차 이관
-7. 회귀 검증 + dead code 제거
+4. OpenClaw 호환 계약 스켈레톤 고정 (`ChannelPlugin`/`resolveRoute`/`outbound`/`provider`)
+5. Abstraction A 계약 + adapter 분리
+6. Abstraction B 계약 + provider orchestration 분리
+7. `session/text/callback/streaming` 순차 이관
+8. 회귀 검증 + dead code 제거
 
 ---
 
@@ -213,3 +233,4 @@ W-01=C
 - v3는 **질문 중심 문서**로 작성됨
 - 아키텍처는 아직 lock하지 않음
 - 사용자 답변 수신 후 `v3 final`로 확정하고, 구현 phase 문서까지 이어서 작성 가능
+- `openclaw` 참조 기반 복사 호환 적용안은 `docs/openclaw-compatibility-v3.md`에 반영됨
