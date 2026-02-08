@@ -47,6 +47,8 @@ export type {
   RouteResolverInput,
 } from "../routing/resolve-route";
 
+export { ChannelOutboundOrchestrator } from "../channels/outbound-orchestrator";
+
 export {
   SESSION_KEY_FORMAT,
   STORAGE_PARTITION_FORMAT,

@@ -258,27 +258,6 @@ export class TelegramChannelBoundary implements ChannelBoundary {
       };
     }
 
-    if (payload.type === "status") {
-      const messageId = await this.outboundPort.sendText(chatId, payload.message);
-      return {
-        messageId: String(messageId),
-        deliveredAt,
-      };
-    }
-
-    if (payload.type === "choice") {
-      const choiceText = [
-        payload.question,
-        "",
-        ...payload.choices.map((choice, index) => `${index + 1}. ${choice.label}`),
-      ].join("\n");
-      const messageId = await this.outboundPort.sendText(chatId, choiceText);
-      return {
-        messageId: String(messageId),
-        deliveredAt,
-      };
-    }
-
     throw new TelegramBoundaryError(
       "CHANNEL_INVALID_PAYLOAD",
       `Unsupported outbound payload type: ${(payload as { type: string }).type}`

@@ -175,31 +175,6 @@ export class SlackSkeletonChannelBoundary implements ChannelBoundary {
       };
     }
 
-    if (payload.type === "status") {
-      const messageId = await this.outboundPort.sendText(
-        channelId,
-        payload.message,
-        threadTs
-      );
-      return {
-        messageId,
-        deliveredAt: Date.now(),
-      };
-    }
-
-    if (payload.type === "choice") {
-      const rendered = [
-        payload.question,
-        "",
-        ...payload.choices.map((choice, index) => `${index + 1}. ${choice.label}`),
-      ].join("\n");
-      const messageId = await this.outboundPort.sendText(channelId, rendered, threadTs);
-      return {
-        messageId,
-        deliveredAt: Date.now(),
-      };
-    }
-
     throw new SlackSkeletonBoundaryError(
       "CHANNEL_INVALID_PAYLOAD",
       `Unsupported slack outbound type: ${(payload as { type: string }).type}`

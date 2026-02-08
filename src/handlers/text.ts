@@ -42,6 +42,7 @@ import {
   createTelegramBoundaryWithContext,
   isTelegramBoundaryError,
 } from "../adapters/telegram/channel-boundary";
+import { ChannelOutboundOrchestrator } from "../channels/outbound-orchestrator";
 
 const DIRECT_INPUT_EXPIRY_MS = 5 * 60 * 1000;
 
@@ -284,13 +285,9 @@ export async function handleText(ctx: Context): Promise<void> {
   message = inbound.text || message;
 
   const outboundRoute = buildTelegramAgentRoute(inbound);
+  const outbound = new ChannelOutboundOrchestrator(boundary);
   const deliverInboundReaction = async (reaction: string): Promise<void> => {
-    await boundary.deliverOutbound({
-      type: "reaction",
-      route: outboundRoute,
-      targetMessageId: inbound.identity.messageId,
-      reaction,
-    });
+    await outbound.sendReaction(outboundRoute, inbound.identity.messageId, reaction);
   };
 
   // 1.5. React to user message to show it's received

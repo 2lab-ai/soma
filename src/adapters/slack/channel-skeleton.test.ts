@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { buildSessionKey, buildStoragePartitionKey } from "../../routing/session-key";
 import type { AgentRoute } from "../../routing/resolve-route";
 import type { ChannelOutboundPayload } from "../../channels/plugins/types.core";
+import { ChannelOutboundOrchestrator } from "../../channels/outbound-orchestrator";
 import {
   SlackSkeletonChannelBoundary,
   loadSlackSkeletonBoundaryFromEnv,
@@ -105,17 +106,11 @@ describe("SlackSkeletonChannelBoundary", () => {
       ts: "1738200.0002",
     });
     const route = buildRoute(inbound.identity);
-
-    const payload: ChannelOutboundPayload = {
-      type: "status",
-      route,
-      status: "working",
-      message: "processing",
-    };
-
-    const receipt = await boundary.deliverOutbound(payload);
+    const orchestrator = new ChannelOutboundOrchestrator(boundary);
+    const receipt = await orchestrator.sendStatus(route, "working", "processing");
     expect(receipt.messageId).toBe("ts-1");
     expect(sent[0]?.channelId).toBe("C001");
     expect(sent[0]?.threadTs).toBe("1738200.0001");
+    expect(sent[0]?.text).toBe("processing");
   });
 });
