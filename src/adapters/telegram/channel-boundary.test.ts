@@ -6,6 +6,7 @@ import {
   isTelegramBoundaryError,
 } from "./channel-boundary";
 import type { ChannelOutboundPayload } from "../../channels/plugins/types.core";
+import { ChannelOutboundOrchestrator } from "../../channels/outbound-orchestrator";
 
 function createContext({
   text = "hello",
@@ -119,7 +120,7 @@ describe("TelegramChannelBoundary", () => {
     expect(bypass.metadata.interruptBypassApplied).toBe(true);
   });
 
-  test("delivers outbound using unified payload contract", async () => {
+  test("delivers mixed outbound events through orchestrator + boundary", async () => {
     const sent: Array<{ type: "text" | "reaction"; text?: string; reaction?: string }> = [];
     const boundary = new TelegramChannelBoundary({
       authorize: () => true,
@@ -140,6 +141,7 @@ describe("TelegramChannelBoundary", () => {
       tenantId: "tenant-a",
     });
     const route = buildTelegramAgentRoute(inbound);
+    const orchestrator = new ChannelOutboundOrchestrator(boundary);
 
     const textPayload: ChannelOutboundPayload = {
       type: "text",
@@ -153,11 +155,29 @@ describe("TelegramChannelBoundary", () => {
       reaction: "👌",
     };
 
-    const textReceipt = await boundary.deliverOutbound(textPayload);
-    const reactionReceipt = await boundary.deliverOutbound(reactionPayload);
+    const textReceipt = await orchestrator.dispatch(textPayload);
+    const statusReceipt = await orchestrator.sendStatus(
+      route,
+      "working",
+      "status text"
+    );
+    const choiceReceipt = await orchestrator.sendChoice(route, {
+      question: "Pick one",
+      choices: [{ id: "a", label: "A" }],
+    });
+    const reactionReceipt = await orchestrator.dispatch(reactionPayload);
 
     expect(textReceipt.messageId).toBe("77");
+    expect(statusReceipt.messageId).toBe("77");
+    expect(choiceReceipt.messageId).toBe("77");
     expect(reactionReceipt.messageId).toBe(inbound.identity.messageId);
-    expect(sent.map((entry) => entry.type)).toEqual(["text", "reaction"]);
+    expect(sent.map((entry) => entry.type)).toEqual([
+      "text",
+      "text",
+      "text",
+      "reaction",
+    ]);
+    expect(sent[1]?.text).toBe("status text");
+    expect(sent[2]?.text).toContain("Pick one");
   });
 });
