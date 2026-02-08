@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
 import { InlineKeyboard } from "grammy";
+import { sessionManager } from "../session-manager";
 import type { QueryMetadata, StatusCallback } from "../types";
 import type { ClaudeSession } from "../session";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
@@ -588,7 +589,7 @@ export async function createStatusCallback(
             ?.message_thread_id;
 
           if (chatId) {
-            const sessionKey = `${chatId}${threadId ? `:${threadId}` : ""}`;
+            const sessionKey = sessionManager.deriveKey(chatId, threadId);
 
             try {
               if (state.extractedChoice) {

@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { FileChatStorage } from "./chat-storage";
 import type { ChatRecord, SessionReference } from "../types/chat-history";
-import { mkdir, rm, writeFile } from "fs/promises";
+import { mkdir, rm } from "fs/promises";
 import { existsSync } from "fs";
 
 const TEST_DATA_DIR = ".test-data-chat-storage";
@@ -48,27 +48,6 @@ describe("FileChatStorage", () => {
     const expectedPath = `${TEST_DATA_DIR}/chats/default/telegram-main/main/${year}-${month}-${day}.ndjson`;
 
     expect(existsSync(expectedPath)).toBe(true);
-  });
-
-  test("search is migration-safe for legacy flat chat files", async () => {
-    const date = new Date("2026-02-04T10:00:00Z");
-    const legacyFilePath = `${TEST_DATA_DIR}/chats/2026-02-04.ndjson`;
-    const legacyRecord = createRecord({
-      sessionId: "legacy-session",
-      timestamp: date.toISOString(),
-      content: "legacy flat record",
-    });
-    await writeFile(legacyFilePath, `${JSON.stringify(legacyRecord)}\n`, "utf-8");
-
-    const results = await storage.search({
-      from: new Date("2026-02-04T00:00:00Z"),
-      to: new Date("2026-02-04T23:59:59Z"),
-      sessionId: "legacy-session",
-      limit: 10,
-    });
-
-    expect(results.length).toBe(1);
-    expect(results[0]?.content).toBe("legacy flat record");
   });
 
   test("saveBatch groups records by date", async () => {

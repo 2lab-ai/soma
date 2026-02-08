@@ -1,9 +1,10 @@
 # SOMA Architecture Refactor v3.1 — ADR Applied Final
 
 ## 0. Status
-- 상태: **Decision Freeze Complete**
+- 상태: **Cutover Complete (Main v3 path)**
 - 기준 문서: `docs/ADR.md` (55/55 결정 확정)
-- 이 문서는 기존 v3 질문 초안을 대체하는 **실행 기준 문서**다.
+- 이 문서는 기존 v3 질문 초안을 대체하는 **실행 기준 + 완료 기준 문서**다.
+- 기준일: `2026-02-09` ( `soma-vbj.4` ~ `soma-vbj.12` 완료, `soma-vbj.13` deferred )
 
 ---
 
@@ -223,12 +224,12 @@ flowchart LR
 
 ---
 
-## 7. Directory Plan (TO-BE)
+## 7. Directory Plan (As Implemented)
 
 ```text
 src/
 ├─ channels/
-│  ├─ dock.ts
+│  ├─ outbound-orchestrator.ts
 │  └─ plugins/
 │     ├─ types.core.ts
 │     ├─ types.adapters.ts
@@ -238,17 +239,17 @@ src/
 ├─ routing/
 │  ├─ resolve-route.ts
 │  └─ session-key.ts
-├─ core/
-│  ├─ query-orchestrator.ts
-│  ├─ tool-safety-chain.ts
-│  └─ model-selection-strategy.ts
+├─ core/session/
+│  ├─ state-machine.ts
+│  └─ choice-flow.ts
 ├─ providers/
 │  ├─ types.models.ts
 │  ├─ orchestrator.ts
 │  ├─ claude-adapter.ts
 │  └─ codex-adapter.ts
-├─ infra/outbound/
-│  └─ deliver.ts
+├─ scheduler/
+│  ├─ route.ts
+│  └─ runtime-boundary.ts
 └─ adapters/
    ├─ telegram/
    └─ slack/

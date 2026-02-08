@@ -47,7 +47,6 @@ import {
   startScheduler,
   stopScheduler,
 } from "./scheduler";
-import { session } from "./session";
 import { sessionManager } from "./session-manager";
 import { escapeHtml } from "./formatting";
 import { PendingFormStore } from "./stores/pending-form-store";
@@ -207,23 +206,25 @@ if (botInfo.username) {
 
 // Initialize and start cron scheduler
 configureSchedulerRuntime({
-  isBusy: () => session.isRunning,
+  isBusy: () => sessionManager.getGlobalStats().sessions.some((s) => s.isRunning),
   execute: async ({
     prompt,
     sessionKey,
     userId,
     statusCallback,
     modelContext,
-  }) =>
-    session.sendMessageStreaming(
+  }) => {
+    const session = sessionManager.getSession(userId);
+    return session.sendMessageStreaming(
       prompt,
       sessionKey,
       userId,
       statusCallback,
-      undefined,
+      userId,
       undefined,
       modelContext
-    ),
+    );
+  },
 });
 initScheduler(bot.api);
 startScheduler();

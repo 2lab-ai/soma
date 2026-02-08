@@ -1,10 +1,7 @@
 /**
  * File-based chat storage using daily NDJSON files
  *
- * Format:
- *   data/chats/{tenant}/{channel}/{thread}/YYYY-MM-DD.ndjson
- * Legacy (read-only compatibility):
- *   data/chats/YYYY-MM-DD.ndjson
+ * Format: data/chats/{tenant}/{channel}/{thread}/YYYY-MM-DD.ndjson
  * Each line is a JSON-serialized ChatRecord
  */
 
@@ -19,7 +16,7 @@ import type {
 } from "../types/chat-history";
 import { buildStoragePartitionKey, parseSessionKey } from "../routing/session-key";
 
-const LEGACY_PARTITION_KEY = "legacy/default/main";
+const FALLBACK_PARTITION_KEY = "default/unknown/main";
 const DATE_FILE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})\.ndjson$/;
 
 export class FileChatStorage implements IChatStorage {
@@ -44,7 +41,7 @@ export class FileChatStorage implements IChatStorage {
     try {
       return buildStoragePartitionKey(parseSessionKey(sessionId)) as string;
     } catch {
-      return LEGACY_PARTITION_KEY;
+      return FALLBACK_PARTITION_KEY;
     }
   }
 
@@ -254,23 +251,6 @@ export class FileChatStorage implements IChatStorage {
     for (const root of roots) {
       const ndjsonFiles = await this.listNdjsonFilesRecursive(root);
       for (const filePath of ndjsonFiles) {
-        if (this.isDateFileInRange(filePath, fromDay, toDay)) {
-          files.push(filePath);
-        }
-      }
-    }
-
-    // Migration-safe: when searching in a specific partition, also include legacy flat files.
-    if (partitionKey) {
-      const topLevelEntries = await readdir(this.dataDir, { withFileTypes: true });
-      for (const entry of topLevelEntries) {
-        if (!entry.isFile()) {
-          continue;
-        }
-        if (!entry.name.endsWith(".ndjson")) {
-          continue;
-        }
-        const filePath = join(this.dataDir, entry.name);
         if (this.isDateFileInRange(filePath, fromDay, toDay)) {
           files.push(filePath);
         }

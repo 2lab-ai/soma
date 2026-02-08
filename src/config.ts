@@ -312,7 +312,6 @@ export const RATE_LIMIT_ENABLED = parseEnvBool("RATE_LIMIT_ENABLED", true);
 export const RATE_LIMIT_REQUESTS = parseEnvInt("RATE_LIMIT_REQUESTS", 20);
 export const RATE_LIMIT_WINDOW = parseEnvInt("RATE_LIMIT_WINDOW", 60);
 
-export const SESSION_FILE = "/tmp/soma-session.json";
 export const RESTART_FILE = "/tmp/soma-restart.json";
 export const TEMP_DIR = "/tmp/soma";
 export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];

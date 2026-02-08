@@ -223,7 +223,7 @@ export async function handleNew(ctx: Context): Promise<void> {
   }
 
   // Get session info before killing
-  const sessionKey = `${chatId}${threadId ? `:${threadId}` : ""}`;
+  const sessionKey = sessionManager.deriveKey(chatId!, threadId);
   const oldSession = sessionManager.getSession(chatId!, threadId);
   const oldSessionId = oldSession.sessionId;
   console.log(`[/new] Before kill: sessionId=${oldSessionId?.slice(0, 8) || "null"}`);

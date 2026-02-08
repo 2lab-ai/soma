@@ -1,5 +1,13 @@
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "fs";
 import type { Context } from "grammy";
 import {
   ALLOWED_PATHS,
@@ -7,7 +15,6 @@ import {
   DEFAULT_THINKING_TOKENS,
   MCP_SERVERS,
   SAFETY_PROMPT,
-  SESSION_FILE,
   STREAMING_THROTTLE_MS,
   TEMP_PATHS,
   THINKING_DEEP_KEYWORDS,
@@ -71,6 +78,7 @@ export type { ActivityState, QueryState } from "./core/session/state-machine";
 
 type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
 const initialRuntimeState = createInitialSessionRuntimeState();
+const SESSIONS_DIR = "/tmp/soma-sessions";
 
 function getThinkingLevel(message: string): number {
   const msgLower = message.toLowerCase();
@@ -1519,14 +1527,10 @@ export class ClaudeSession {
         sessionStartTime: this.sessionStartTime?.toISOString(),
       };
 
-      let savePath = SESSION_FILE;
-      if (this.sessionKey !== "default") {
-        const { mkdirSync, existsSync } = require("fs");
-        const sessionsDir = "/tmp/soma-sessions";
-        if (!existsSync(sessionsDir)) mkdirSync(sessionsDir, { recursive: true });
-        savePath = `${sessionsDir}/${this.sessionKey.replace(/:/g, "_")}.json`;
+      if (!existsSync(SESSIONS_DIR)) {
+        mkdirSync(SESSIONS_DIR, { recursive: true });
       }
-
+      const savePath = this.getSessionFilePath();
       Bun.write(savePath, JSON.stringify(data));
       console.log(
         `Session saved to ${savePath} (context: ${this.totalInputTokens + this.totalOutputTokens} tokens)`
@@ -1538,10 +1542,11 @@ export class ClaudeSession {
 
   resumeLast(): [success: boolean, message: string] {
     try {
-      const file = Bun.file(SESSION_FILE);
+      const savePath = this.getSessionFilePath();
+      const file = Bun.file(savePath);
       if (!file.size) return [false, "No saved session found"];
 
-      const data: SessionData = JSON.parse(readFileSync(SESSION_FILE, "utf-8"));
+      const data: SessionData = JSON.parse(readFileSync(savePath, "utf-8"));
       if (!data.session_id) return [false, "Saved session file is empty"];
       if (data.working_dir && data.working_dir !== WORKING_DIR) {
         return [false, `Session was for different directory: ${data.working_dir}`];
@@ -1573,7 +1578,9 @@ export class ClaudeSession {
       return [false, `Failed to load session: ${error}`];
     }
   }
-}
 
-// Global session instance
-export const session = new ClaudeSession();
+  private getSessionFilePath(): string {
+    const safeKey = this.sessionKey.replace(/[:/]/g, "_");
+    return `${SESSIONS_DIR}/${safeKey}.json`;
+  }
+}

@@ -19,6 +19,11 @@
 - `soma-vbj.12` v3-exec-8: cutover cleanup + legacy deprecation
 - `soma-vbj.13` v3-track-x: optional openclaw compatibility (deferred)
 
+### 1.1 Cutover Status (2026-02-09)
+- 완료: `soma-vbj.4` ~ `soma-vbj.12`
+- 보류(옵션 트랙): `soma-vbj.13` (deferred, non-blocking)
+- 메인 실행 경로는 v3 단일 런타임으로 정리됨 (dual-path 제거)
+
 ## 2. Dependency Graph
 
 ```mermaid
@@ -72,3 +77,4 @@ flowchart LR
 제안 처리:
 - 상태를 deprecated/superseded 처리하고, 대체 에픽 `soma-vbj.4`~`soma-vbj.12`에 링크
 - 세부 구현 지식이 필요한 항목은 코멘트로 migration mapping 남긴 뒤 close
+- 운영 원칙: non-`soma-vbj.*` 이슈는 별도 수동 확인 후 처리 (`soma-wmy` 해제 전 자동 변경 금지)
