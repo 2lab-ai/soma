@@ -18,6 +18,12 @@ export interface ProviderQueryInput {
   queryId: string;
   identity: SessionIdentity;
   prompt: string;
+  modelId?: string;
+  workingDirectory?: string;
+  resumeSessionId?: string;
+  maxThinkingTokens?: number;
+  mcpServers?: Readonly<Record<string, unknown>>;
+  additionalDirectories?: ReadonlyArray<string>;
   systemPrompt?: string;
   tools?: ReadonlyArray<ProviderToolDefinition>;
   metadata?: Readonly<Record<string, unknown>>;
@@ -85,6 +91,7 @@ export interface ProviderRateLimitEvent extends ProviderEventBase {
   type: "rate_limit";
   retryAfterMs?: number;
   resetAtMs?: number;
+  statusCode?: number;
 }
 
 export interface ProviderDoneEvent extends ProviderEventBase {
