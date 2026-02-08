@@ -1,6 +1,7 @@
 # SOMA v3 Multi-Agent Assignment Runbook (Copy/Paste)
 
 이 문서는 `soma-vbj` 리팩토링을 여러 에이전트에게 안전하게 분배하기 위한 즉시 실행용 가이드다.
+에이전트별 독립 복붙 문서는 `docs/refactor-v3-agent-prompts/` 폴더를 사용한다.
 
 ## 0. Recommended Agent Count
 - 필수: 6 agents
