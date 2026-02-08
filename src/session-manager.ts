@@ -27,7 +27,6 @@ import {
 
 const SESSIONS_DIR = "/tmp/soma-sessions";
 const THREAD_WORKDIRS_DIR = "/tmp/soma-thread-workdirs";
-const LEGACY_SESSION_FILE = "/tmp/soma-session.json";
 const MAX_SESSIONS = 100;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_TENANT_ID = "default";
@@ -48,7 +47,6 @@ class SessionManager {
 
   constructor() {
     this.ensureSessionsDir();
-    this.migrateLegacySession();
     this.initializeChatCapture();
     this.startCleanupTimer();
   }
@@ -89,19 +87,10 @@ class SessionManager {
       });
       this.sessions.set(key, session);
 
-      // Try to load persisted session (new key first, then legacy key)
-      let loaded = this.loadSession(key);
-      const legacyKey = this.deriveLegacyKey(chatId, threadId);
-      const loadedFromLegacy = !loaded && legacyKey !== key;
-      if (!loaded && loadedFromLegacy) {
-        loaded = this.loadSession(legacyKey);
-      }
-
+      // Load persisted session for canonical key only.
+      const loaded = this.loadSession(key);
       if (loaded) {
         session.restoreFromData(loaded);
-        if (loadedFromLegacy && !this.sessionFileExists(key)) {
-          this.saveSession(key, session);
-        }
         console.log(`[SessionManager] Loaded session for ${key}`);
       } else {
         console.log(`[SessionManager] Created new session for ${key}`);
@@ -116,12 +105,7 @@ class SessionManager {
    */
   hasSession(chatId: number, threadId?: number): boolean {
     const key = this.deriveKey(chatId, threadId);
-    const legacyKey = this.deriveLegacyKey(chatId, threadId);
-    return (
-      this.sessions.has(key) ||
-      this.sessionFileExists(key) ||
-      this.sessionFileExists(legacyKey)
-    );
+    return this.sessions.has(key) || this.sessionFileExists(key);
   }
 
   /**
@@ -130,7 +114,6 @@ class SessionManager {
    */
   async killSession(chatId: number, threadId?: number): Promise<KillResult> {
     const key = this.deriveKey(chatId, threadId);
-    const legacyKey = this.deriveLegacyKey(chatId, threadId);
     const session = this.sessions.get(key);
 
     let result: KillResult = { count: 0, messages: [] };
@@ -140,14 +123,9 @@ class SessionManager {
     }
 
     // Delete persisted file
-    const persistedPaths = [
-      this.getSessionFilePath(key),
-      this.getSessionFilePath(legacyKey),
-    ];
-    for (const filePath of persistedPaths) {
-      if (existsSync(filePath)) {
-        unlinkSync(filePath);
-      }
+    const filePath = this.getSessionFilePath(key);
+    if (existsSync(filePath)) {
+      unlinkSync(filePath);
     }
 
     console.log(`[SessionManager] Killed session for ${key}, lost ${result.count} messages`);
@@ -362,13 +340,6 @@ class SessionManager {
     return String(threadId);
   }
 
-  private deriveLegacyKey(chatId: number, threadId?: number): string {
-    if (threadId && threadId !== TELEGRAM_MAIN_THREAD_ID) {
-      return `${chatId}:${threadId}`;
-    }
-    return String(chatId);
-  }
-
   private buildRoute(
     chatId: number,
     threadId?: number
@@ -424,52 +395,6 @@ class SessionManager {
     } catch (error) {
       console.warn(`[SessionManager] Failed to load session ${key}: ${error}`);
       return null;
-    }
-  }
-
-  private migrateLegacySession(): void {
-    if (!existsSync(LEGACY_SESSION_FILE)) return;
-
-    try {
-      const text = readFileSync(LEGACY_SESSION_FILE, "utf-8");
-      const data = JSON.parse(text) as SessionData;
-
-      if (data.session_id) {
-        // We don't know the original chatId, so we can't migrate automatically
-        // The legacy session will be picked up on first use from the first private chat
-        console.log(
-          "[SessionManager] Legacy session found - will migrate on first private chat use"
-        );
-      }
-    } catch (error) {
-      console.warn(`[SessionManager] Failed to read legacy session: ${error}`);
-    }
-  }
-
-  /**
-   * Migrate legacy session to a specific chat (called on first private chat message).
-   */
-  migrateLegacyToChat(chatId: number): boolean {
-    if (!existsSync(LEGACY_SESSION_FILE)) return false;
-
-    try {
-      const text = readFileSync(LEGACY_SESSION_FILE, "utf-8");
-      const data = JSON.parse(text) as SessionData;
-
-      if (!data.session_id) return false;
-
-      // Save to new location
-      const key = this.deriveKey(chatId);
-      const newPath = this.getSessionFilePath(key);
-
-      Bun.write(newPath, text);
-      unlinkSync(LEGACY_SESSION_FILE);
-
-      console.log(`[SessionManager] Migrated legacy session to chat ${chatId}`);
-      return true;
-    } catch (error) {
-      console.warn(`[SessionManager] Failed to migrate legacy session: ${error}`);
-      return false;
     }
   }
 

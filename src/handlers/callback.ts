@@ -144,7 +144,7 @@ async function handleChoiceCallback(
   const session = sessionManager.getSession(chatId, threadId);
 
   // Validate session key matches
-  const sessionKey = `${chatId}${threadId ? `:${threadId}` : ""}`;
+  const sessionKey = sessionManager.deriveKey(chatId, threadId);
   const expectedKey = TelegramChoiceBuilder.compressSessionKey(sessionKey);
 
   if (compressedKey !== expectedKey) {
@@ -520,7 +520,7 @@ async function handleLostMessageCallback(
   const session = sessionManager.getSession(chatId, threadId);
 
   // Validate session key matches
-  const sessionKey = `${chatId}${threadId ? `:${threadId}` : ""}`;
+  const sessionKey = sessionManager.deriveKey(chatId, threadId);
   const expectedKey = TelegramChoiceBuilder.compressSessionKey(sessionKey);
 
   if (compressedKey !== expectedKey) {

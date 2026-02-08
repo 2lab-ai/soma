@@ -379,7 +379,7 @@ export async function handleText(ctx: Context): Promise<void> {
 
       if (lostMessages.length > 0) {
         // Show inline buttons for lost message recovery
-        const sessionKey = `${chatId}${threadId ? `:${threadId}` : ""}`;
+        const sessionKey = sessionManager.deriveKey(chatId, threadId);
         session.setPendingRecovery(lostMessages, chatId!);
 
         const keyboard = TelegramChoiceBuilder.buildLostMessageKeyboard(sessionKey);
