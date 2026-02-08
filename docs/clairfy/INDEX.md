@@ -50,3 +50,13 @@
 | T-08 | 회귀 기준을 golden 중심으로 갈지 unit 중심으로 갈지 | 300줄 미만 | [T-08.md](./T-08.md) |
 | T-09 | flaky 허용 정책을 어떻게 둘지 | 100줄 미만 | [T-09.md](./T-09.md) |
 | T-10 | CI gate를 어디까지 필수로 묶을지 | 100줄 미만 | [T-10.md](./T-10.md) |
+| W-01 | tenant 식별자를 Abstraction A에 필수로 넣을지 | 그 이상 | [W-01.md](./W-01.md) |
+| W-02 | 세션 키를 채널 중심으로 둘지 tenant/user까지 확장할지 | 500줄 미만 | [W-02.md](./W-02.md) |
+| W-03 | 멀티유저 스레드에서 interrupt 권한 모델을 어떻게 둘지 | 500줄 미만 | [W-03.md](./W-03.md) |
+| W-04 | 작업 디렉토리 격리를 per-user/per-channel/hybrid 중 무엇으로 할지 | 500줄 미만 | [W-04.md](./W-04.md) |
+| W-05 | v3에서 Slack 최소 지원 범위를 어디까지 둘지 | 500줄 미만 | [W-05.md](./W-05.md) |
+| W-06 | Slack 출력 계약을 text 중심으로 둘지 status/interactive까지 포함할지 | 300줄 미만 | [W-06.md](./W-06.md) |
+| W-07 | 세션/설정 저장소 partition 키를 어디까지 확장할지 | 그 이상 | [W-07.md](./W-07.md) |
+| W-08 | 멀티테넌트 auth 경계를 global/tenant/policy-provider 중 어디에 둘지 | 500줄 미만 | [W-08.md](./W-08.md) |
+| W-09 | 비병합 상태에서 Slack 고려를 docs-only/flag/bridge 중 어떻게 반영할지 | 그 이상 | [W-09.md](./W-09.md) |
+| W-10 | soma와 soma-work 간 계약 동기화를 어떻게 유지할지 | 500줄 미만 | [W-10.md](./W-10.md) |
