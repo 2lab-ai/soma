@@ -27,7 +27,22 @@ import type { Provider } from "../types";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 function truncate(text: string, limit: number): string {
-  return text.length > limit ? text.slice(0, limit) + "..." : text;
+  if (text.length <= limit) return text;
+  const sliced = text.slice(0, limit);
+  return closeOpenMarkdown(sliced) + "...";
+}
+
+export function closeOpenMarkdown(text: string): string {
+  let result = text;
+  const codeBlockCount = (result.match(/```/g) || []).length;
+  if (codeBlockCount % 2 !== 0) result += "\n```";
+  const backtickCount = (result.match(/(?<!`)`(?!`)/g) || []).length;
+  if (backtickCount % 2 !== 0) result += "`";
+  const boldDblCount = (result.match(/\*\*/g) || []).length;
+  if (boldDblCount % 2 !== 0) result += "**";
+  const underscoreDblCount = (result.match(/__/g) || []).length;
+  if (underscoreDblCount % 2 !== 0) result += "__";
+  return result;
 }
 
 function formatElapsed(startTime: Date): string {

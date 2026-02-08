@@ -785,20 +785,19 @@ export async function handleText(ctx: Context): Promise<void> {
 
       cleanupToolMessages(ctx, state.toolMessages);
 
-      // Retry on Claude Code crash (not user cancellation)
-      // Common cause: stale session ID from previous run
-      if (isClaudeCodeCrash && attempt < MAX_RETRIES) {
-        console.log(
-          `Session expired or crashed, reconnecting (attempt ${attempt + 2}/${MAX_RETRIES + 1})...`
+      // Claude Code crash: show raw error and stop (no silent retry)
+      if (isClaudeCodeCrash) {
+        console.error(`[CRASH] Claude Code crashed: ${errorStr}`);
+        await session.kill();
+        session.clearStopRequested();
+        const shortError = errorStr.slice(0, 500);
+        await sendSystemMessage(ctx,
+          `💥 **Claude Code Exception**\n\n` +
+          `\`\`\`\n${shortError}\n\`\`\`\n\n` +
+          `Session cleared. Send a new message to start fresh.`,
+          { parse_mode: "Markdown" }
         );
-        await session.kill(); // Clear corrupted session
-        await sendSystemMessage(ctx, `⚠️ Session expired, reconnecting...`);
-        // Clean up old state before retry
-        state.cleanup();
-        // Reset state for retry
-        state = new StreamingState();
-        statusCallback = await createStatusCallback(ctx, state, session);
-        continue;
+        break;
       }
 
       // RL-4: Rate limit detection + auto-fallback

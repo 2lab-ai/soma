@@ -872,6 +872,42 @@ describe("ClaudeSession - generation guard (soma-phy)", () => {
     await session.kill();
     expect(session.isActive).toBe(false);
   });
+
+  test("clearStopRequested after kill allows retry (soma-vdz4)", async () => {
+    expect((session as any).stopRequested).toBe(false);
+    await session.kill();
+    expect((session as any).stopRequested).toBe(true);
+    session.clearStopRequested();
+    expect((session as any).stopRequested).toBe(false);
+  });
+
+  test("kill then clearStopRequested resets all blocking state", async () => {
+    (session as any).sessionId = "crash-session";
+    (session as any)._queryState = "running";
+    session.addSteering("pending msg", 1);
+
+    await session.kill();
+    expect((session as any).stopRequested).toBe(true);
+    expect(session.sessionId).toBeNull();
+    expect(session.hasSteeringMessages()).toBe(false);
+
+    session.clearStopRequested();
+    expect((session as any).stopRequested).toBe(false);
+    expect((session as any)._queryState).toBe("idle");
+  });
+
+  test("generation increments on kill prevent stale session reuse", async () => {
+    const gen0 = (session as any)._generation;
+    (session as any).sessionId = "stale-session";
+
+    await session.kill();
+    expect((session as any)._generation).toBe(gen0 + 1);
+    expect(session.sessionId).toBeNull();
+
+    session.clearStopRequested();
+    await session.kill();
+    expect((session as any)._generation).toBe(gen0 + 2);
+  });
 });
 
 describe("createSteeringMessage - factory validation", () => {

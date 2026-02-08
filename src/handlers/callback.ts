@@ -43,6 +43,9 @@ const ERROR_PATTERNS: [RegExp, string][] = [
     "🔒 Permission error. Bot may need additional permissions.",
   ],
   [/not found|404/i, "🔍 Resource not found. Please try a different action."],
+  [/etimedout|dns|enotfound/i, "🌐 DNS/connection timeout. Check internet connection."],
+  [/50[0-3]/i, "🔧 Server error. Service may be temporarily unavailable."],
+  [/epipe|econnreset/i, "⚠️ Connection reset. Please try again."],
 ];
 
 function getErrorGuidance(errorStr: string): string {
