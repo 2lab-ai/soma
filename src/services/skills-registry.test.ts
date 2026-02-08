@@ -10,9 +10,32 @@ import { homedir } from "os";
 
 const TEST_REGISTRY_PATH = join(homedir(), ".claude", "skills-registry.json");
 const TEST_BACKUP_PATH = `${TEST_REGISTRY_PATH}.backup`;
+const TEST_SKILLS_DIR = join(homedir(), ".claude", "skills");
+const REQUIRED_TEST_SKILLS = ["do-work", "new-task"];
+
+let createdSkillDirs: string[] = [];
+let createdSkillFiles: string[] = [];
 
 describe("SkillsRegistry", () => {
   beforeEach(async () => {
+    createdSkillDirs = [];
+    createdSkillFiles = [];
+
+    // Ensure deterministic test fixtures for validate/scan/sync/add flows.
+    mkdirSync(TEST_SKILLS_DIR, { recursive: true });
+    for (const skill of REQUIRED_TEST_SKILLS) {
+      const skillDir = join(TEST_SKILLS_DIR, skill);
+      const skillFile = join(skillDir, "SKILL.md");
+      if (!existsSync(skillDir)) {
+        mkdirSync(skillDir, { recursive: true });
+        createdSkillDirs.push(skillDir);
+      }
+      if (!existsSync(skillFile)) {
+        writeFileSync(skillFile, `# ${skill}\n\nTest fixture skill.\n`);
+        createdSkillFiles.push(skillFile);
+      }
+    }
+
     // Backup existing registry if present
     if (existsSync(TEST_REGISTRY_PATH)) {
       const content = await Bun.file(TEST_REGISTRY_PATH).text();
@@ -26,6 +49,17 @@ describe("SkillsRegistry", () => {
       const content = await Bun.file(TEST_BACKUP_PATH).text();
       writeFileSync(TEST_REGISTRY_PATH, content);
       rmSync(TEST_BACKUP_PATH);
+    }
+
+    for (const filePath of createdSkillFiles) {
+      if (existsSync(filePath)) {
+        rmSync(filePath, { force: true });
+      }
+    }
+    for (const dirPath of createdSkillDirs.reverse()) {
+      if (existsSync(dirPath)) {
+        rmSync(dirPath, { recursive: true, force: true });
+      }
     }
   });
 
