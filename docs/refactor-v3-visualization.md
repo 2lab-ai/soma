@@ -104,7 +104,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-  OLD1["Legacy Plan A\nsoma-zl7u.*"] --> NEW["v3 Execution Epics\nagi-vbj.4 ~ agi-vbj.12"]
+  OLD1["Legacy Plan A\nsoma-zl7u.*"] --> NEW["v3 Execution Epics\nsoma-vbj.4 ~ soma-vbj.12"]
   OLD2["Legacy Plan B\nsoma-701o.*"] --> NEW
   NEW --> DONE["v3 Completion = Legacy Scope Auto-Resolved"]
 ```
