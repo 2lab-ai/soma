@@ -15,6 +15,7 @@
    - User -> (Abstraction A) -> soma/soul
    - soma/soul -> (Abstraction B) -> Model Provider
 3. 불명확한 설계 포인트는 사용자에게 먼저 질문하고, 답변 기반으로만 확정한다.
+4. `../soma-work`와 **지금 당장 병합하지 않는다**. 다만 v3는 최소한의 Slack 채널 + 유저 멀티테넌트 지원을 고려한 형태로 설계한다.
 
 ---
 
@@ -22,12 +23,15 @@
 
 ```mermaid
 flowchart LR
-  U[User] --> A[Abstraction A: Channel Boundary]
+  U[User(s)] --> CA[Channel Adapter Boundary]
+  CA --> A[Abstraction A: Channel Boundary]
   A --> C[soma/soul Core]
   C --> B[Abstraction B: Model Provider Boundary]
   B --> P1[Claude Adapter]
   B --> P2[Codex Adapter]
   B --> P3[Gemini Adapter]
+  CA --> TG[Telegram Adapter]
+  CA --> SL[Slack Adapter (Min Support)]
 ```
 
 ### 2.1 Abstraction A (User <-> soma/soul)
@@ -43,6 +47,12 @@ flowchart LR
   - query/stream/abort 공통 계약
   - tool hook/usage/context/session 이벤트 표준화
   - rate-limit fallback 정책 포인트 제공
+
+### 2.3 External Baseline: `../soma-work` (참고만, 비병합)
+- 현재 `soma-work`는 Slack 중심이며, 세션 키가 기본적으로 `channel + thread` 축에 맞춰져 있다.
+- `WorkingDirectoryManager`는 `BASE_DIRECTORY/{userId}` 고정 전략을 사용한다.
+- v3에서 바로 코드 통합하지 않더라도, Abstraction A는 `tenant/channel/thread/user` 식별자를 수용할 수 있어야 한다.
+- 목표는 “즉시 병합”이 아니라, 나중에 Slack 멀티테넌트 요구를 흡수할 수 있는 계약을 먼저 고정하는 것이다.
 
 ---
 
@@ -113,7 +123,21 @@ flowchart LR
 | M-04 | backward compatibility 기간 | A) 즉시 전환, B) dual-path 1~2주 |
 | M-05 | dead code 정리 시점 | A) 마지막 phase 일괄, B) 단계별 즉시 제거 |
 
-## 3.6 Clarify 상세 문서
+## 3.6 `soma-work` 호환 고려 (W-XX)
+| ID | 질문 | 옵션 |
+|---|---|---|
+| W-01 | tenant 식별자 필수화 범위 | A) 미적용(single-tenant), B) optional tenantId, C) required tenantId |
+| W-02 | 세션 키 전략 | A) `channel:thread`, B) `tenant:channel:thread`, C) `tenant:channel:thread:user` |
+| W-03 | 멀티유저 스레드 인터럽트 정책 | A) owner-only, B) initiator 우선 + owner override, C) role-based |
+| W-04 | 작업 디렉토리 격리 기준 | A) per-user, B) per-channel, C) hybrid(tenant/user/channel) |
+| W-05 | v3 Slack 최소 지원 범위 | A) text/thread, B) +file/reaction, C) +interactive(choice/form) |
+| W-06 | Slack 출력 계약 깊이 | A) text only, B) +status/reaction, C) +interactive output |
+| W-07 | 저장소 partition 키 | A) channel/thread, B) tenant/channel/thread, C) tenant/channel/thread/user |
+| W-08 | 멀티테넌트 auth 경계 | A) global allowlist, B) tenant allowlist, C) policy provider |
+| W-09 | 비병합 상태에서의 반영 방식 | A) docs-only, B) flag behind adapter skeleton, C) dual-runtime bridge |
+| W-10 | `soma`↔`soma-work` 계약 동기화 방식 | A) 문서 동기화, B) contract test 동기화, C) shared schema package |
+
+## 3.7 Clarify 상세 문서
 - 각 질문별 문맥/트레이드오프/되돌리기 비용은 `docs/clairfy/INDEX.md`를 기준으로 관리한다.
 - 개별 파일은 `docs/clairfy/T-01.md` 형식으로 ID별 분리되어 있다.
 
@@ -178,6 +202,8 @@ S-01=A
 P-01=B
 ...
 M-01=A
+...
+W-01=C
 ...
 ```
 
