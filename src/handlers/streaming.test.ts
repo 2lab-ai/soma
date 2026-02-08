@@ -264,3 +264,44 @@ describe("renderBar - progress bar visualization", () => {
     expect(renderBar(50, 8)).toBe("▓▓▓▓░░░░");
   });
 });
+
+describe("closeOpenMarkdown - auto-close truncated markdown", () => {
+  const { closeOpenMarkdown } = require("./streaming");
+
+  test("closes unclosed code block", () => {
+    const result = closeOpenMarkdown("```python\nprint('hi')");
+    expect(result).toContain("```python\nprint('hi')");
+    expect((result.match(/```/g) || []).length).toBe(2);
+  });
+
+  test("does not modify already-closed code block", () => {
+    const input = "```\ncode\n```";
+    expect(closeOpenMarkdown(input)).toBe(input);
+  });
+
+  test("closes unclosed inline code", () => {
+    const result = closeOpenMarkdown("some `open code");
+    expect(result).toBe("some `open code`");
+  });
+
+  test("closes unclosed bold **", () => {
+    const result = closeOpenMarkdown("**bold te");
+    expect(result).toBe("**bold te**");
+  });
+
+  test("closes unclosed __underline__", () => {
+    const result = closeOpenMarkdown("__undersc");
+    expect(result).toBe("__undersc__");
+  });
+
+  test("handles multiple unclosed markers", () => {
+    const result = closeOpenMarkdown("```\n**bold `code");
+    expect((result.match(/```/g) || []).length).toBe(2);
+    expect(result).toContain("`");
+    expect(result).toContain("**");
+  });
+
+  test("returns unchanged if nothing to close", () => {
+    expect(closeOpenMarkdown("plain text")).toBe("plain text");
+  });
+});
