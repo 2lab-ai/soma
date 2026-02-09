@@ -1,5 +1,6 @@
 import { homedir } from "os";
 import { resolve, dirname } from "path";
+import { existsSync } from "fs";
 import type { McpServerConfig } from "./types";
 
 const HOME = homedir();
@@ -54,7 +55,20 @@ export const ALLOWED_USERS = parseEnvNumbers("TELEGRAM_ALLOWED_USERS");
 export const SYS_MSG_PREFIX = "⚡️";
 export const ALLOWED_GROUPS = parseEnvNumbers("TELEGRAM_ALLOWED_GROUPS");
 export const RESPOND_WITHOUT_MENTION = parseEnvBool("RESPOND_WITHOUT_MENTION", false);
-export const WORKING_DIR = process.env.CLAUDE_WORKING_DIR || HOME;
+
+function resolveWorkingDir(): string {
+  const configured = process.env.CLAUDE_WORKING_DIR?.trim();
+  if (!configured) return HOME;
+  if (existsSync(configured)) return configured;
+
+  const fallback = process.cwd();
+  console.warn(
+    `[CONFIG] CLAUDE_WORKING_DIR does not exist: ${configured}. Falling back to ${fallback}`
+  );
+  return fallback;
+}
+
+export const WORKING_DIR = resolveWorkingDir();
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 
 function findClaudeCli(): string {
@@ -74,7 +88,11 @@ try {
     // Inject CHAT_HISTORY_DATA_DIR env for chat-history MCP server
     // This ensures chat history is stored per working directory, not per project
     if (MCP_SERVERS["chat-history"] && "command" in MCP_SERVERS["chat-history"]) {
-      const chatHistoryConfig = MCP_SERVERS["chat-history"] as { command: string; args?: string[]; env?: Record<string, string> };
+      const chatHistoryConfig = MCP_SERVERS["chat-history"] as {
+        command: string;
+        args?: string[];
+        env?: Record<string, string>;
+      };
       MCP_SERVERS["chat-history"] = {
         ...chatHistoryConfig,
         env: {
@@ -318,7 +336,8 @@ export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
 // Chat history configuration
 export const CHAT_HISTORY_ENABLED = parseEnvBool("CHAT_HISTORY_ENABLED", true);
-export const CHAT_HISTORY_DATA_DIR = process.env.CHAT_HISTORY_DATA_DIR || `${WORKING_DIR}/.db/chat-history`;
+export const CHAT_HISTORY_DATA_DIR =
+  process.env.CHAT_HISTORY_DATA_DIR || `${WORKING_DIR}/.db/chat-history`;
 
 // Usage display settings
 export const SHOW_CURRENT_PROVIDER_USAGE = parseEnvBool(
