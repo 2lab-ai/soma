@@ -1097,17 +1097,10 @@ describe("BUG REPRODUCTION: steering message loss via hook→inject→clear cycl
     // At this point: buffer=[], injectedSteeringDuringQuery=[음, 야호, codex, 보임]
     expect(session.getSteeringCount()).toBe(0);
 
-    // 2. OLD BUG: clearInjectedSteeringTracking() was called, wiping everything
-    // NEW FIX: sendMessageStreaming restores before clearing
-    // Simulate what sendMessageStreaming does at line 740-747:
-    const injected = (session as any).injectedSteeringDuringQuery as any[];
-    expect(injected.length).toBe(4); // 4 messages tracked
-
-    // Simulate the NEW behavior (restore before clear):
-    if (injected.length > 0) {
-      (session as any).steeringBuffer = [...injected, ...(session as any).steeringBuffer];
-    }
-    (session as any).injectedSteeringDuringQuery = [];
+    // 2. OLD BUG: clearInjectedSteeringTracking() was called first, wiping everything.
+    // NEW FIX: restore is done before any clear.
+    const restored = session.restoreInjectedSteering();
+    expect(restored).toBe(4);
 
     // 3. Now buffer should have all 4 messages
     expect(session.getSteeringCount()).toBe(4);

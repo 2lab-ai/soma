@@ -101,6 +101,16 @@ export function getClaudeProjectSlug(workingDir: string): string {
   return workingDir.replace(/[^A-Za-z0-9]/g, "-");
 }
 
+export function getTranscriptJsonlPath(
+  sessionId: string,
+  workingDir: string
+): string | null {
+  const projectsDir = getClaudeProjectsDir();
+  if (!projectsDir) return null;
+  const slug = getClaudeProjectSlug(workingDir);
+  return `${projectsDir}/${slug}/${sessionId}.jsonl`;
+}
+
 export function readFileTail(path: string, maxBytes: number): string | null {
   try {
     const stats = statSync(path);
@@ -170,6 +180,32 @@ export function extractMainAssistantContextUsageFromTranscriptLine(
   } catch {
     return null;
   }
+}
+
+export function findLatestMainAssistantContextUsageFromTranscript(
+  sessionId: string,
+  workingDir: string,
+  minTimestampMs: number
+): ContextWindowUsage | null {
+  const transcriptPath = getTranscriptJsonlPath(sessionId, workingDir);
+  if (!transcriptPath) return null;
+
+  const tail = readFileTail(transcriptPath, 1024 * 1024);
+  if (!tail) return null;
+
+  const lines = tail.trimEnd().split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]?.trim();
+    if (!line) continue;
+
+    const usage = extractMainAssistantContextUsageFromTranscriptLine(
+      line,
+      sessionId,
+      minTimestampMs
+    );
+    if (usage) return usage;
+  }
+  return null;
 }
 
 export function formatSteeringMessages(messages: SteeringMessage[]): string {
