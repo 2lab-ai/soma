@@ -32,11 +32,6 @@ const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_TENANT_ID = "default";
 const TELEGRAM_MAIN_THREAD_ID = 1;
 
-export interface SessionKey {
-  chatId: number;
-  threadId?: number;
-}
-
 /**
  * Manages multiple Claude sessions, one per chat/thread.
  */

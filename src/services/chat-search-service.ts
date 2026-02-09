@@ -4,11 +4,7 @@
  * Provides convenient methods for common search patterns.
  */
 
-import type {
-  ChatRecord,
-  IChatStorage,
-  ChatSearchOptions,
-} from "../types/chat-history";
+import type { ChatRecord, IChatStorage } from "../types/chat-history";
 
 export interface SearchByDateRangeOptions {
   from: Date;

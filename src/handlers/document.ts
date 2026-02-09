@@ -270,11 +270,8 @@ async function processArchive(
 
     const response = await session.sendMessageStreaming(
       addTimestamp(prompt),
-      username,
-      userId,
       statusCallback,
-      chatId,
-      ctx
+      chatId
     );
 
     await auditLog(
@@ -368,11 +365,8 @@ async function processDocuments(
   try {
     const response = await session.sendMessageStreaming(
       addTimestamp(prompt),
-      username,
-      userId,
       statusCallback,
-      chatId,
-      ctx
+      chatId
     );
 
     await auditLog(

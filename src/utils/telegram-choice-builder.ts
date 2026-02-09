@@ -77,12 +77,6 @@ export class TelegramChoiceBuilder {
 
     const keyboard = new InlineKeyboard();
     const compressedKey = this.compressSessionKey(sessionKey);
-    const totalQuestions = choices.questions.length;
-    const answeredCount = Object.keys(selections).length;
-
-    // Progress indicator: ●●○○○
-    const progressIndicator =
-      "●".repeat(answeredCount) + "○".repeat(totalQuestions - answeredCount);
 
     // Find first unanswered question
     const firstUnanswered = choices.questions.find((q) => !selections[q.id]);
@@ -212,9 +206,7 @@ export class TelegramChoiceBuilder {
 
       // Truncate individual message content
       const content =
-        msg.content.length > 100
-          ? msg.content.slice(0, 97) + "..."
-          : msg.content;
+        msg.content.length > 100 ? msg.content.slice(0, 97) + "..." : msg.content;
 
       const line = `${i + 1}. [${time}] "${content}"`;
 

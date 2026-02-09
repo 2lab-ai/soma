@@ -16,10 +16,6 @@ import type { ClaudeUsage, CodexUsage, GeminiUsage } from "../types";
 import {
   getCurrentConfig,
   MODEL_DISPLAY_NAMES,
-  type ConfigContext,
-  type ModelId,
-  type ReasoningLevel,
-  AVAILABLE_MODELS,
   REASONING_TOKENS,
   ensureConfigExists,
 } from "../model-config";
@@ -254,7 +250,9 @@ export async function handleNew(ctx: Context): Promise<void> {
 
   // Verify session is actually cleared
   const verifySession = sessionManager.getSession(chatId!, threadId);
-  console.log(`[/new] Verify after: sessionId=${verifySession.sessionId?.slice(0, 8) || "null"}, isActive=${verifySession.isActive}`);
+  console.log(
+    `[/new] Verify after: sessionId=${verifySession.sessionId?.slice(0, 8) || "null"}, isActive=${verifySession.isActive}`
+  );
 }
 
 /**
@@ -455,7 +453,10 @@ export async function handleCron(ctx: Context): Promise<void> {
     if (count === 0) {
       await sendSystemMessage(ctx, "⚠️ No schedules found in cron.yaml");
     } else {
-      await sendSystemMessage(ctx, `🔄 Reloaded ${count} scheduled job${count > 1 ? "s" : ""}`);
+      await sendSystemMessage(
+        ctx,
+        `🔄 Reloaded ${count} scheduled job${count > 1 ? "s" : ""}`
+      );
     }
     return;
   }

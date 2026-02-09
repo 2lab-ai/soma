@@ -1,4 +1,4 @@
-import { describe, it, expect, mock, beforeEach } from "bun:test";
+import { describe, it, expect } from "bun:test";
 import { MemoryAnalyzer, type Learning } from "./memory-analyzer";
 import type { ConversationEntry } from "./conversation-reader";
 

@@ -204,15 +204,12 @@ if (botInfo.username) {
 // Initialize and start cron scheduler
 configureSchedulerRuntime({
   isBusy: () => sessionManager.getGlobalStats().sessions.some((s) => s.isRunning),
-  execute: async ({ prompt, sessionKey, userId, statusCallback, modelContext }) => {
+  execute: async ({ prompt, userId, statusCallback, modelContext }) => {
     const session = sessionManager.getSession(userId);
     return session.sendMessageStreaming(
       prompt,
-      sessionKey,
-      userId,
       statusCallback,
       userId,
-      undefined,
       modelContext
     );
   },

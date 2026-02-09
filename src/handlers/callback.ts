@@ -1,6 +1,5 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { unlinkSync } from "fs";
 import { sessionManager } from "../session-manager";
 import type { ClaudeSession } from "../session";
 import { type ChatType, isAuthorizedForChat } from "../security";
@@ -21,7 +20,6 @@ import {
   AVAILABLE_MODELS,
   REASONING_TOKENS,
   type ConfigContext,
-  type ModelId,
   type ReasoningLevel,
 } from "../model-config";
 import { skillsRegistry } from "../services/skills-registry";
@@ -97,11 +95,8 @@ async function sendMessageToClaude(
   try {
     const response = await session.sendMessageStreaming(
       message,
-      username,
-      userId,
       statusCallback,
-      chatId,
-      ctx
+      chatId
     );
     await auditLog(userId, username, auditAction, message, response);
   } catch (error) {
@@ -215,7 +210,9 @@ async function handleChoiceCallback(
 
       if (transition.status === "pending") {
         session.choiceState = transition.nextChoiceState;
-        await ctx.editMessageText(`${transition.questionText}\n\n✓ ${transition.selectedLabel}`);
+        await ctx.editMessageText(
+          `${transition.questionText}\n\n✓ ${transition.selectedLabel}`
+        );
         await ctx.editMessageReplyMarkup({ reply_markup: undefined });
         await ctx.answerCallbackQuery({
           text: `Selected: ${transition.selectedLabel.slice(0, 50)}`,
@@ -489,7 +486,14 @@ export async function handleCallback(ctx: Context): Promise<void> {
   }
 
   if (callbackData.startsWith("lost:")) {
-    await handleLostMessageCallback(ctx, callbackData, chatId, threadId, userId, username);
+    await handleLostMessageCallback(
+      ctx,
+      callbackData,
+      chatId,
+      threadId,
+      userId,
+      username
+    );
     return;
   }
 
@@ -507,8 +511,8 @@ async function handleLostMessageCallback(
   callbackData: string,
   chatId: number,
   threadId: number | undefined,
-  userId: number,
-  username: string
+  _userId: number,
+  _username: string
 ): Promise<void> {
   const parts = callbackData.split(":");
   if (parts.length !== 3) {
@@ -605,7 +609,9 @@ async function handleLostMessageCallback(
             return `[${time}] ${msg.content}`;
           })
           .join("\n");
-        contextParts.push(`[UNDELIVERED MESSAGES (${resolved.length})]\n${formattedLost}`);
+        contextParts.push(
+          `[UNDELIVERED MESSAGES (${resolved.length})]\n${formattedLost}`
+        );
       }
 
       // Fetch recent chat history if enabled
@@ -622,13 +628,16 @@ async function handleLostMessageCallback(
                   hour12: false,
                 });
                 const speaker = record.speaker === "user" ? "User" : "Assistant";
-                const preview = record.content.length > 200
-                  ? record.content.slice(0, 197) + "..."
-                  : record.content;
+                const preview =
+                  record.content.length > 200
+                    ? record.content.slice(0, 197) + "..."
+                    : record.content;
                 return `[${time}] ${speaker}: ${preview}`;
               })
               .join("\n");
-            contextParts.push(`[RECENT HISTORY (${recentMessages.length} messages)]\n${formattedHistory}`);
+            contextParts.push(
+              `[RECENT HISTORY (${recentMessages.length} messages)]\n${formattedHistory}`
+            );
           }
         } catch (historyError) {
           console.error("[CALLBACK] Failed to fetch chat history:", historyError);

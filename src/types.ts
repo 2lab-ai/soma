@@ -151,9 +151,6 @@ export interface PendingMediaGroup {
   timeout: Timer;
 }
 
-// Bot context with optional message
-export type BotContext = Context;
-
 // Cron schedule configuration
 export interface CronSchedule {
   name: string;

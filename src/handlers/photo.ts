@@ -105,11 +105,8 @@ async function processPhotos(
   try {
     const response = await session.sendMessageStreaming(
       addTimestamp(prompt),
-      username,
-      userId,
       statusCallback,
-      chatId,
-      ctx
+      chatId
     );
 
     await auditLog(userId, username, "PHOTO", prompt, response);

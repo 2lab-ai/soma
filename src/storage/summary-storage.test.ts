@@ -216,8 +216,6 @@ describe("FileSummaryStorage", () => {
   });
 
   test("handles hourly granularity correctly", async () => {
-    const base = new Date("2026-02-04T10:00:00Z");
-
     for (let hour = 10; hour < 15; hour++) {
       const date = new Date("2026-02-04T00:00:00Z");
       date.setHours(hour);

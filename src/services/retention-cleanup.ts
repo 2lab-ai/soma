@@ -4,7 +4,7 @@
  * Manages data retention policies and safely removes old files.
  */
 
-import { readdir, stat, unlink, rm } from "fs/promises";
+import { readdir, stat, unlink } from "fs/promises";
 import { join, resolve } from "path";
 import { existsSync } from "fs";
 
@@ -100,8 +100,6 @@ export class RetentionCleanupService {
       bytesFreed: 0,
       errors: [],
     };
-
-    const now = new Date();
 
     // Clean chat files
     const chatResult = await this.cleanupDirectory(

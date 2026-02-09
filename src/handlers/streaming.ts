@@ -1,6 +1,5 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
-import { InlineKeyboard } from "grammy";
 import { sessionManager } from "../session-manager";
 import type { QueryMetadata, StatusCallback } from "../types";
 import type { ClaudeSession } from "../session";
@@ -12,7 +11,6 @@ import {
   TELEGRAM_MESSAGE_LIMIT,
   TELEGRAM_SAFE_LIMIT,
   STREAMING_THROTTLE_MS,
-  BUTTON_LABEL_MAX_LENGTH,
   DELETE_THINKING_MESSAGES,
   DELETE_TOOL_MESSAGES,
   PROGRESS_SPINNER_ENABLED,
@@ -23,7 +21,6 @@ import {
   SHOW_CODEX_USAGE,
   SHOW_GEMINI_USAGE,
 } from "../config";
-import type { Provider } from "../types";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -108,18 +105,27 @@ function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string 
     const sign5 = d5 >= 0 ? "+" : "";
     const sign7 = d7 >= 0 ? "+" : "";
     if (metadata?.contextUsagePercent !== undefined) {
-      const ctxBefore = metadata.contextUsagePercentBefore ?? metadata.contextUsagePercent;
+      const ctxBefore =
+        metadata.contextUsagePercentBefore ?? metadata.contextUsagePercent;
       const dCtx = Math.round((metadata.contextUsagePercent - ctxBefore) * 10) / 10;
       const signCtx = dCtx >= 0 ? "+" : "";
-      lines.push(`Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}% ${signCtx}${dCtx.toFixed(1)}`);
+      lines.push(
+        `Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}% ${signCtx}${dCtx.toFixed(1)}`
+      );
     }
-    lines.push(`5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}% ${sign5}${d5}  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}% ${sign7}${d7}`);
+    lines.push(
+      `5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}% ${sign5}${d5}  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}% ${sign7}${d7}`
+    );
   } else if (shouldShowUsage && metadata?.usageAfter) {
     const a = metadata.usageAfter;
     if (metadata?.contextUsagePercent !== undefined) {
-      lines.push(`Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}%`);
+      lines.push(
+        `Ctx ${renderBar(metadata.contextUsagePercent)} ${metadata.contextUsagePercent.toFixed(1)}%`
+      );
     }
-    lines.push(`5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}%  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}%`);
+    lines.push(
+      `5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}%  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}%`
+    );
   }
 
   // Tools line (if available)
@@ -152,10 +158,7 @@ async function deleteMessage(ctx: Context, msg: Message): Promise<void> {
  * Clean up tool status messages (fire-and-forget, doesn't block response).
  * Deletion happens in background to improve responsiveness.
  */
-export function cleanupToolMessages(
-  ctx: Context,
-  toolMessages: Message[]
-): void {
+export function cleanupToolMessages(ctx: Context, toolMessages: Message[]): void {
   // Fire and forget - don't block on message deletion
   for (const toolMsg of toolMessages) {
     ctx.api.deleteMessage(toolMsg.chat.id, toolMsg.message_id).catch((error) => {

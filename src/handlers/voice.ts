@@ -134,11 +134,8 @@ export async function handleVoice(ctx: Context): Promise<void> {
     // 10. Send to Claude (with timestamp)
     const claudeResponse = await session.sendMessageStreaming(
       addTimestamp(transcript),
-      username,
-      userId,
       statusCallback,
-      chatId,
-      ctx
+      chatId
     );
 
     // 11. Audit log

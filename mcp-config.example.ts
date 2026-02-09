@@ -8,10 +8,8 @@
  * See: https://docs.anthropic.com/en/docs/build-with-claude/mcp
  */
 
-import { homedir } from "os";
 import { dirname } from "path";
 
-const HOME = homedir();
 const REPO_ROOT = dirname(import.meta.path);
 
 export const MCP_SERVERS: Record<

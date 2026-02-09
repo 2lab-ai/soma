@@ -17,13 +17,6 @@ export const AVAILABLE_MODELS = [
 
 export type ModelId = (typeof AVAILABLE_MODELS)[number];
 
-// Model aliases for UI display
-export const MODEL_ALIASES: Record<string, ModelId> = {
-  sonnet: "claude-sonnet-4-5-20250929",
-  opus: "claude-opus-4-6",
-  haiku: "claude-haiku-4-5-20251001",
-};
-
 // Reverse mapping for display
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
   "claude-sonnet-4-5-20250929": "Sonnet 4.5",
@@ -120,7 +113,7 @@ function loadConfig(): ModelConfig {
     }
 
     return parsed;
-  } catch (error) {
+  } catch {
     // File doesn't exist or parse error - use defaults
     return getDefaultConfig();
   }
@@ -162,19 +155,6 @@ export function getModelForContext(context: ConfigContext): ModelId {
 
   const ctx = currentConfig.contexts[context];
   return ctx?.model ?? currentConfig.defaults.model ?? DEFAULT_MODEL;
-}
-
-/**
- * Get reasoning tokens for specific context
- */
-export function getReasoningTokens(context: ConfigContext): number {
-  if (!currentConfig) {
-    currentConfig = loadConfig();
-  }
-
-  const ctx = currentConfig.contexts[context];
-  const level = ctx?.reasoning ?? currentConfig.defaults.reasoning ?? DEFAULT_REASONING;
-  return REASONING_TOKENS[level];
 }
 
 /**
@@ -220,7 +200,7 @@ try {
     console.log("[ModelConfig] File changed, reloading...");
     currentConfig = loadConfig();
   });
-} catch (error) {
+} catch {
   // File doesn't exist yet - will be created on first /model command
   console.log("[ModelConfig] Config file not found, will create on first use");
 }
