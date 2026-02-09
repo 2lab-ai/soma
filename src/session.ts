@@ -40,7 +40,7 @@ import {
   type QueryState,
   type SessionRuntimeState,
 } from "./core/session/state-machine";
-import { createSteeringMessage } from "./types";
+import { SteeringManager } from "./core/session/steering-manager";
 import type {
   KillResult,
   PendingRecovery,
@@ -61,15 +61,10 @@ import { isAbortError } from "./utils/error-classification";
 import type { ChatCaptureService } from "./services/chat-capture-service";
 import {
   captureUsageSnapshot,
-  extractMainAssistantContextUsageFromTranscriptLine,
-  formatSteeringMessages,
-  getClaudeProjectSlug,
-  getClaudeProjectsDir,
+  findLatestMainAssistantContextUsageFromTranscript,
   getThinkingLevel,
   isClaudeCodeContextWindow,
   mergeLatestUsage,
-  readFileTail,
-  type ContextWindowUsage,
 } from "./core/session/session-helpers";
 
 export type { ActivityState, QueryState } from "./core/session/state-machine";
@@ -134,14 +129,11 @@ export class ClaudeSession {
   private _generation = initialRuntimeState.generation;
   private _wasInterruptedByNewMessage = initialRuntimeState.wasInterruptedByNewMessage;
   private _isInterrupting = initialRuntimeState.isInterrupting;
-  private readonly MAX_STEERING_MESSAGES = 20;
-  private steeringBuffer: SteeringMessage[] = [];
-  private injectedSteeringDuringQuery: SteeringMessage[] = []; // Track messages injected via hook for fallback
+  private steering = new SteeringManager(20, PENDING_RECOVERY_TIMEOUT_MS);
 
   choiceState: ChoiceState | null = null;
   pendingDirectInput: DirectInputState | null = null;
   parseTextChoiceState: ParseTextChoiceState | null = null;
-  pendingRecovery: PendingRecovery | null = null;
   nextQueryContext: string | null = null; // Context to prepend to next query
   private _activityState: ActivityState = initialRuntimeState.activityState;
 
@@ -177,7 +169,7 @@ export class ClaudeSession {
     const toolName = (input as { tool_name?: string }).tool_name || "unknown";
     console.log(`[HOOK] PostToolUse fired for: ${toolName}`);
 
-    const bufferSize = this.steeringBuffer.length;
+    const bufferSize = this.steering.getSteeringCount();
     console.log(`[HOOK DEBUG] Buffer size at hook: ${bufferSize}`);
 
     if (!bufferSize) {
@@ -185,8 +177,7 @@ export class ClaudeSession {
     }
 
     // Copy messages before consuming for fallback (in case systemMessage isn't processed)
-    const messagesToInject = [...this.steeringBuffer];
-    this.injectedSteeringDuringQuery.push(...messagesToInject);
+    const injectedCount = this.steering.trackBufferedMessagesForInjection();
 
     const steering = this.consumeSteering();
     if (!steering) {
@@ -194,7 +185,7 @@ export class ClaudeSession {
     }
 
     console.log(
-      `[STEERING] Injecting ${messagesToInject.length} message(s) after ${toolName} (tracked for fallback: ${this.injectedSteeringDuringQuery.length})`
+      `[STEERING] Injecting ${injectedCount} message(s) after ${toolName} (tracked for fallback: ${this.steering.getInjectedCount()})`
     );
     return {
       systemMessage: `[USER SENT MESSAGE DURING EXECUTION]\n${steering}\n[END USER MESSAGE]`,
@@ -230,46 +221,17 @@ export class ClaudeSession {
     this.applyRuntimeState(transitionActivityState(this.getRuntimeState(), state));
   }
 
-  private getTranscriptJsonlPath(): string | null {
-    if (!this.sessionId) return null;
-    const projectsDir = getClaudeProjectsDir();
-    if (!projectsDir) return null;
-    const slug = getClaudeProjectSlug(this.workingDir);
-    return `${projectsDir}/${slug}/${this.sessionId}.jsonl`;
-  }
-
-  private tryGetLatestMainAssistantContextUsageFromTranscript(
-    minTimestampMs: number
-  ): ContextWindowUsage | null {
-    if (!this.sessionId) return null;
-
-    const transcriptPath = this.getTranscriptJsonlPath();
-    if (!transcriptPath || !existsSync(transcriptPath)) return null;
-
-    const tail = readFileTail(transcriptPath, 1024 * 1024);
-    if (!tail) return null;
-
-    const lines = tail.trimEnd().split(/\r?\n/);
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i]?.trim();
-      if (!line) continue;
-
-      const usage = extractMainAssistantContextUsageFromTranscriptLine(
-        line,
-        this.sessionId,
-        minTimestampMs
-      );
-      if (usage) return usage;
-    }
-    return null;
-  }
-
   private async refreshContextWindowUsageFromTranscript(
     minTimestampMs: number
   ): Promise<boolean> {
+    if (!this.sessionId) return false;
+
     for (let attempt = 0; attempt < 3; attempt++) {
-      const usage =
-        this.tryGetLatestMainAssistantContextUsageFromTranscript(minTimestampMs);
+      const usage = findLatestMainAssistantContextUsageFromTranscript(
+        this.sessionId,
+        this.workingDir,
+        minTimestampMs
+      );
       if (usage) {
         this.contextWindowUsage = usage;
         return true;
@@ -407,54 +369,33 @@ export class ClaudeSession {
     chatId: number,
     messageId?: number
   ): void {
-    this.pendingRecovery = {
-      messages,
-      promptedAt: Date.now(),
-      state: "awaiting",
-      chatId,
-      messageId,
-    };
+    this.steering.setPendingRecovery(messages, chatId, messageId);
     console.log(
       `[RECOVERY] Set pending recovery: ${messages.length} messages for chat ${chatId}`
     );
   }
 
   getPendingRecovery(): PendingRecovery | null {
-    if (!this.pendingRecovery) return null;
-
-    // Check expiration
-    const elapsed = Date.now() - this.pendingRecovery.promptedAt;
-    if (elapsed > PENDING_RECOVERY_TIMEOUT_MS) {
-      console.log(`[RECOVERY] Expired after ${Math.round(elapsed / 1000)}s, clearing`);
-      this.pendingRecovery = null;
-      return null;
-    }
-
-    return this.pendingRecovery;
+    const recovery = this.steering.getPendingRecovery();
+    if (!recovery) return null;
+    return recovery;
   }
 
   resolvePendingRecovery(): SteeringMessage[] | null {
-    const recovery = this.getPendingRecovery();
-    if (!recovery || recovery.state === "resolved") return null;
-
-    recovery.state = "resolved";
-    const messages = recovery.messages;
-    this.pendingRecovery = null;
+    const messages = this.steering.resolvePendingRecovery();
+    if (!messages) return null;
     console.log(`[RECOVERY] Resolved: ${messages.length} messages`);
     return messages;
   }
 
   clearPendingRecovery(): void {
-    if (this.pendingRecovery) {
-      console.log(
-        `[RECOVERY] Cleared: ${this.pendingRecovery.messages.length} messages discarded`
-      );
-    }
-    this.pendingRecovery = null;
+    const discarded = this.steering.clearPendingRecovery();
+    if (!discarded) return;
+    console.log(`[RECOVERY] Cleared: ${discarded} messages discarded`);
   }
 
   hasPendingRecovery(): boolean {
-    return this.getPendingRecovery() !== null;
+    return this.steering.hasPendingRecovery();
   }
 
   addSteering(
@@ -462,43 +403,38 @@ export class ClaudeSession {
     messageId: number,
     receivedDuringTool?: string
   ): boolean {
-    let evicted = false;
-    if (this.steeringBuffer.length >= this.MAX_STEERING_MESSAGES) {
-      console.warn("[STEERING] Buffer full, evicting oldest message");
-      this.steeringBuffer.shift();
-      evicted = true;
-    }
-    // Use factory function for validation and creation
-    const steeringMessage = createSteeringMessage(
+    const evicted = this.steering.addSteering(
       message,
       messageId,
       receivedDuringTool
     );
-    this.steeringBuffer.push(steeringMessage);
+    if (evicted) {
+      console.warn("[STEERING] Buffer full, evicting oldest message");
+    }
     console.log(
-      `[STEERING DEBUG] Added message to buffer. Buffer now: ${this.steeringBuffer.length}, content: "${message.slice(0, 50)}"`
+      `[STEERING DEBUG] Added message to buffer. Buffer now: ${this.steering.getSteeringCount()}, content: "${message.slice(0, 50)}"`
     );
     return evicted;
   }
 
   consumeSteering(): string | null {
-    if (!this.steeringBuffer.length) {
+    const count = this.steering.getSteeringCount();
+    if (!count) {
       console.log(`[STEERING DEBUG] consumeSteering called but buffer empty`);
       return null;
     }
-    const count = this.steeringBuffer.length;
-    const formatted = formatSteeringMessages(this.steeringBuffer);
-    this.steeringBuffer = [];
+    const formatted = this.steering.consumeSteering();
+    if (!formatted) return null;
     console.log(`[STEERING DEBUG] Consumed ${count} message(s) from buffer`);
     return formatted;
   }
 
   hasSteeringMessages(): boolean {
-    return this.steeringBuffer.length > 0;
+    return this.steering.hasSteeringMessages();
   }
 
   getSteeringCount(): number {
-    return this.steeringBuffer.length;
+    return this.steering.getSteeringCount();
   }
 
   /**
@@ -506,10 +442,7 @@ export class ClaudeSession {
    * Used for interrupt recovery flow - returns raw SteeringMessage[] instead of formatted string.
    */
   extractSteeringMessages(): SteeringMessage[] {
-    if (!this.steeringBuffer.length) return [];
-    const messages = [...this.steeringBuffer];
-    this.steeringBuffer = [];
-    return messages;
+    return this.steering.extractSteeringMessages();
   }
 
   /**
@@ -517,37 +450,33 @@ export class ClaudeSession {
    * Call this after query completes to ensure auto-continue handles them.
    */
   restoreInjectedSteering(): number {
-    const bufferBefore = this.steeringBuffer.length;
-    const injectedCount = this.injectedSteeringDuringQuery.length;
+    const bufferBefore = this.steering.getSteeringCount();
+    const injectedCount = this.steering.getInjectedCount();
     console.log(
       `[RESTORE DEBUG] Before: buffer=${bufferBefore}, injected=${injectedCount}`
     );
 
-    if (!injectedCount) {
+    const restored = this.steering.restoreInjectedSteering();
+    if (!restored) {
       console.log(`[RESTORE DEBUG] Nothing to restore`);
       return 0;
     }
 
-    // Prepend to buffer (they were sent first)
-    this.steeringBuffer = [...this.injectedSteeringDuringQuery, ...this.steeringBuffer];
-    this.injectedSteeringDuringQuery = [];
-
     console.log(
-      `[STEERING] Restored ${injectedCount} injected message(s) to buffer for fallback processing. Buffer now: ${this.steeringBuffer.length}`
+      `[STEERING] Restored ${restored} injected message(s) to buffer for fallback processing. Buffer now: ${this.steering.getSteeringCount()}`
     );
-    return injectedCount;
+    return restored;
   }
 
   /**
    * Clear injected steering tracking at start of new query.
    */
   clearInjectedSteeringTracking(): void {
-    this.injectedSteeringDuringQuery = [];
+    this.steering.clearInjectedSteeringTracking();
   }
 
   peekSteering(): string | null {
-    if (!this.steeringBuffer.length) return null;
-    return formatSteeringMessages(this.steeringBuffer);
+    return this.steering.peekSteering();
   }
 
   startProcessing(): () => void {
@@ -568,11 +497,11 @@ export class ClaudeSession {
       const prevState = this._queryState;
       this.applyRuntimeState(stopProcessingTransition(this.getRuntimeState()));
       console.log(
-        `[PROCESSING] stopProcessing() called: ${prevState} → idle, steering=${this.steeringBuffer.length}`
+        `[PROCESSING] stopProcessing() called: ${prevState} → idle, steering=${this.steering.getSteeringCount()}`
       );
-      if (this.steeringBuffer.length) {
+      if (this.steering.hasSteeringMessages()) {
         console.log(
-          `[STEERING] Keeping ${this.steeringBuffer.length} unconsumed messages for next query`
+          `[STEERING] Keeping ${this.steering.getSteeringCount()} unconsumed messages for next query`
         );
       }
     };
@@ -581,7 +510,7 @@ export class ClaudeSession {
   getPendingSteering(): string | null {
     // Alias for consumeSteering - identical functionality
     console.log(
-      `[STEERING DEBUG] getPendingSteering called, buffer: ${this.steeringBuffer.length}`
+      `[STEERING DEBUG] getPendingSteering called, buffer: ${this.steering.getSteeringCount()}`
     );
     return this.consumeSteering();
   }
@@ -630,19 +559,15 @@ export class ClaudeSession {
 
     // Restore any unprocessed injected steering back to buffer BEFORE clearing
     // This prevents message loss when auto-continue fires sendMessageStreaming again
-    const prevInjectedCount = this.injectedSteeringDuringQuery.length;
+    const prevInjectedCount = this.steering.restoreInjectedSteering();
     if (prevInjectedCount > 0) {
-      this.steeringBuffer = [
-        ...this.injectedSteeringDuringQuery,
-        ...this.steeringBuffer,
-      ];
       console.log(
-        `[QUERY START] Restored ${prevInjectedCount} injected message(s) to buffer before new query. Buffer now: ${this.steeringBuffer.length}`
+        `[QUERY START] Restored ${prevInjectedCount} injected message(s) to buffer before new query. Buffer now: ${this.steering.getSteeringCount()}`
       );
     }
-    this.injectedSteeringDuringQuery = [];
+    this.steering.clearInjectedSteeringTracking();
     console.log(
-      `[QUERY START DEBUG] Cleared injected tracking (was: ${prevInjectedCount}), buffer: ${this.steeringBuffer.length}`
+      `[QUERY START DEBUG] Cleared injected tracking (was: ${prevInjectedCount}), buffer: ${this.steering.getSteeringCount()}`
     );
 
     // Capture generation at query start to detect if session was killed mid-query
@@ -1170,9 +1095,9 @@ export class ClaudeSession {
 
     // Check for unconsumed steering (text-only response didn't trigger PreToolUse)
     const hasSteeringAtEnd = this.hasSteeringMessages();
-    const injectedCount = this.injectedSteeringDuringQuery.length;
+    const injectedCount = this.steering.getInjectedCount();
     console.log(
-      `[STEERING DEBUG] End of query - buffer: ${this.steeringBuffer.length}, injected tracking: ${injectedCount}`
+      `[STEERING DEBUG] End of query - buffer: ${this.steering.getSteeringCount()}, injected tracking: ${injectedCount}`
     );
 
     if (hasSteeringAtEnd) {
@@ -1234,7 +1159,7 @@ export class ClaudeSession {
     }
 
     // Extract lost steering messages for caller to offer recovery
-    const lostMessages = [...this.steeringBuffer];
+    const lostMessages = this.steering.extractSteeringMessages();
     if (lostMessages.length > 0) {
       console.warn(
         `[STEERING] Extracted ${lostMessages.length} message(s) during session kill`
@@ -1251,7 +1176,7 @@ export class ClaudeSession {
     this.totalCacheCreateTokens = 0;
     this.totalQueries = 0;
     this.cumulativeToolDurations = {};
-    this.steeringBuffer = [];
+    this.steering.reset();
     this.resetWarningFlags();
     console.log("Session cleared");
     return { count: lostMessages.length, messages: lostMessages };
@@ -1275,7 +1200,7 @@ export class ClaudeSession {
 
   restoreFromData(data: SessionData): KillResult {
     // Extract lost steering messages for caller to offer recovery
-    const lostMessages = [...this.steeringBuffer];
+    const lostMessages = this.steering.extractSteeringMessages();
     if (lostMessages.length > 0) {
       console.warn(
         `[STEERING] Extracted ${lostMessages.length} message(s) during session restore`
@@ -1294,7 +1219,6 @@ export class ClaudeSession {
       this.contextWindowUsage = data.contextWindowUsage || null;
     if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0)
       this.contextWindowSize = data.contextWindowSize;
-    this.steeringBuffer = [];
     return { count: lostMessages.length, messages: lostMessages };
   }
 
