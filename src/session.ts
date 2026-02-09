@@ -1,30 +1,18 @@
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readSync,
-  statSync,
-} from "fs";
+import { existsSync, mkdirSync, readFileSync } from "fs";
 import type { Context } from "grammy";
 import {
   ALLOWED_PATHS,
   CHAT_HISTORY_ACCESS_INFO,
-  DEFAULT_THINKING_TOKENS,
   MCP_SERVERS,
   SAFETY_PROMPT,
   STREAMING_THROTTLE_MS,
   TEMP_PATHS,
-  THINKING_DEEP_KEYWORDS,
-  THINKING_KEYWORDS,
   UI_ASKUSER_INSTRUCTIONS,
   WORKING_DIR,
 } from "./config";
 import {
   getModelForContext,
-  getReasoningTokens,
   MODEL_DISPLAY_NAMES,
   type ConfigContext,
   type ModelId,
@@ -65,7 +53,6 @@ import type {
   UsageSnapshot,
 } from "./types";
 import { PENDING_RECOVERY_TIMEOUT_MS } from "./types";
-import { fetchClaudeUsage } from "./usage";
 import type {
   ChoiceState,
   DirectInputState,
@@ -73,154 +60,23 @@ import type {
 } from "./types/user-choice";
 import { isAbortError } from "./utils/error-classification";
 import type { ChatCaptureService } from "./services/chat-capture-service";
+import {
+  captureUsageSnapshot,
+  extractMainAssistantContextUsageFromTranscriptLine,
+  formatSteeringMessages,
+  getClaudeProjectSlug,
+  getClaudeProjectsDir,
+  getThinkingLevel,
+  isClaudeCodeContextWindow,
+  mergeLatestUsage,
+  readFileTail,
+  type ContextWindowUsage,
+} from "./core/session/session-helpers";
 
 export type { ActivityState, QueryState } from "./core/session/state-machine";
 
-type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
 const initialRuntimeState = createInitialSessionRuntimeState();
 const SESSIONS_DIR = "/tmp/soma-sessions";
-
-function getThinkingLevel(message: string): number {
-  const msgLower = message.toLowerCase();
-  if (THINKING_DEEP_KEYWORDS.some((k) => msgLower.includes(k))) return 50000;
-  if (THINKING_KEYWORDS.some((k) => msgLower.includes(k))) return 10000;
-  return DEFAULT_THINKING_TOKENS;
-}
-
-interface ClaudeCodeContextWindow {
-  current_usage?: {
-    input_tokens?: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  };
-  context_window_size?: number;
-}
-
-function mergeLatestUsage(
-  prev: TokenUsage | null,
-  update: Partial<TokenUsage>
-): TokenUsage {
-  function pick(updateVal: number | undefined, prevVal: number): number {
-    return typeof updateVal === "number" && updateVal > 0 ? updateVal : prevVal;
-  }
-
-  const base = prev ?? {
-    input_tokens: 0,
-    output_tokens: 0,
-    cache_read_input_tokens: 0,
-    cache_creation_input_tokens: 0,
-  };
-  return {
-    input_tokens: pick(update.input_tokens, base.input_tokens),
-    output_tokens:
-      typeof update.output_tokens === "number"
-        ? update.output_tokens
-        : base.output_tokens,
-    cache_read_input_tokens: pick(
-      update.cache_read_input_tokens,
-      base.cache_read_input_tokens ?? 0
-    ),
-    cache_creation_input_tokens: pick(
-      update.cache_creation_input_tokens,
-      base.cache_creation_input_tokens ?? 0
-    ),
-  };
-}
-
-async function captureUsageSnapshot(): Promise<UsageSnapshot | null> {
-  try {
-    const usage = await fetchClaudeUsage(0); // bypass cache
-    if (!usage) return null;
-    return {
-      fiveHour: usage.five_hour ? Math.round(usage.five_hour.utilization * 10) / 10 : 0,
-      sevenDay: usage.seven_day ? Math.round(usage.seven_day.utilization) : 0,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function isClaudeCodeContextWindow(value: unknown): value is ClaudeCodeContextWindow {
-  if (!value || typeof value !== "object") return false;
-  const v = value as Record<string, unknown>;
-  const cu = v.current_usage;
-  if (cu !== undefined && cu !== null && typeof cu !== "object") return false;
-  const cws = v.context_window_size;
-  if (cws !== undefined && typeof cws !== "number") return false;
-  return true;
-}
-
-function getClaudeProjectsDir(): string | null {
-  return process.env.HOME ? `${process.env.HOME}/.claude/projects` : null;
-}
-
-function getClaudeProjectSlug(workingDir: string): string {
-  return workingDir.replace(/[^A-Za-z0-9]/g, "-");
-}
-
-function readFileTail(path: string, maxBytes: number): string | null {
-  try {
-    const stats = statSync(path);
-    const size = stats.size;
-    const start = Math.max(0, size - maxBytes);
-    const length = size - start;
-
-    const fd = openSync(path, "r");
-    try {
-      const buffer = Buffer.alloc(length);
-      const read = readSync(fd, buffer, 0, length, start);
-      if (read <= 0) return null;
-      return buffer.subarray(0, read).toString("utf8");
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return null;
-  }
-}
-
-function extractMainAssistantContextUsageFromTranscriptLine(
-  line: string,
-  sessionId: string,
-  minTimestampMs: number
-): ContextWindowUsage | null {
-  try {
-    const parsed: unknown = JSON.parse(line);
-    if (!parsed || typeof parsed !== "object") return null;
-    const rec = parsed as Record<string, unknown>;
-
-    if (rec.type !== "assistant") return null;
-    if (rec.sessionId !== sessionId) return null;
-    if ("isSidechain" in rec && rec.isSidechain !== false) return null;
-
-    const timestampStr = typeof rec.timestamp === "string" ? rec.timestamp : null;
-    if (timestampStr) {
-      const ts = Date.parse(timestampStr);
-      if (!Number.isNaN(ts) && ts < minTimestampMs) return null;
-    }
-
-    const msg = rec.message;
-    if (!msg || typeof msg !== "object") return null;
-    const usage = (msg as Record<string, unknown>).usage;
-    if (!usage || typeof usage !== "object") return null;
-
-    const u = usage as Record<string, unknown>;
-    const input_tokens = typeof u.input_tokens === "number" ? u.input_tokens : 0;
-    const cache_creation_input_tokens =
-      typeof u.cache_creation_input_tokens === "number"
-        ? u.cache_creation_input_tokens
-        : 0;
-    const cache_read_input_tokens =
-      typeof u.cache_read_input_tokens === "number" ? u.cache_read_input_tokens : 0;
-
-    const used = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
-    if (used <= 0) return null;
-
-    return { input_tokens, cache_creation_input_tokens, cache_read_input_tokens };
-  } catch {
-    return null;
-  }
-}
 
 export class ClaudeSession {
   readonly sessionKey: string;
@@ -570,9 +426,7 @@ export class ClaudeSession {
     // Check expiration
     const elapsed = Date.now() - this.pendingRecovery.promptedAt;
     if (elapsed > PENDING_RECOVERY_TIMEOUT_MS) {
-      console.log(
-        `[RECOVERY] Expired after ${Math.round(elapsed / 1000)}s, clearing`
-      );
+      console.log(`[RECOVERY] Expired after ${Math.round(elapsed / 1000)}s, clearing`);
       this.pendingRecovery = null;
       return null;
     }
@@ -622,7 +476,9 @@ export class ClaudeSession {
       receivedDuringTool
     );
     this.steeringBuffer.push(steeringMessage);
-    console.log(`[STEERING DEBUG] Added message to buffer. Buffer now: ${this.steeringBuffer.length}, content: "${message.slice(0, 50)}"`);
+    console.log(
+      `[STEERING DEBUG] Added message to buffer. Buffer now: ${this.steeringBuffer.length}, content: "${message.slice(0, 50)}"`
+    );
     return evicted;
   }
 
@@ -632,17 +488,7 @@ export class ClaudeSession {
       return null;
     }
     const count = this.steeringBuffer.length;
-    const formatted = this.steeringBuffer
-      .map((msg) => {
-        const ts = new Date(msg.timestamp).toLocaleTimeString("en-US", {
-          hour12: false,
-        });
-        const tool = msg.receivedDuringTool
-          ? ` (during ${msg.receivedDuringTool})`
-          : "";
-        return `[${ts}${tool}] ${msg.content}`;
-      })
-      .join("\n---\n");
+    const formatted = formatSteeringMessages(this.steeringBuffer);
     this.steeringBuffer = [];
     console.log(`[STEERING DEBUG] Consumed ${count} message(s) from buffer`);
     return formatted;
@@ -674,7 +520,9 @@ export class ClaudeSession {
   restoreInjectedSteering(): number {
     const bufferBefore = this.steeringBuffer.length;
     const injectedCount = this.injectedSteeringDuringQuery.length;
-    console.log(`[RESTORE DEBUG] Before: buffer=${bufferBefore}, injected=${injectedCount}`);
+    console.log(
+      `[RESTORE DEBUG] Before: buffer=${bufferBefore}, injected=${injectedCount}`
+    );
 
     if (!injectedCount) {
       console.log(`[RESTORE DEBUG] Nothing to restore`);
@@ -685,7 +533,9 @@ export class ClaudeSession {
     this.steeringBuffer = [...this.injectedSteeringDuringQuery, ...this.steeringBuffer];
     this.injectedSteeringDuringQuery = [];
 
-    console.log(`[STEERING] Restored ${injectedCount} injected message(s) to buffer for fallback processing. Buffer now: ${this.steeringBuffer.length}`);
+    console.log(
+      `[STEERING] Restored ${injectedCount} injected message(s) to buffer for fallback processing. Buffer now: ${this.steeringBuffer.length}`
+    );
     return injectedCount;
   }
 
@@ -698,17 +548,7 @@ export class ClaudeSession {
 
   peekSteering(): string | null {
     if (!this.steeringBuffer.length) return null;
-    return this.steeringBuffer
-      .map((msg) => {
-        const ts = new Date(msg.timestamp).toLocaleTimeString("en-US", {
-          hour12: false,
-        });
-        const tool = msg.receivedDuringTool
-          ? ` (during ${msg.receivedDuringTool})`
-          : "";
-        return `[${ts}${tool}] ${msg.content}`;
-      })
-      .join("\n---\n");
+    return formatSteeringMessages(this.steeringBuffer);
   }
 
   startProcessing(): () => void {
@@ -717,7 +557,9 @@ export class ClaudeSession {
     let released = false;
     const timer = setTimeout(() => {
       if (!released && this.isProcessing) {
-        console.error(`[STUCK] isProcessing stuck for ${PROCESSING_TIMEOUT_MS / 1000}s, auto-releasing`);
+        console.error(
+          `[STUCK] isProcessing stuck for ${PROCESSING_TIMEOUT_MS / 1000}s, auto-releasing`
+        );
         this.applyRuntimeState(stopProcessingTransition(this.getRuntimeState()));
       }
     }, PROCESSING_TIMEOUT_MS);
@@ -726,7 +568,9 @@ export class ClaudeSession {
       clearTimeout(timer);
       const prevState = this._queryState;
       this.applyRuntimeState(stopProcessingTransition(this.getRuntimeState()));
-      console.log(`[PROCESSING] stopProcessing() called: ${prevState} → idle, steering=${this.steeringBuffer.length}`);
+      console.log(
+        `[PROCESSING] stopProcessing() called: ${prevState} → idle, steering=${this.steeringBuffer.length}`
+      );
       if (this.steeringBuffer.length) {
         console.log(
           `[STEERING] Keeping ${this.steeringBuffer.length} unconsumed messages for next query`
@@ -737,7 +581,9 @@ export class ClaudeSession {
 
   getPendingSteering(): string | null {
     // Alias for consumeSteering - identical functionality
-    console.log(`[STEERING DEBUG] getPendingSteering called, buffer: ${this.steeringBuffer.length}`);
+    console.log(
+      `[STEERING DEBUG] getPendingSteering called, buffer: ${this.steeringBuffer.length}`
+    );
     return this.consumeSteering();
   }
 
@@ -790,17 +636,26 @@ export class ClaudeSession {
     // This prevents message loss when auto-continue fires sendMessageStreaming again
     const prevInjectedCount = this.injectedSteeringDuringQuery.length;
     if (prevInjectedCount > 0) {
-      this.steeringBuffer = [...this.injectedSteeringDuringQuery, ...this.steeringBuffer];
-      console.log(`[QUERY START] Restored ${prevInjectedCount} injected message(s) to buffer before new query. Buffer now: ${this.steeringBuffer.length}`);
+      this.steeringBuffer = [
+        ...this.injectedSteeringDuringQuery,
+        ...this.steeringBuffer,
+      ];
+      console.log(
+        `[QUERY START] Restored ${prevInjectedCount} injected message(s) to buffer before new query. Buffer now: ${this.steeringBuffer.length}`
+      );
     }
     this.injectedSteeringDuringQuery = [];
-    console.log(`[QUERY START DEBUG] Cleared injected tracking (was: ${prevInjectedCount}), buffer: ${this.steeringBuffer.length}`);
+    console.log(
+      `[QUERY START DEBUG] Cleared injected tracking (was: ${prevInjectedCount}), buffer: ${this.steeringBuffer.length}`
+    );
 
     // Capture generation at query start to detect if session was killed mid-query
     const queryGeneration = this._generation;
 
     const isNewSession = !this.isActive;
-    console.log(`[QUERY] Starting: sessionId=${this.sessionId?.slice(0, 8) || "null"}, isNewSession=${isNewSession}, isActive=${this.isActive}`);
+    console.log(
+      `[QUERY] Starting: sessionId=${this.sessionId?.slice(0, 8) || "null"}, isNewSession=${isNewSession}, isActive=${this.isActive}`
+    );
 
     const thinkingTokens = getThinkingLevel(message);
     const thinkingLabel =
@@ -851,9 +706,12 @@ export class ClaudeSession {
     }
 
     // RL-3: Apply temporary model override if set
-    const effectiveModel = this.temporaryModelOverride ?? getModelForContext(modelContext);
+    const effectiveModel =
+      this.temporaryModelOverride ?? getModelForContext(modelContext);
     if (this.temporaryModelOverride) {
-      console.log(`[RATE-LIMIT] Using fallback model: ${MODEL_DISPLAY_NAMES[this.temporaryModelOverride] || this.temporaryModelOverride}`);
+      console.log(
+        `[RATE-LIMIT] Using fallback model: ${MODEL_DISPLAY_NAMES[this.temporaryModelOverride] || this.temporaryModelOverride}`
+      );
     }
 
     const options: Options = {
@@ -996,12 +854,21 @@ export class ClaudeSession {
         }
 
         if (event.type === "system") {
-          const sysEvent = event as { subtype?: string; compact_metadata?: { trigger: string; pre_tokens: number }; status?: string | null };
+          const sysEvent = event as {
+            subtype?: string;
+            compact_metadata?: { trigger: string; pre_tokens: number };
+            status?: string | null;
+          };
           if (sysEvent.subtype === "compact_boundary") {
             const trigger = sysEvent.compact_metadata?.trigger ?? "unknown";
             const preTokens = sysEvent.compact_metadata?.pre_tokens ?? 0;
-            console.log(`[COMPACT] ${trigger} compact triggered (pre_tokens: ${preTokens})`);
-            await statusCallback("system", `🔄 Context compacting (${trigger}, ${preTokens} tokens)...`);
+            console.log(
+              `[COMPACT] ${trigger} compact triggered (pre_tokens: ${preTokens})`
+            );
+            await statusCallback(
+              "system",
+              `🔄 Context compacting (${trigger}, ${preTokens} tokens)...`
+            );
           }
           if (sysEvent.subtype === "status" && sysEvent.status === "compacting") {
             console.log("[COMPACT] Compaction in progress...");
@@ -1289,7 +1156,10 @@ export class ClaudeSession {
 
     // Accumulate tool stats for session-wide tracking
     for (const [toolName, stats] of Object.entries(toolDurations)) {
-      const existing = this.cumulativeToolDurations[toolName] || { count: 0, totalMs: 0 };
+      const existing = this.cumulativeToolDurations[toolName] || {
+        count: 0,
+        totalMs: 0,
+      };
       this.cumulativeToolDurations[toolName] = {
         count: existing.count + stats.count,
         totalMs: existing.totalMs + stats.totalMs,

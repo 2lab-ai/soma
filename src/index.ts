@@ -8,17 +8,15 @@ import { Bot, GrammyError } from "grammy";
 import { run, sequentialize } from "@grammyjs/runner";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
 import Bottleneck from "bottleneck";
-import { TELEGRAM_TOKEN, WORKING_DIR, ALLOWED_USERS, RESTART_FILE, SYS_MSG_PREFIX } from "./config";
-import { sendSystemMessage, addSystemReaction } from "./utils/system-message";
 import {
-  unlinkSync,
-  readFileSync,
-  existsSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-  mkdirSync,
-} from "fs";
+  TELEGRAM_TOKEN,
+  WORKING_DIR,
+  ALLOWED_USERS,
+  RESTART_FILE,
+  SYS_MSG_PREFIX,
+} from "./config";
+import { sendSystemMessage, addSystemReaction } from "./utils/system-message";
+import { unlinkSync, readFileSync, existsSync, writeFileSync, mkdirSync } from "fs";
 import {
   handleStart,
   handleNew,
@@ -48,7 +46,6 @@ import {
   stopScheduler,
 } from "./scheduler";
 import { sessionManager } from "./session-manager";
-import { escapeHtml } from "./formatting";
 import { PendingFormStore } from "./stores/pending-form-store";
 
 // Create bot instance
@@ -207,13 +204,7 @@ if (botInfo.username) {
 // Initialize and start cron scheduler
 configureSchedulerRuntime({
   isBusy: () => sessionManager.getGlobalStats().sessions.some((s) => s.isRunning),
-  execute: async ({
-    prompt,
-    sessionKey,
-    userId,
-    statusCallback,
-    modelContext,
-  }) => {
+  execute: async ({ prompt, sessionKey, userId, statusCallback, modelContext }) => {
     const session = sessionManager.getSession(userId);
     return session.sendMessageStreaming(
       prompt,
@@ -264,200 +255,15 @@ console.log(`[STARTUP] Allowed users: ${ALLOWED_USERS.length}`);
 const runner = run(bot);
 console.log(`[STARTUP] Bot runner started`);
 
-// Send startup notification to Claude and user
-if (ALLOWED_USERS.length > 0) {
-  const userId = ALLOWED_USERS[0]!;
-  setTimeout(async () => {
-    try {
-      const statusCallback = async () => {};
-      const session = sessionManager.getSession(userId);
-
-      // PRIORITY 1: Check for .last-save-id (auto-load mechanism)
-      const saveIdFile = `${WORKING_DIR}/.last-save-id`;
-      if (existsSync(saveIdFile)) {
-        try {
-          const saveId = readFileSync(saveIdFile, "utf-8").trim();
-
-          // S1 FIX: Validate save ID format (security - path traversal/command injection)
-          if (!/^\d{8}_\d{6}$/.test(saveId)) {
-            console.error(`Invalid save ID format in .last-save-id: ${saveId}`);
-            unlinkSync(saveIdFile); // Remove malicious file
-            throw new Error(`Invalid save ID format: ${saveId}`);
-          }
-
-          console.log(`📥 Found .last-save-id: ${saveId} - Triggering auto-load`);
-
-          // Send /load command to Claude
-          const restoreStartMsgId = await sendSystemMessage(
-            { api: bot.api, chatId: userId },
-            `**Auto-restoring context**\n\nSave ID: \`${saveId}\`\n\nExecuting /load...`,
-            { parse_mode: "Markdown" }
-          );
-          console.log(`[CONTEXT-RESTORE] Start notification: msg_id=${restoreStartMsgId || "failed"}`);
-
-          const loadResponse = await session.sendMessageStreaming(
-            `Skill tool with skill='oh-my-claude:load' and args='${saveId}'`,
-            "startup",
-            userId,
-            statusCallback
-          );
-
-          // C4 FIX: Validate /load succeeded
-          if (!loadResponse.includes("Loaded Context:")) {
-            console.error(`/load failed - response doesn't contain "Loaded Context:"`);
-            console.error(`Response: ${loadResponse.slice(0, 500)}`);
-            throw new Error(`/load validation failed for save ID: ${saveId}`);
-          }
-
-          console.log(`✅ Context restored from ${saveId}`);
-
-          // ORACLE: Add telemetry
-          console.log("[TELEMETRY] auto_load_success", {
-            saveId,
-            timestamp: new Date().toISOString(),
-          });
-
-          session.markRestored(); // Activate cooldown
-
-          // C3 FIX: Delete .last-save-id AFTER verification
-          unlinkSync(saveIdFile);
-
-          const restoreDoneMsgId = await sendSystemMessage(
-            { api: bot.api, chatId: userId },
-            `━━━ **Context Restored** ━━━\n\nResumed from save: \`${saveId}\``,
-            { parse_mode: "Markdown" }
-          );
-          console.log(`[CONTEXT-RESTORE] Done notification: msg_id=${restoreDoneMsgId || "failed"}`);
-
-          return; // Skip normal startup message
-        } catch (err) {
-          console.error("CRITICAL: Auto-load failed:", err);
-          console.error("Stack:", err instanceof Error ? err.stack : "N/A");
-
-          // S2 FIX: Sanitize error message (don't expose internal paths)
-          const errorStr = String(err);
-          const sanitized = errorStr.replace(
-            process.env.HOME || "/home/zhugehyuk",
-            "~"
-          );
-
-          await sendSystemMessage(
-            { api: bot.api, chatId: userId },
-            `**Auto-load Failed**\n\n` +
-              `Error: ${sanitized.slice(0, 300)}\n\n` +
-              `⚠️ Starting fresh session. Check logs for recovery.`,
-            { parse_mode: "Markdown" }
-          );
-          // Fall through to normal startup
-        }
-      }
-
-      // PRIORITY 2: Check for saved restart context (manual save-and-restart.sh)
-      console.log(`[STARTUP] Checking for restart context in ${WORKING_DIR}/docs/tasks/save`);
-      let contextMessage = "";
-      const saveDir = `${WORKING_DIR}/docs/tasks/save`;
-      if (existsSync(saveDir)) {
-        try {
-          const files = readdirSync(saveDir)
-            .filter((f) => f.startsWith("restart-context-") && f.endsWith(".md"))
-            .map((f) => ({
-              name: f,
-              path: `${saveDir}/${f}`,
-              mtime: statSync(`${saveDir}/${f}`).mtimeMs,
-            }))
-            .sort((a, b) => b.mtime - a.mtime);
-
-          console.log(`[CONTEXT-RESTORE] Found ${files.length} restart-context file(s)`);
-          if (files.length > 0) {
-            const latestFile = files[0]!;
-            const fileAge = Date.now() - latestFile.mtime;
-            const ageSeconds = Math.floor(fileAge / 1000);
-            console.log(`[CONTEXT-RESTORE] ========== RESTORING CONTEXT ==========`);
-            console.log(`[CONTEXT-RESTORE] File: ${latestFile.name}`);
-            console.log(`[CONTEXT-RESTORE] Age: ${ageSeconds}s (${new Date(latestFile.mtime).toISOString()})`);
-            const content = readFileSync(latestFile.path, "utf-8");
-            console.log(`[CONTEXT-RESTORE] Content preview: ${content.slice(0, 200).replace(/\n/g, " ")}...`);
-            contextMessage = `\n\n📋 **Saved Context Found:**\n${latestFile.name}\n\n${content}`;
-            console.log(`[CONTEXT-RESTORE] ========== RESTORE COMPLETE ==========`);
-          }
-        } catch (err) {
-          console.warn("[CONTEXT-RESTORE] Failed to read restart context:", err);
-        }
-      } else {
-        console.log(`[STARTUP] Save directory does not exist - no context to restore`);
-      }
-
-      // Log session state
-      console.log(`[STARTUP] Session state: sessionId=${session.sessionId?.slice(0, 8) || "null"}, isActive=${session.isActive}, queries=${session.totalQueries}`);
-      console.log(`[STARTUP] Context: ${session.currentContextTokens.toLocaleString()}/${session.contextWindowSize.toLocaleString()} tokens (${((session.currentContextTokens / session.contextWindowSize) * 100).toFixed(1)}%)`);
-
-      // Determine startup type for clear messaging
-      let startupType = "";
-      if (contextMessage.includes("restart-context")) {
-        startupType = "🔄 **SIGTERM Restart** (graceful shutdown via make up)";
-        console.log(`[STARTUP] Type: SIGTERM Restart (found restart-context, session will resume)`);
-      } else if (session.isActive) {
-        startupType = "♻️ **Session Resumed** (no saved context found)";
-        console.log(`[STARTUP] Type: Session Resumed (active session but no restart-context)`);
-      } else {
-        startupType = "🆕 **Fresh Start** (new session)";
-        console.log(`[STARTUP] Type: Fresh Start (no active session)`);
-      }
-
-      const startupPrompt = session.isActive
-        ? `${startupType}\n\nBot restarted. Session ID: ${session.sessionId?.slice(0, 8)}...\n\n현재 시간과 함께 간단히 상태를 알려주세요.${contextMessage}`
-        : `${startupType}\n\nBot restarted. New session starting.\n\n현재 시간과 함께 간단한 인사말을 써주세요.${contextMessage}`;
-
-      const response = await session.sendMessageStreaming(
-        startupPrompt,
-        "startup",
-        userId,
-        statusCallback
-      );
-
-      if (response && response !== "[Waiting for user selection]") {
-        await bot.api.sendMessage(userId, escapeHtml(response), { parse_mode: "HTML" });
-      }
-
-      // Restore pending steering messages saved during SIGTERM
-      const steeringFile = "/tmp/soma-pending-steering.json";
-      try {
-        if (existsSync(steeringFile)) {
-          const saved = JSON.parse(readFileSync(steeringFile, "utf-8"));
-          unlinkSync(steeringFile);
-          if (saved.content && session.isActive) {
-            console.log(`[STARTUP] Restoring ${saved.count} pending steering message(s) from SIGTERM`);
-            await sendSystemMessage({ api: bot.api, chatId: userId },
-              `💬 <i>재시작 전 대기 중이던 메시지 ${saved.count}개 복원 처리 중...</i>`,
-              { parse_mode: "HTML" }
-            );
-            const restoredResponse = await session.sendMessageStreaming(
-              `[재시작 전 보낸 메시지 - 지금 처리합니다]\n${saved.content}`,
-              "startup", userId, statusCallback
-            );
-            if (restoredResponse && restoredResponse !== "[Waiting for user selection]") {
-              await bot.api.sendMessage(userId, escapeHtml(restoredResponse), { parse_mode: "HTML" });
-            }
-            console.log(`[STARTUP] Steering restoration complete`);
-          }
-        }
-      } catch (steeringErr) {
-        console.error("[STARTUP] Failed to restore steering:", steeringErr);
-      }
-    } catch (e) {
-      console.error("Startup notification failed:", e);
-      await sendSystemMessage({ api: bot.api, chatId: userId }, "Bot restarted").catch(() => {});
-    }
-  }, 2000);
-}
-
 // Graceful shutdown
 const stopRunner = () => {
   console.log("[SHUTDOWN] Step 1: Stopping scheduler...");
   stopScheduler();
   console.log("[SHUTDOWN] Step 2: Saving all sessions...");
   const stats = sessionManager.getGlobalStats();
-  console.log(`[SHUTDOWN] Sessions to save: ${stats.totalSessions}, Total queries: ${stats.totalQueries}`);
+  console.log(
+    `[SHUTDOWN] Sessions to save: ${stats.totalSessions}, Total queries: ${stats.totalQueries}`
+  );
   sessionManager.saveAllSessions();
   console.log("[SHUTDOWN] Step 3: Sessions saved");
   if (runner.isRunning()) {
@@ -491,17 +297,24 @@ async function saveShutdownContext(): Promise<void> {
     // Detailed session info for each session
     console.log(`[CONTEXT-SAVE] Sessions: ${stats.totalSessions}`);
     for (const sess of stats.sessions) {
-      console.log(`[CONTEXT-SAVE]   - ${sess.sessionKey}: queries=${sess.queries}, active=${sess.isActive}, running=${sess.isRunning}`);
+      console.log(
+        `[CONTEXT-SAVE]   - ${sess.sessionKey}: queries=${sess.queries}, active=${sess.isActive}, running=${sess.isRunning}`
+      );
     }
     console.log(`[CONTEXT-SAVE] Total queries: ${stats.totalQueries}`);
-    console.log(`[CONTEXT-SAVE] Total tokens: input=${stats.totalInputTokens}, output=${stats.totalOutputTokens}`);
+    console.log(
+      `[CONTEXT-SAVE] Total tokens: input=${stats.totalInputTokens}, output=${stats.totalOutputTokens}`
+    );
 
     // Get primary session context info
     let contextInfo = "";
     let ctxPct = "0";
     if (userId) {
       const session = sessionManager.getSession(userId);
-      ctxPct = ((session.currentContextTokens / session.contextWindowSize) * 100).toFixed(1);
+      ctxPct = (
+        (session.currentContextTokens / session.contextWindowSize) *
+        100
+      ).toFixed(1);
       contextInfo = `Context: ${ctxPct}% (${session.currentContextTokens.toLocaleString()}/${session.contextWindowSize.toLocaleString()} tokens)`;
       console.log(`[CONTEXT-SAVE] Primary session context: ${ctxPct}%`);
     }
@@ -538,7 +351,9 @@ async function saveShutdownContext(): Promise<void> {
             `🔢 Queries: ${stats.totalQueries}`,
           { parse_mode: "Markdown" }
         ),
-        new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 3000)),
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error("Timeout")), 3000)
+        ),
       ]).catch((err) => {
         console.error(`[CONTEXT-SAVE] Failed to notify user: ${err}`);
         return null;
@@ -589,25 +404,43 @@ async function sendShutdownMessage(): Promise<void> {
   // Calculate session duration
   let duration = "N/A";
   let startTimeStr = "N/A";
-  let endTimeStr = now.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  let endTimeStr = now.toLocaleTimeString("ko-KR", {
+    timeZone: "Asia/Seoul",
+    hour12: true,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 
   if (session.sessionStartTime) {
-    startTimeStr = session.sessionStartTime.toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour12: true, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    startTimeStr = session.sessionStartTime.toLocaleTimeString("ko-KR", {
+      timeZone: "Asia/Seoul",
+      hour12: true,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
     const diffMs = now.getTime() - session.sessionStartTime.getTime();
     const hours = Math.floor(diffMs / 3600000);
     const minutes = Math.floor((diffMs % 3600000) / 60000);
     const seconds = Math.floor((diffMs % 60000) / 1000);
-    duration = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}:${String(seconds).padStart(2, "0")}`;
+    duration =
+      hours > 0
+        ? `${hours}h ${minutes}m`
+        : `${minutes}:${String(seconds).padStart(2, "0")}`;
   }
 
   // Calculate context usage
   const contextTokens = session.currentContextTokens;
   const contextSize = session.contextWindowSize;
-  const contextPct = contextTokens > 0 ? ((contextTokens / contextSize) * 100).toFixed(1) : "0";
+  const contextPct =
+    contextTokens > 0 ? ((contextTokens / contextSize) * 100).toFixed(1) : "0";
 
   // Get tool stats
   const toolStats = session.formatToolStats();
-  console.log(`[SHUTDOWN-MSG] Stats - Duration: ${duration}, Context: ${contextPct}%, Tools: ${toolStats || "none"}`);
+  console.log(
+    `[SHUTDOWN-MSG] Stats - Duration: ${duration}, Context: ${contextPct}%, Tools: ${toolStats || "none"}`
+  );
 
   // Build message (SYS_MSG_PREFIX distinguishes system messages from model responses)
   const lines = [
@@ -645,7 +478,9 @@ async function sendShutdownMessage(): Promise<void> {
 process.on("SIGTERM", async () => {
   const ts = new Date().toISOString();
   console.log(`\n[${ts}] ========== SIGTERM RECEIVED ==========`);
-  console.log("[SIGTERM] Graceful shutdown initiated (likely from make up or systemctl)");
+  console.log(
+    "[SIGTERM] Graceful shutdown initiated (likely from make up or systemctl)"
+  );
   console.log("[SIGTERM] PID:", process.pid);
 
   // Save pending steering messages to disk before shutdown
@@ -657,8 +492,14 @@ process.on("SIGTERM", async () => {
       const content = session.consumeSteering();
       if (content) {
         const steeringFile = "/tmp/soma-pending-steering.json";
-        writeFileSync(steeringFile, JSON.stringify({ count, content, timestamp: new Date().toISOString() }), "utf-8");
-        console.log(`[SIGTERM] Saved ${count} pending steering message(s) to ${steeringFile}`);
+        writeFileSync(
+          steeringFile,
+          JSON.stringify({ count, content, timestamp: new Date().toISOString() }),
+          "utf-8"
+        );
+        console.log(
+          `[SIGTERM] Saved ${count} pending steering message(s) to ${steeringFile}`
+        );
       }
     }
   }
