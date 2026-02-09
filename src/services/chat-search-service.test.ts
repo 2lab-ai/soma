@@ -74,8 +74,8 @@ class MockChatStorage implements IChatStorage {
     );
   }
 
-  async saveSessionReference(ref: SessionReference): Promise<void> {}
-  async getSessionReference(sessionId: string): Promise<SessionReference | null> {
+  async saveSessionReference(_ref: SessionReference): Promise<void> {}
+  async getSessionReference(_sessionId: string): Promise<SessionReference | null> {
     return null;
   }
 }

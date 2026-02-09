@@ -150,17 +150,6 @@ export function checkCommandSafety(command: string): [safe: boolean, reason: str
   return [true, ""];
 }
 
-// ============== Authorization ==============
-
-export function isAuthorized(
-  userId: number | undefined,
-  allowedUsers: number[]
-): boolean {
-  if (!userId) return false;
-  if (allowedUsers.length === 0) return false;
-  return allowedUsers.includes(userId);
-}
-
 export type ChatType = "private" | "group" | "supergroup" | "channel";
 
 /**

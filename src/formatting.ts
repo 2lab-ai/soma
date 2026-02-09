@@ -123,9 +123,6 @@ function convertBlockquotes(text: string): string {
   return result.join("\n");
 }
 
-// Legacy alias
-export const convertMarkdownForTelegram = convertMarkdownToHtml;
-
 // ============== Tool Status Formatting ==============
 
 /**

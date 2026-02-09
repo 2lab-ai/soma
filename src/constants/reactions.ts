@@ -32,20 +32,3 @@ export const Reactions = {
 
 export type ReactionType = keyof typeof Reactions;
 export type ReactionEmoji = (typeof Reactions)[ReactionType];
-
-/**
- * Helper to update reaction on a message.
- * Removes previous reaction and adds new one.
- */
-export async function setReaction(
-  ctx: { react: (emoji: string) => Promise<void> },
-  emoji: ReactionEmoji
-): Promise<boolean> {
-  try {
-    await ctx.react(emoji);
-    return true;
-  } catch (error) {
-    console.debug(`[REACTION] Failed to set ${emoji}:`, error);
-    return false;
-  }
-}

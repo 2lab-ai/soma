@@ -475,9 +475,3 @@ export async function fetchAllUsage(
     fetchedAt: Date.now(),
   };
 }
-
-export function clearUsageCache(): void {
-  claudeCache.clear();
-  codexCache.clear();
-  geminiCache.clear();
-}

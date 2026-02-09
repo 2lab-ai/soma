@@ -22,14 +22,14 @@ class MockChatStorage implements IChatStorage {
     this.records.push(...records);
   }
 
-  async search(options: ChatSearchOptions): Promise<ChatRecord[]> {
+  async search(_options: ChatSearchOptions): Promise<ChatRecord[]> {
     return this.records;
   }
 
   async getContextAround(
-    timestamp: Date,
-    before: number,
-    after: number
+    _timestamp: Date,
+    _before: number,
+    _after: number
   ): Promise<ChatRecord[]> {
     return this.records;
   }

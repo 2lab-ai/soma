@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { RetentionCleanupService, type RetentionConfig } from "./retention-cleanup";
+import { RetentionCleanupService } from "./retention-cleanup";
 import { writeFile, mkdir, rm, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";

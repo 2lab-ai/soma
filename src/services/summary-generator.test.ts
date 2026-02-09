@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { SummaryGenerator } from "./summary-generator";
-import { existsSync, rmSync, mkdirSync } from "fs";
+import { existsSync, rmSync } from "fs";
 import { readFile } from "fs/promises";
 import type {
   ChatRecord,

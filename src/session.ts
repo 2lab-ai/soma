@@ -1,6 +1,5 @@
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { existsSync, mkdirSync, readFileSync } from "fs";
-import type { Context } from "grammy";
 import {
   ALLOWED_PATHS,
   CHAT_HISTORY_ACCESS_INFO,
@@ -623,11 +622,8 @@ export class ClaudeSession {
 
   async sendMessageStreaming(
     message: string,
-    username: string,
-    userId: number,
     statusCallback: StatusCallback,
     chatId?: number,
-    ctx?: Context,
     modelContext: ConfigContext = "general"
   ): Promise<string> {
     if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);

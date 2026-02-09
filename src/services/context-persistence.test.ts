@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, rmSync, existsSync, readdirSync } from "fs";
+import { mkdirSync, rmSync, existsSync } from "fs";
 import {
   saveRestartContext,
   findLatestRestartContext,

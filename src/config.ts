@@ -280,8 +280,6 @@ export const BLOCKED_PATTERNS = [
   "dd if=",
 ];
 
-export const QUERY_TIMEOUT_MS = 180_000;
-
 const BASE_TRANSCRIPTION_PROMPT = `Transcribe this voice message accurately.
 The speaker may use multiple languages (English, and possibly others).
 Focus on accuracy for proper nouns, technical terms, and commands.`;
