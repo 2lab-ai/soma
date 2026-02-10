@@ -1,5 +1,8 @@
 # SOMA v3 OpenClaw Compatibility Blueprint (Optional / Deferred)
 
+> Deferred reference track.  
+> This document is historical context and may not match current source paths.
+
 ## 0. Goal
 - 목적: `openclaw`의 채널/라우팅/아웃바운드/모델 프로바이더 계약과 **이름·필드 수준 호환**을 맞춰, 코드 재사용을 복붙 수준으로 끌어올린다.
 - 비목표: 지금 당장 `soma` + `soma-work` + `openclaw`를 단일 런타임으로 합치는 것.
@@ -262,7 +265,7 @@ flowchart LR
 
 ## 9. ADR Applied Map (확정)
 
-`docs/ADR.md` 기준으로 OpenClaw 호환에 필요한 결정은 아래처럼 lock되었다.
+`docs/reference/adr-v3-legacy.md` 기준으로 OpenClaw 호환에 필요한 결정은 아래처럼 lock되었다.
 
 - 채널 경계:
   - `A-01=B`, `A-02=B`, `A-03=B`, `A-06=B`, `A-07=A`, `A-10=A`

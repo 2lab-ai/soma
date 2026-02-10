@@ -1,5 +1,8 @@
 # Architecture Decision Records — soma v3
 
+> Legacy decision snapshot.  
+> Current source-of-truth specs: `docs/spec.md`, `docs/specs.md`, `docs/architecture/current-source-architecture.md`.
+
 ## Status: DECISION FREEZE COMPLETE (2025-02-08)
 
 55/55 decisions locked.
