@@ -284,4 +284,4 @@ src/
 ## 9) Legacy Refactor Docs Policy
 
 - 기존 v3 리팩토링 문서는 `docs/archive/refactor-reset-2026-02-09/`로 이관 유지
-- 본 문서(`docs/plans/2026-02-09-refactor-reset-plan.md`)를 `soma-zfz` 실행 기준 SSOT로 유지
+- 본 문서(`docs/archive/refactor-reset-2026-02-09/plans/2026-02-09-refactor-reset-plan.md`)를 `soma-zfz` 실행 기준 SSOT로 유지
