@@ -3,7 +3,10 @@ import type { Context } from "grammy";
 import { existsSync } from "fs";
 import { rm } from "fs/promises";
 import { join } from "path";
-import { TelegramChannelBoundary, buildTelegramAgentRoute } from "../adapters/telegram/channel-boundary";
+import {
+  TelegramChannelBoundary,
+  buildTelegramAgentRoute,
+} from "../adapters/telegram/channel-boundary";
 import { ChannelOutboundOrchestrator } from "../channels/outbound-orchestrator";
 import { ProviderOrchestrator } from "../providers/orchestrator";
 import { ProviderRegistry } from "../providers/registry";
@@ -15,7 +18,11 @@ import type {
   ProviderResumeInput,
   ProviderResumeResult,
 } from "../providers/types.models";
-import { buildSessionKey, buildStoragePartitionKey, createSessionIdentity } from "../routing/session-key";
+import {
+  buildSessionKey,
+  buildStoragePartitionKey,
+  createSessionIdentity,
+} from "../routing/session-key";
 import { buildSchedulerRoute } from "../scheduler/route";
 import {
   configureSchedulerRuntime,
@@ -24,7 +31,7 @@ import {
 } from "../scheduler/runtime-boundary";
 import { ChatCaptureService } from "../services/chat-capture-service";
 import { ChatSearchService } from "../services/chat-search-service";
-import { sessionManager } from "../session-manager";
+import { sessionManager } from "../core/session/session-manager";
 import { FileChatStorage } from "../storage/chat-storage";
 
 function createTelegramContext({
@@ -154,6 +161,49 @@ describe("v3 runtime e2e by feature", () => {
 
     expect(sentTexts).toEqual(["processing", "Pick one\n\n1. Option A"]);
     expect(sentReactions).toEqual(["👌"]);
+  });
+
+  test("feature/channel policy: out-of-order non-interrupt is dropped but interrupt bypasses", () => {
+    const boundary = new TelegramChannelBoundary({
+      authorize: () => true,
+      checkRateLimit: () => [true],
+      outboundPort: {
+        sendText: async () => 1,
+        sendReaction: async () => {},
+      },
+    });
+
+    boundary.normalizeInbound({
+      ctx: createTelegramContext({
+        chatId: 88001,
+        threadId: 9,
+        text: "first",
+        timestampSeconds: 2_000,
+      }),
+    });
+
+    expect(() =>
+      boundary.normalizeInbound({
+        ctx: createTelegramContext({
+          chatId: 88001,
+          threadId: 9,
+          text: "older",
+          timestampSeconds: 1_999,
+        }),
+      })
+    ).toThrow();
+
+    const interruptInbound = boundary.normalizeInbound({
+      ctx: createTelegramContext({
+        chatId: 88001,
+        threadId: 9,
+        text: "!stop",
+        timestampSeconds: 1_998,
+      }),
+    });
+
+    expect(interruptInbound.isInterrupt).toBe(true);
+    expect(interruptInbound.metadata.interruptBypassApplied).toBe(true);
   });
 
   test("feature/provider+channel: provider fallback stream dispatches through outbound orchestrator", async () => {
