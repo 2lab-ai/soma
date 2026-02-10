@@ -127,7 +127,9 @@ export function applyChoiceSelection(
   let choiceId: string;
 
   if (selection.mode === "multi_option") {
-    const option = question.choices.find((candidate) => candidate.id === selection.optionId);
+    const option = question.choices.find(
+      (candidate) => candidate.id === selection.optionId
+    );
     if (!option) {
       throw new ChoiceTransitionError("CHOICE_INVALID_OPTION", "Invalid option.");
     }

@@ -105,9 +105,7 @@ export function clearStopRequestedTransition(
   };
 }
 
-export function markInterruptFlag(
-  state: SessionRuntimeState
-): SessionRuntimeState {
+export function markInterruptFlag(state: SessionRuntimeState): SessionRuntimeState {
   return {
     ...state,
     wasInterruptedByNewMessage: true,
