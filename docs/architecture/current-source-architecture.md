@@ -195,3 +195,12 @@ flowchart LR
 - Application boot: `src/index.ts` -> `src/app/bootstrap.ts`
 - Text runtime path: `src/handlers/text.ts` -> `src/handlers/text/query-flow.ts` -> `src/core/session/session.ts` -> `src/core/session/query-runtime.ts`
 - Scheduler runtime path: `src/app/scheduler-runner.ts` -> `src/scheduler/service.ts` -> `src/scheduler/runtime-boundary.ts` -> `src/core/session/session-manager.ts`
+
+## 10) Related Docs
+
+- Refactor executive summary (AS-IS vs TO-BE):
+  - `/Users/icedac/2lab.ai/soma/docs/architecture/refactor-executive-summary.md`
+- High-level system spec:
+  - `/Users/icedac/2lab.ai/soma/docs/spec.md`
+- Detailed technical spec:
+  - `/Users/icedac/2lab.ai/soma/docs/specs.md`

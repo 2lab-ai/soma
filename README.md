@@ -17,7 +17,7 @@ In fact, while Claude Code is described as a powerful AI **coding agent**, it's 
 
 To achieve this, I set up a folder with a CLAUDE.md that teaches Claude about me (my preferences, where my notes live, my workflows), has a set of tools and scripts based on my needs, and pointed this bot at that folder.
 
-→ **[📄 See the Personal Assistant Guide](docs/personal-assistant-guide.md)** for detailed setup and examples.
+→ **[📄 See the Personal Assistant Guide](docs/guides/personal-assistant-guide.md)** for detailed setup and examples.
 
 ## Bot Features
 

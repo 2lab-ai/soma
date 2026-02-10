@@ -27,7 +27,7 @@ Also, I've extended its capabilities by installing [MCPs](https://code.claude.co
 
 For example, I wanted my assistant to summarize videos, so I asked it to create scripts for fetching YouTube subtitles (with fallback to downloading and transcribing locally). Now I can request video summaries from anywhere via Telegram.
 
-![Video summary example](../assets/demo-video-summary.gif)
+![Video summary example](../../assets/demo-video-summary.gif)
 
 So wether I launch a Claude Code session (usually with the `--dangerously-skip-permissions` flag) on my Mac or chat with the Telegram bot, **Claude is now my 24/7 executive assistant**.
 
@@ -35,7 +35,7 @@ So wether I launch a Claude Code session (usually with the `--dangerously-skip-p
 
 The `CLAUDE.md` file in my personal assistant `fab-dev` folder is the centerpiece of the setup.
 
-Since Claude runs by default with prompt permissions bypassed (more on this in [SECURITY.md](../SECURITY.md)), it can browse other folders, read and write files, and execute commands quite freely within the allowed paths (more on scripts and commands below).
+Since Claude runs by default with prompt permissions bypassed (more on this in [SECURITY.md](../../SECURITY.md)), it can browse other folders, read and write files, and execute commands quite freely within the allowed paths (more on scripts and commands below).
 
 Here's a template based on my own setup:
 
@@ -140,7 +140,7 @@ One of my favorite uses of this setup is having Claude act as a personal trainer
 
 I recorded demos on my Mac, but this is what I normally do on the go, from my iPhone:
 
-![Workout example](../assets/demo-workout.gif)
+![Workout example](../../assets/demo-workout.gif)
 
 The setup is simple:
 
@@ -450,7 +450,7 @@ I can manage my racing calendars from anywhere in the world, via Telegram.
 
 Another pattern I use all the time is having Claude do thorough research for me. Whether I'm comparing products, investigating a topic, or making a purchase decision, Claude searches multiple sources and synthesizes findings into a clear recommendation.
 
-![Research example](../assets/demo-research.gif)
+![Research example](../../assets/demo-research.gif)
 
 The setup now uses a **`research` skill** that handles the entire workflow:
 
