@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { ClaudeSession } from "../session";
+import { ClaudeSession } from "../core/session/session";
 import { UserChoiceExtractor } from "../utils/user-choice-extractor";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 
