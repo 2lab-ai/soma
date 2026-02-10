@@ -63,6 +63,24 @@ describe("session state-machine transitions", () => {
     expect(consumed.nextState.stopRequested).toBe(false);
   });
 
+  test("supports full interrupt lifecycle during running query", () => {
+    let state = createInitialSessionRuntimeState();
+    state = startProcessingTransition(state);
+    state = startQueryTransition(state);
+    state = requestStopDuringRunningTransition(state);
+    state = markInterruptFlag(state);
+
+    const consumed = consumeInterruptFlagTransition(state);
+    expect(consumed.wasInterrupted).toBe(true);
+    expect(consumed.nextState.stopRequested).toBe(false);
+    expect(consumed.nextState.wasInterruptedByNewMessage).toBe(false);
+
+    state = completeQueryTransition(consumed.nextState);
+    state = finalizeQueryTransition(state);
+    expect(state.queryState).toBe("idle");
+    expect(state.stopRequested).toBe(false);
+  });
+
   test("interrupt start is idempotent", () => {
     const state = createInitialSessionRuntimeState();
     const first = beginInterruptTransition(state);

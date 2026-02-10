@@ -4,12 +4,8 @@ import {
   THINKING_DEEP_KEYWORDS,
   THINKING_KEYWORDS,
 } from "../../config";
-import type {
-  SessionData,
-  SteeringMessage,
-  TokenUsage,
-  UsageSnapshot,
-} from "../../types";
+import type { SessionData, SteeringMessage, TokenUsage } from "../../types/session";
+import type { UsageSnapshot } from "../../types/runtime";
 import { fetchClaudeUsage } from "../../usage";
 
 export type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;

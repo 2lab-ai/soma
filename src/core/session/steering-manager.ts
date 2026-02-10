@@ -1,5 +1,8 @@
-import { createSteeringMessage } from "../../types";
-import type { PendingRecovery, SteeringMessage } from "../../types";
+import {
+  createSteeringMessage,
+  type PendingRecovery,
+  type SteeringMessage,
+} from "../../types/session";
 import { formatSteeringMessages } from "./session-helpers";
 
 export class SteeringManager {
