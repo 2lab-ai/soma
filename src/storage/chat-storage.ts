@@ -107,7 +107,8 @@ export class FileChatStorage implements IChatStorage {
 
     const records: ChatRecord[] = [];
     const partitionKey =
-      storagePartitionKey ?? (sessionId ? this.tryResolvePartitionKey(sessionId) : null);
+      storagePartitionKey ??
+      (sessionId ? this.tryResolvePartitionKey(sessionId) : null);
     const files = await this.getFilesInRange(from, to, partitionKey);
 
     for (const filePath of files) {
