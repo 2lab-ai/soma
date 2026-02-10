@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach } from "bun:test";
-import { ClaudeSession } from "./session";
-import { createSteeringMessage } from "./types";
-import type { SessionData } from "./types";
+import { ClaudeSession } from "./core/session/session";
+import { createSteeringMessage } from "./types/session";
+import type { SessionData } from "./types/session";
 import type { ChoiceState, DirectInputState } from "./types/user-choice";
 
 describe("ClaudeSession - steering", () => {
