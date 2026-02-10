@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ChannelBoundary, ChannelOutboundPayload } from "./plugins/types.core";
 import { ChannelOutboundOrchestrator } from "./outbound-orchestrator";
-import { buildSessionKey, buildStoragePartitionKey, createSessionIdentity } from "../routing/session-key";
+import {
+  buildSessionKey,
+  buildStoragePartitionKey,
+  createSessionIdentity,
+} from "../routing/session-key";
 import type { AgentRoute } from "../routing/resolve-route";
 
 function buildRoute(): AgentRoute {
@@ -43,24 +47,29 @@ describe("ChannelOutboundOrchestrator", () => {
     const route = buildRoute();
     const orchestrator = new ChannelOutboundOrchestrator(boundary);
 
-    await orchestrator.sendText(route, "hello");
-    await orchestrator.sendStatus(route, "working", "processing");
-    await orchestrator.sendReaction(route, "123", "👌");
+    await orchestrator.sendText(route, "hello", "corr-text");
+    await orchestrator.sendStatus(route, "working", "processing", "corr-status");
+    await orchestrator.sendReaction(route, "123", "👌", "corr-reaction");
     await orchestrator.sendChoice(route, {
       question: "Pick one",
       choices: [
         { id: "a", label: "Alpha" },
         { id: "b", label: "Beta" },
       ],
+      correlationId: "corr-choice",
     });
 
     expect(seen).toHaveLength(4);
     expect(seen[0]?.type).toBe("text");
+    expect((seen[0] as { correlationId?: string }).correlationId).toBe("corr-text");
     expect(seen[1]?.type).toBe("text");
     expect((seen[1] as { text?: string }).text).toBe("processing");
+    expect((seen[1] as { correlationId?: string }).correlationId).toBe("corr-status");
     expect(seen[2]?.type).toBe("reaction");
+    expect((seen[2] as { correlationId?: string }).correlationId).toBe("corr-reaction");
     expect(seen[3]?.type).toBe("text");
     expect((seen[3] as { text?: string }).text).toContain("Pick one");
     expect((seen[3] as { text?: string }).text).toContain("1. Alpha");
+    expect((seen[3] as { correlationId?: string }).correlationId).toBe("corr-choice");
   });
 });

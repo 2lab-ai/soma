@@ -5,36 +5,8 @@ import type {
   ChannelOutboundChoicePayload,
   ChannelOutboundPayload,
 } from "./plugins/types.core";
-
-function renderChoicePayload(payload: ChannelOutboundChoicePayload): string {
-  return [
-    payload.question,
-    "",
-    ...payload.choices.map((choice, index) => `${index + 1}. ${choice.label}`),
-  ].join("\n");
-}
-
-function normalizePayload(payload: ChannelOutboundPayload): ChannelOutboundPayload {
-  if (payload.type === "status") {
-    return {
-      type: "text",
-      route: payload.route,
-      text: payload.message,
-      correlationId: payload.correlationId,
-    };
-  }
-
-  if (payload.type === "choice") {
-    return {
-      type: "text",
-      route: payload.route,
-      text: renderChoicePayload(payload),
-      correlationId: payload.correlationId,
-    };
-  }
-
-  return payload;
-}
+import { normalizePayload } from "./outbound/normalize-payload";
+import { renderChoicePayload } from "./outbound/render-choice";
 
 export class ChannelOutboundOrchestrator {
   constructor(private readonly boundary: ChannelBoundary) {}
@@ -83,7 +55,10 @@ export class ChannelOutboundOrchestrator {
 
   async sendChoice(
     route: AgentRoute,
-    payload: Pick<ChannelOutboundChoicePayload, "question" | "choices" | "correlationId">
+    payload: Pick<
+      ChannelOutboundChoicePayload,
+      "question" | "choices" | "correlationId"
+    >
   ): Promise<ChannelDeliveryReceipt> {
     return this.dispatch({
       type: "choice",
