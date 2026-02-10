@@ -1,15 +1,18 @@
-import { normalizeProviderError, type NormalizedProviderError } from "./error-normalizer";
+import {
+  normalizeProviderError,
+  type NormalizedProviderError,
+} from "./error-normalizer";
+import {
+  mergeRetryPolicies,
+  type ProviderRetryPolicy,
+  type ProviderRetryPolicyMap,
+} from "./retry-policy";
 import { ProviderRegistry } from "./registry";
 import type {
   ProviderBoundary,
   ProviderEventHandler,
   ProviderQueryInput,
 } from "./types.models";
-
-interface ProviderRetryPolicy {
-  maxRetries: number;
-  baseBackoffMs: number;
-}
 
 interface ExecuteProviderQueryParams {
   primaryProviderId: string;
@@ -24,21 +27,17 @@ export interface ProviderExecutionResult {
 }
 
 export class ProviderOrchestrator {
-  private readonly retryPolicies: Record<string, ProviderRetryPolicy>;
+  private readonly retryPolicies: ProviderRetryPolicyMap;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(
     private readonly registry: ProviderRegistry,
     options?: {
-      retryPolicies?: Record<string, ProviderRetryPolicy>;
+      retryPolicies?: Partial<ProviderRetryPolicyMap>;
       sleep?: (ms: number) => Promise<void>;
     }
   ) {
-    this.retryPolicies = {
-      anthropic: { maxRetries: 1, baseBackoffMs: 200 },
-      codex: { maxRetries: 0, baseBackoffMs: 100 },
-      ...(options?.retryPolicies ?? {}),
-    };
+    this.retryPolicies = mergeRetryPolicies(options?.retryPolicies);
     this.sleep = options?.sleep ?? ((ms) => Bun.sleep(ms));
   }
 

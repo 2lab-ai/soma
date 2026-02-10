@@ -1,7 +1,4 @@
-import type {
-  ProviderBoundaryError,
-  ProviderBoundaryErrorCode,
-} from "./types.models";
+import type { ProviderBoundaryError, ProviderBoundaryErrorCode } from "./types.models";
 
 const RATE_LIMIT_PATTERNS = [
   "429",

@@ -1,5 +1,5 @@
-import type { AgentRoute } from "../../routing/resolve-route";
-import type { SessionIdentity } from "../../routing/session-key";
+import type { AgentRoute } from "../../core/routing/resolve-route";
+import type { SessionIdentity } from "../../core/routing/session-key";
 
 export interface ChannelMessageIdentity extends SessionIdentity {
   userId: string;
