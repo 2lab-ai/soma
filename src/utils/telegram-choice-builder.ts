@@ -1,7 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { BUTTON_LABEL_MAX_LENGTH } from "../config";
 import type { UserChoice, UserChoices, UserChoiceQuestion } from "../types/user-choice";
-import type { SteeringMessage } from "../types";
+import type { SteeringMessage } from "../types/session";
 
 function truncateLabel(label: string): string {
   if (label.length <= BUTTON_LABEL_MAX_LENGTH) return label;

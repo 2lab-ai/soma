@@ -1,9 +1,10 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { sessionManager } from "../session-manager";
-import type { ClaudeSession } from "../session";
+import { sessionManager } from "../core/session/session-manager";
+import type { ClaudeSession } from "../core/session/session";
 import { type ChatType, isAuthorizedForChat } from "../security";
-import { auditLog, startTypingIndicator } from "../utils";
+import { auditLog } from "../utils/audit";
+import { startTypingIndicator } from "../utils/typing";
 import { StreamingState, createStatusCallback, cleanupToolMessages } from "./streaming";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import { isAbortError } from "../utils/error-classification";
@@ -21,7 +22,7 @@ import {
   REASONING_TOKENS,
   type ConfigContext,
   type ReasoningLevel,
-} from "../model-config";
+} from "../config/model";
 import { skillsRegistry } from "../services/skills-registry";
 import { ChatSearchService } from "../services/chat-search-service";
 import { FileChatStorage } from "../storage/chat-storage";
