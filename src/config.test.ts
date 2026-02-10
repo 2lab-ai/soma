@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { SYS_MSG_PREFIX, CHAT_HISTORY_DATA_DIR, WORKING_DIR, MCP_SERVERS } from "./config";
+import {
+  SYS_MSG_PREFIX,
+  CHAT_HISTORY_DATA_DIR,
+  WORKING_DIR,
+  MCP_SERVERS,
+} from "./config";
 
 describe("config", () => {
   describe("SYS_MSG_PREFIX", () => {
