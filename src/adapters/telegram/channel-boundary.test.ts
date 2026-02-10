@@ -7,6 +7,9 @@ import {
 } from "./channel-boundary";
 import type { ChannelOutboundPayload } from "../../channels/plugins/types.core";
 import { ChannelOutboundOrchestrator } from "../../channels/outbound-orchestrator";
+import type { TelegramAuthPolicy } from "./auth-policy";
+import type { TelegramOrderPolicy } from "./order-policy";
+import type { TelegramRateLimitPolicy } from "./rate-limit-policy";
 
 function createContext({
   text = "hello",
@@ -120,8 +123,50 @@ describe("TelegramChannelBoundary", () => {
     expect(bypass.metadata.interruptBypassApplied).toBe(true);
   });
 
+  test("supports policy injection while preserving default envelope mapping", () => {
+    const calls: { auth: number; rateLimit: number; order: number } = {
+      auth: 0,
+      rateLimit: 0,
+      order: 0,
+    };
+    const authPolicy: TelegramAuthPolicy = {
+      evaluate: () => {
+        calls.auth += 1;
+        return { authorized: true };
+      },
+    };
+    const rateLimitPolicy: TelegramRateLimitPolicy = {
+      evaluate: () => {
+        calls.rateLimit += 1;
+        return { allowed: true, retryAfterSeconds: 2.5 };
+      },
+    };
+    const orderPolicy: TelegramOrderPolicy = {
+      evaluate: () => {
+        calls.order += 1;
+        return { accepted: true, interruptBypassApplied: true };
+      },
+    };
+    const boundary = new TelegramChannelBoundary({
+      authPolicy,
+      rateLimitPolicy,
+      orderPolicy,
+    });
+
+    const inbound = boundary.normalizeInbound({
+      ctx: createContext({ text: "hello policy", threadId: 99 }),
+      tenantId: "tenant-policy",
+    });
+
+    expect(calls).toEqual({ auth: 1, rateLimit: 1, order: 1 });
+    expect(inbound.identity.tenantId as string).toBe("tenant-policy");
+    expect(inbound.metadata.retryAfterSeconds).toBe(2.5);
+    expect(inbound.metadata.interruptBypassApplied).toBe(true);
+  });
+
   test("delivers mixed outbound events through orchestrator + boundary", async () => {
-    const sent: Array<{ type: "text" | "reaction"; text?: string; reaction?: string }> = [];
+    const sent: Array<{ type: "text" | "reaction"; text?: string; reaction?: string }> =
+      [];
     const boundary = new TelegramChannelBoundary({
       authorize: () => true,
       checkRateLimit: () => [true],

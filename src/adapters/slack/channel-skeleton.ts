@@ -146,38 +146,52 @@ export class SlackSkeletonChannelBoundary implements ChannelBoundary {
     };
   }
 
-  async deliverOutbound(payload: ChannelOutboundPayload): Promise<ChannelDeliveryReceipt> {
+  async deliverOutbound(
+    payload: ChannelOutboundPayload
+  ): Promise<ChannelDeliveryReceipt> {
+    const deliveredAt = Date.now();
+
     if (!this.outboundPort) {
       // Skeleton mode: compile-time contract only, runtime is intentionally no-op unless wired.
       return {
         messageId: "slack-skeleton-noop",
-        deliveredAt: Date.now(),
+        deliveredAt,
       };
     }
 
     const channelId = payload.route.identity.channelId.replace(/^slack-/, "");
     const threadTs =
-      payload.route.identity.threadId === "main" ? undefined : payload.route.identity.threadId;
+      payload.route.identity.threadId === "main"
+        ? undefined
+        : payload.route.identity.threadId;
 
     if (payload.type === "reaction") {
-      await this.outboundPort.sendReaction(channelId, payload.targetMessageId, payload.reaction);
+      await this.outboundPort.sendReaction(
+        channelId,
+        payload.targetMessageId,
+        payload.reaction
+      );
       return {
         messageId: payload.targetMessageId,
-        deliveredAt: Date.now(),
+        deliveredAt,
       };
     }
 
     if (payload.type === "text") {
-      const messageId = await this.outboundPort.sendText(channelId, payload.text, threadTs);
+      const messageId = await this.outboundPort.sendText(
+        channelId,
+        payload.text,
+        threadTs
+      );
       return {
         messageId,
-        deliveredAt: Date.now(),
+        deliveredAt,
       };
     }
 
     throw new SlackSkeletonBoundaryError(
       "CHANNEL_INVALID_PAYLOAD",
-      `Unsupported slack outbound type: ${(payload as { type: string }).type}`
+      `Unsupported outbound payload type: ${(payload as { type: string }).type}`
     );
   }
 }

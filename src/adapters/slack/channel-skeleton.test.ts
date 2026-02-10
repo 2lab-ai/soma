@@ -8,7 +8,9 @@ import {
   loadSlackSkeletonBoundaryFromEnv,
 } from "./channel-skeleton";
 
-function buildRoute(identity: ReturnType<SlackSkeletonChannelBoundary["normalizeInbound"]>["identity"]): AgentRoute {
+function buildRoute(
+  identity: ReturnType<SlackSkeletonChannelBoundary["normalizeInbound"]>["identity"]
+): AgentRoute {
   return {
     identity,
     sessionKey: buildSessionKey(identity),
@@ -83,6 +85,7 @@ describe("SlackSkeletonChannelBoundary", () => {
 
     const receipt = await boundary.deliverOutbound(payload);
     expect(receipt.messageId).toBe("slack-skeleton-noop");
+    expect(receipt.deliveredAt).toBeGreaterThan(0);
   });
 
   test("can send text/thread through unified outbound payload contract", async () => {
@@ -112,5 +115,33 @@ describe("SlackSkeletonChannelBoundary", () => {
     expect(sent[0]?.channelId).toBe("C001");
     expect(sent[0]?.threadTs).toBe("1738200.0001");
     expect(sent[0]?.text).toBe("processing");
+  });
+
+  test("maps unsupported payload types to channel invalid payload error", async () => {
+    const boundary = new SlackSkeletonChannelBoundary({
+      outboundPort: {
+        sendText: async () => "ts-1",
+        sendReaction: async () => {},
+      },
+    });
+    const inbound = boundary.normalizeInbound({
+      teamId: "team-1",
+      channelId: "C001",
+      userId: "U001",
+      text: "hello",
+      ts: "1738200.0002",
+    });
+    const route = buildRoute(inbound.identity);
+    const invalidPayload = {
+      type: "choice",
+      route,
+      question: "q",
+      choices: [{ id: "a", label: "A" }],
+    } as unknown as ChannelOutboundPayload;
+
+    await expect(boundary.deliverOutbound(invalidPayload)).rejects.toMatchObject({
+      code: "CHANNEL_INVALID_PAYLOAD",
+      message: "Unsupported outbound payload type: choice",
+    });
   });
 });

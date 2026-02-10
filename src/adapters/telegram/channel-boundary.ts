@@ -8,20 +8,27 @@ import type {
   ChannelOutboundPayload,
   ChannelMessageIdentity,
 } from "../../channels/plugins/types.core";
-import type { AgentRoute } from "../../routing/resolve-route";
+import type { AgentRoute } from "../../core/routing/resolve-route";
 import {
   buildSessionKey,
   buildStoragePartitionKey,
   createSessionIdentity,
-} from "../../routing/session-key";
-import { type ChatType, isAuthorizedForChat, rateLimiter } from "../../security";
+} from "../../core/routing/session-key";
+import { type ChatType } from "../../security";
+import {
+  type TelegramAuthPolicy,
+  type TelegramAuthorizeFn,
+  createTelegramAuthPolicy,
+} from "./auth-policy";
+import { type TelegramOrderPolicy, createTelegramOrderPolicy } from "./order-policy";
+import { type TelegramOutboundPort, createTelegramOutboundPort } from "./outbound-port";
+import {
+  type TelegramRateLimitPolicy,
+  type TelegramRateLimitFn,
+  createTelegramRateLimitPolicy,
+} from "./rate-limit-policy";
 
 const TELEGRAM_MAIN_THREAD_ID = "main";
-
-interface TelegramOutboundPort {
-  sendText(chatId: number, text: string): Promise<number>;
-  sendReaction(chatId: number, messageId: number, reaction: string): Promise<void>;
-}
 
 export interface TelegramBoundaryRawInbound {
   ctx: Context;
@@ -38,16 +45,6 @@ export interface TelegramNormalizedInboundEnvelope extends ChannelInboundEnvelop
     interruptBypassApplied?: boolean;
   };
 }
-
-type TelegramAuthorizeFn = (
-  userId: number,
-  chatId: number,
-  chatType: ChatType | undefined
-) => boolean;
-
-type TelegramRateLimitFn = (
-  userId: number
-) => [allowed: boolean, retryAfter?: number];
 
 class TelegramBoundaryError extends Error implements ChannelBoundaryError {
   readonly boundary = "channel" as const;
@@ -87,24 +84,9 @@ function toNumber(value: string, fieldName: string): number {
   return parsed;
 }
 
-function createOutboundPortFromContext(ctx: Context): TelegramOutboundPort {
-  return {
-    sendText: async (chatId, text) => {
-      const message = await ctx.api.sendMessage(chatId, text);
-      return message.message_id;
-    },
-    sendReaction: async (chatId, messageId, reaction) => {
-      await ctx.api.setMessageReaction(chatId, messageId, [
-        {
-          type: "emoji",
-          emoji: reaction as never,
-        },
-      ]);
-    },
-  };
-}
-
-export function isTelegramBoundaryError(error: unknown): error is TelegramBoundaryError {
+export function isTelegramBoundaryError(
+  error: unknown
+): error is TelegramBoundaryError {
   return error instanceof TelegramBoundaryError;
 }
 
@@ -133,18 +115,25 @@ export class TelegramChannelBoundary implements ChannelBoundary {
     supportsChoiceKeyboard: true,
   };
 
-  private readonly authorize: TelegramAuthorizeFn;
-  private readonly checkRateLimit: TelegramRateLimitFn;
+  private readonly authPolicy: TelegramAuthPolicy;
+  private readonly rateLimitPolicy: TelegramRateLimitPolicy;
+  private readonly orderPolicy: TelegramOrderPolicy;
   private readonly outboundPort: TelegramOutboundPort | null;
-  private readonly lastTimestampByThread = new Map<string, number>();
 
   constructor(options?: {
     authorize?: TelegramAuthorizeFn;
     checkRateLimit?: TelegramRateLimitFn;
     outboundPort?: TelegramOutboundPort;
+    authPolicy?: TelegramAuthPolicy;
+    rateLimitPolicy?: TelegramRateLimitPolicy;
+    orderPolicy?: TelegramOrderPolicy;
   }) {
-    this.authorize = options?.authorize ?? isAuthorizedForChat;
-    this.checkRateLimit = options?.checkRateLimit ?? rateLimiter.check.bind(rateLimiter);
+    this.authPolicy =
+      options?.authPolicy ?? createTelegramAuthPolicy(options?.authorize);
+    this.rateLimitPolicy =
+      options?.rateLimitPolicy ??
+      createTelegramRateLimitPolicy(options?.checkRateLimit);
+    this.orderPolicy = options?.orderPolicy ?? createTelegramOrderPolicy();
     this.outboundPort = options?.outboundPort ?? null;
   }
 
@@ -167,37 +156,38 @@ export class TelegramChannelBoundary implements ChannelBoundary {
       );
     }
 
-    if (!this.authorize(userId, chatId, chatType)) {
+    const authDecision = this.authPolicy.evaluate({ userId, chatId, chatType });
+    if (!authDecision.authorized) {
       throw new TelegramBoundaryError(
         "CHANNEL_UNAUTHORIZED",
         "Unauthorized chat/user for telegram boundary."
       );
     }
 
-    const [allowed, retryAfter] = this.checkRateLimit(userId);
-    if (!allowed) {
+    const rateLimitDecision = this.rateLimitPolicy.evaluate({ userId });
+    if (!rateLimitDecision.allowed) {
       throw new TelegramBoundaryError(
         "CHANNEL_RATE_LIMITED",
         "Inbound rate limit exceeded.",
         true,
-        { retryAfterSeconds: retryAfter }
+        { retryAfterSeconds: rateLimitDecision.retryAfterSeconds }
       );
     }
 
     const timestampMs = timestampSeconds * 1000;
     const isInterrupt = text.trimStart().startsWith("!");
-    const orderingKey = `${chatId}:${threadId ?? TELEGRAM_MAIN_THREAD_ID}`;
-    const lastTimestamp = this.lastTimestampByThread.get(orderingKey) ?? 0;
-
-    const interruptBypassApplied = timestampMs < lastTimestamp && isInterrupt;
-    if (timestampMs < lastTimestamp && !interruptBypassApplied) {
+    const orderingDecision = this.orderPolicy.evaluate({
+      chatId,
+      threadId,
+      timestampMs,
+      text,
+    });
+    if (!orderingDecision.accepted) {
       throw new TelegramBoundaryError(
         "CHANNEL_INVALID_PAYLOAD",
         "Out-of-order telegram message dropped by boundary policy."
       );
     }
-
-    this.lastTimestampByThread.set(orderingKey, Math.max(lastTimestamp, timestampMs));
 
     const identity = createSessionIdentity({
       tenantId: event.tenantId ?? "default",
@@ -221,13 +211,15 @@ export class TelegramChannelBoundary implements ChannelBoundary {
         threadId,
         chatType,
         username,
-        retryAfterSeconds: retryAfter,
-        interruptBypassApplied,
+        retryAfterSeconds: rateLimitDecision.retryAfterSeconds,
+        interruptBypassApplied: orderingDecision.interruptBypassApplied,
       },
     };
   }
 
-  async deliverOutbound(payload: ChannelOutboundPayload): Promise<ChannelDeliveryReceipt> {
+  async deliverOutbound(
+    payload: ChannelOutboundPayload
+  ): Promise<ChannelDeliveryReceipt> {
     if (!this.outboundPort) {
       throw new TelegramBoundaryError(
         "CHANNEL_UNAVAILABLE",
@@ -265,8 +257,10 @@ export class TelegramChannelBoundary implements ChannelBoundary {
   }
 }
 
-export function createTelegramBoundaryWithContext(ctx: Context): TelegramChannelBoundary {
+export function createTelegramBoundaryWithContext(
+  ctx: Context
+): TelegramChannelBoundary {
   return new TelegramChannelBoundary({
-    outboundPort: createOutboundPortFromContext(ctx),
+    outboundPort: createTelegramOutboundPort(ctx),
   });
 }
