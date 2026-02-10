@@ -1,4 +1,4 @@
-import type { StatusCallback } from "../types";
+import type { StatusCallback } from "../types/runtime";
 
 export interface SchedulerExecutionRequest {
   readonly prompt: string;
