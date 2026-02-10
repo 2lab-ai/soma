@@ -17,7 +17,7 @@ export {
   handleRetry,
   handleCron,
   handleSessions,
-} from "./commands";
+} from "./commands/index";
 export { handleText, setBotUsername } from "./text";
 export { handleVoice } from "./voice";
 export { handlePhoto } from "./photo";
