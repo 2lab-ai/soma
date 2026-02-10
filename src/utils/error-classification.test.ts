@@ -7,7 +7,7 @@ import {
   formatErrorForUser,
   formatErrorForLog,
 } from "./error-classification";
-import type { ClaudeUsage } from "../types";
+import type { ClaudeUsage } from "../types/provider";
 
 describe("isRateLimitError", () => {
   test("detects 429 error", () => {
@@ -99,7 +99,7 @@ describe("isSonnetAvailable", () => {
 
   test("returns false when exactly 80%", () => {
     const usage = {
-      seven_day_sonnet: { utilization: 0.80, resets_at: null },
+      seven_day_sonnet: { utilization: 0.8, resets_at: null },
     } as ClaudeUsage;
     expect(isSonnetAvailable(usage)).toBe(false);
   });
@@ -163,7 +163,9 @@ describe("extractErrorDetails", () => {
   });
 
   test("adds permission hint", () => {
-    const details = extractErrorDetails(new Error("permission denied exited with code 1"));
+    const details = extractErrorDetails(
+      new Error("permission denied exited with code 1")
+    );
     expect(details.hint).toContain("Permission denied");
   });
 

@@ -3,8 +3,8 @@
  */
 
 import type { Context } from "grammy";
-import type { ClaudeSession } from "../session";
-import type { ClaudeUsage } from "../types";
+import type { ClaudeSession } from "../core/session/session";
+import type { ClaudeUsage } from "../types/provider";
 import { Reactions } from "../constants/reactions";
 import { sendSystemMessage } from "./system-message";
 import { fetchClaudeUsage } from "../usage";
@@ -98,18 +98,18 @@ export async function formatRateLimitForUser(
     }
 
     // Find soonest reset
-    const resets = [
-      usage.five_hour?.resets_at,
-      usage.seven_day?.resets_at,
-    ].filter(Boolean) as string[];
+    const resets = [usage.five_hour?.resets_at, usage.seven_day?.resets_at].filter(
+      Boolean
+    ) as string[];
 
     if (resets.length > 0) {
-      const soonest = resets
-        .map((r) => new Date(r).getTime())
-        .sort((a, b) => a - b)[0];
+      const soonest = resets.map((r) => new Date(r).getTime()).sort((a, b) => a - b)[0];
       const diff = soonest! - Date.now();
       if (diff > 0) {
-        lines.push("", `⏰ 예상 복구: ${formatTimeRemaining(new Date(soonest!).toISOString())}`);
+        lines.push(
+          "",
+          `⏰ 예상 복구: ${formatTimeRemaining(new Date(soonest!).toISOString())}`
+        );
       }
     }
   } else {
@@ -122,7 +122,7 @@ export async function formatRateLimitForUser(
 
 export function isSonnetAvailable(usage: ClaudeUsage | null): boolean {
   if (!usage?.seven_day_sonnet) return false;
-  return usage.seven_day_sonnet.utilization < 0.80;
+  return usage.seven_day_sonnet.utilization < 0.8;
 }
 
 /**

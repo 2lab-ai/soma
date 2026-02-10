@@ -1,7 +1,11 @@
 import { describe, test, expect, mock } from "bun:test";
-import { StreamingState, createStatusCallback } from "./streaming";
+import {
+  StreamingState,
+  createStatusCallback,
+  handleRateLimitError,
+} from "./streaming";
 import { UserChoiceExtractor } from "../utils/user-choice-extractor";
-import type { QueryMetadata } from "../types";
+import type { QueryMetadata } from "../types/runtime";
 
 describe("StreamingState - JSON extraction", () => {
   test("initializes with no extracted choice", () => {
@@ -197,7 +201,9 @@ describe("Model name header in done handler", () => {
 
     await callback("done", "", undefined, metadata);
 
-    const headerEdit = editCalls.find((c) => c.text.startsWith("<pre>") && c.text.includes("</pre>\n"));
+    const headerEdit = editCalls.find(
+      (c) => c.text.startsWith("<pre>") && c.text.includes("</pre>\n")
+    );
     expect(headerEdit).toBeUndefined();
   });
 
@@ -223,6 +229,68 @@ describe("Model name header in done handler", () => {
 
     const headerEdit = editCalls.find((c) => c.text.includes("<pre>Opus 4.6</pre>"));
     expect(headerEdit).toBeUndefined();
+  });
+});
+
+describe("handleRateLimitError", () => {
+  function createRateLimitCtx() {
+    const reactionCalls: string[] = [];
+    return {
+      reactionCalls,
+      ctx: {
+        chat: { id: 123 },
+        message: { message_id: 1 },
+        api: {
+          setMessageReaction: mock(
+            async (
+              _chatId: number,
+              _msgId: number,
+              reactions: Array<{ emoji?: string }>
+            ) => {
+              const reaction = reactions[0]?.emoji;
+              if (reaction) reactionCalls.push(reaction);
+              return true;
+            }
+          ),
+        },
+      },
+    };
+  }
+
+  test("returns false for non-rate-limit errors", async () => {
+    const { ctx, reactionCalls } = createRateLimitCtx();
+    const state = new StreamingState();
+
+    const handled = await handleRateLimitError(
+      ctx as any,
+      new Error("network unavailable"),
+      state
+    );
+
+    expect(handled).toBe(false);
+    expect(reactionCalls.length).toBe(0);
+    expect(state.rateLimitNotified).toBe(false);
+  });
+
+  test("marks rate-limit as handled only once", async () => {
+    const { ctx, reactionCalls } = createRateLimitCtx();
+    const state = new StreamingState();
+
+    const first = await handleRateLimitError(
+      ctx as any,
+      new Error("429 Too Many Requests, retry after 30"),
+      state
+    );
+    const second = await handleRateLimitError(
+      ctx as any,
+      new Error("429 Too Many Requests, retry after 30"),
+      state
+    );
+
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    expect(state.rateLimitNotified).toBe(true);
+    expect(reactionCalls).toEqual(["🥱"]);
   });
 });
 

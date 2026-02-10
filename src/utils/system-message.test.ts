@@ -13,10 +13,12 @@ function createMockApi() {
         sent.push({ chatId, text, opts });
         return { message_id: 42, chat: { id: chatId } };
       }),
-      setMessageReaction: mock(async (chatId: number, msgId: number, reaction: any[]) => {
-        reactions.push({ chatId, msgId, emoji: reaction[0]?.emoji });
-        return true;
-      }),
+      setMessageReaction: mock(
+        async (chatId: number, msgId: number, reaction: any[]) => {
+          reactions.push({ chatId, msgId, emoji: reaction[0]?.emoji });
+          return true;
+        }
+      ),
     },
   };
 }

@@ -1,8 +1,8 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
-import { sessionManager } from "../session-manager";
-import type { QueryMetadata, StatusCallback } from "../types";
-import type { ClaudeSession } from "../session";
+import { sessionManager } from "../core/session/session-manager";
+import type { QueryMetadata, StatusCallback } from "../types/runtime";
+import type { ClaudeSession } from "../core/session/session";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import { UserChoiceExtractor } from "../utils/user-choice-extractor";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";

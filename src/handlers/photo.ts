@@ -5,7 +5,7 @@
  */
 
 import type { Context } from "grammy";
-import { sessionManager } from "../session-manager";
+import { sessionManager } from "../core/session/session-manager";
 import { TEMP_DIR } from "../config";
 import {
   type ChatType,
@@ -13,12 +13,9 @@ import {
   rateLimiter,
   shouldRespond,
 } from "../security";
-import {
-  addTimestamp,
-  auditLog,
-  auditLogRateLimit,
-  startTypingIndicator,
-} from "../utils";
+import { auditLog, auditLogRateLimit } from "../utils/audit";
+import { addTimestamp } from "../utils/interrupt";
+import { startTypingIndicator } from "../utils/typing";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { botUsername } from "./text";

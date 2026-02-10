@@ -32,11 +32,16 @@ export async function sendSystemMessage(
       api = target.api;
     }
 
-    api.setMessageReaction(msg.chat.id, msg.message_id, [
-      { type: "emoji", emoji: SYSTEM_REACTION },
-    ]).catch((err) => {
-      console.debug(`[SYS-MSG] Reaction failed for msg ${msg.message_id}:`, String(err).slice(0, 200));
-    });
+    api
+      .setMessageReaction(msg.chat.id, msg.message_id, [
+        { type: "emoji", emoji: SYSTEM_REACTION },
+      ])
+      .catch((err) => {
+        console.debug(
+          `[SYS-MSG] Reaction failed for msg ${msg.message_id}:`,
+          String(err).slice(0, 200)
+        );
+      });
 
     return msg.message_id;
   } catch {
@@ -54,6 +59,9 @@ export async function addSystemReaction(
       { type: "emoji", emoji: SYSTEM_REACTION },
     ]);
   } catch (err) {
-    console.debug(`[SYS-MSG] addSystemReaction failed for msg ${messageId}:`, String(err).slice(0, 200));
+    console.debug(
+      `[SYS-MSG] addSystemReaction failed for msg ${messageId}:`,
+      String(err).slice(0, 200)
+    );
   }
 }
