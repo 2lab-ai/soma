@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Context } from "grammy";
 import { handleNew, handleResume } from "./commands";
-import { sessionManager } from "../session-manager";
-import type { SteeringMessage } from "../types";
+import { formatDuration, formatTimeRemaining } from "./commands/formatters";
+import { sessionManager } from "../core/session/session-manager";
+import type { SteeringMessage } from "../types/session";
 
 interface ReplyCall {
   text: string;
@@ -58,6 +59,20 @@ function restoreSessionManagerMethods(): void {
 describe("command handlers unit", () => {
   afterEach(() => {
     restoreSessionManagerMethods();
+  });
+
+  test("formatters produce stable duration/time strings", () => {
+    expect(formatDuration(9)).toBe("9s");
+    expect(formatDuration(65)).toBe("1m 5s");
+    expect(formatDuration(3661)).toBe("1h 1m 1s");
+
+    expect(formatTimeRemaining(null)).toBe("");
+    expect(formatTimeRemaining(Math.floor((Date.now() - 1_000) / 1000))).toBe("now");
+    expect(
+      formatTimeRemaining(
+        Math.floor((Date.now() + (4 * 86_400 + 3 * 3_600 + 30) * 1_000) / 1_000)
+      )
+    ).toContain("4d");
   });
 
   test("/new uses canonical deriveKey and wires lost-message recovery", async () => {
