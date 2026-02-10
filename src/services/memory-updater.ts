@@ -1,11 +1,11 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { readFile, copyFile, unlink } from "fs/promises";
 import { existsSync } from "fs";
 import { ClaudeMdUpdater, type ApplyResult } from "./claude-md-updater";
 import type { Learning } from "./memory-analyzer";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface UpdateResult {
   success: boolean;
@@ -153,34 +153,33 @@ export class MemoryUpdater {
     message: string,
     filePaths: string[]
   ): Promise<string | undefined> {
-    try {
-      const relativePaths = filePaths.map((p) =>
-        p.startsWith(this.config.workingDir)
-          ? p.slice(this.config.workingDir.length + 1)
-          : p
-      );
+    const relativePaths = filePaths.map((p) =>
+      p.startsWith(this.config.workingDir)
+        ? p.slice(this.config.workingDir.length + 1)
+        : p
+    );
 
-      await execAsync(`git add ${relativePaths.join(" ")}`, {
-        cwd: this.config.workingDir,
-      });
-
-      const { stdout } = await execAsync(
-        `git commit -m "${message.replace(/"/g, '\\"')}"`,
-        { cwd: this.config.workingDir }
-      );
-
-      const hashMatch = stdout.match(/\[[\w-]+\s+([a-f0-9]+)\]/);
-      return hashMatch?.[1];
-    } catch (e) {
-      const error = e as { stderr?: string; stdout?: string };
-      if (
-        error.stderr?.includes("nothing to commit") ||
-        error.stdout?.includes("nothing to commit")
-      ) {
-        return undefined;
-      }
-      throw e;
+    if (relativePaths.length === 0) {
+      return undefined;
     }
+
+    await execFileAsync("git", ["add", "--", ...relativePaths], {
+      cwd: this.config.workingDir,
+    });
+
+    const hasStagedChanges = await this.hasStagedChanges();
+    if (!hasStagedChanges) {
+      return undefined;
+    }
+
+    await execFileAsync("git", ["commit", "-m", message], {
+      cwd: this.config.workingDir,
+    });
+
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: this.config.workingDir,
+    });
+    return stdout.trim();
   }
 
   async rollback(): Promise<void> {
@@ -210,6 +209,21 @@ export class MemoryUpdater {
       }
     }
     this.backupFiles.clear();
+  }
+
+  private async hasStagedChanges(): Promise<boolean> {
+    try {
+      await execFileAsync("git", ["diff", "--cached", "--quiet"], {
+        cwd: this.config.workingDir,
+      });
+      return false;
+    } catch (e) {
+      const error = e as { code?: number };
+      if (error.code === 1) {
+        return true;
+      }
+      throw e;
+    }
   }
 
   private formatCommitMessage(learnings: Learning[], filePaths: string[]): string {
