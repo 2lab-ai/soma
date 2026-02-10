@@ -1,10 +1,10 @@
 # Refactor Reset Epic: Runtime/Core Boundary Consolidation
 
 ## Objective
-Drive the AS-IS -> TO-BE refactor from `docs/plans/2026-02-09-refactor-reset-plan.md` with deterministic order, 1h execution slices, and behavior-preserving migration.
+Drive the AS-IS -> TO-BE refactor from `docs/archive/refactor-reset-2026-02-09/plans/2026-02-09-refactor-reset-plan.md` with deterministic order, 1h execution slices, and behavior-preserving migration.
 
 ## Source of Truth
-- `docs/plans/2026-02-09-refactor-reset-plan.md`
+- `docs/archive/refactor-reset-2026-02-09/plans/2026-02-09-refactor-reset-plan.md`
 
 ## Final Architecture Target
 - Move runtime wiring to `src/app/*`

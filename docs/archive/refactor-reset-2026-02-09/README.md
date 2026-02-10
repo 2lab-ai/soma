@@ -2,7 +2,22 @@
 
 This archive stores legacy refactoring documents that were superseded by:
 
-- `docs/plans/2026-02-09-refactor-reset-plan.md`
+- `docs/architecture/current-source-architecture.md`
+
+## 2026-02-10 Update
+
+`docs/plans`에 있던 refactor-reset 실행 문서를 이 아카이브로 이동했다.
+
+Moved from `docs/plans/` to `docs/archive/refactor-reset-2026-02-09/plans/`:
+
+- `2026-02-09-refactor-reset-plan.md`
+- `2026-02-09-refactor-reset-execution-log.md`
+- `soma-zfz-epic-description.md`
+- `soma-zfz-rr-01b-quality-gate.md`
+
+Current architecture reference moved to:
+
+- `docs/architecture/current-source-architecture.md`
 
 ## Moved Documents
 
