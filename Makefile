@@ -116,8 +116,8 @@ fmt:
 # Run tests
 test:
 	@echo "🧪 Running tests..."
-	@if [ -d src/__tests__ ] || [ -f src/**/*.test.ts ]; then \
-		bun test; \
+	@if find src -type f -name "*.test.ts" -print -quit | grep -q .; then \
+		TELEGRAM_BOT_TOKEN=$${TELEGRAM_BOT_TOKEN:-dummy} TELEGRAM_ALLOWED_USERS=$${TELEGRAM_ALLOWED_USERS:-1} bun test; \
 	else \
 		echo "⚠️  No tests found, skipping..."; \
 	fi

@@ -1,21 +1,43 @@
-# SOMA Refactoring Reset Plan (2026-02-09)
+# SOMA Refactoring Reset Plan (2026-02-09, Reviewed 2026-02-10)
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For Claude:** REQUIRED SUB-SKILL: Use `new-task` workflow and execute this plan task-by-task.
 
-**Goal:** 현재 혼재된 리팩토링 상태를 정리해, `session` 중심 단일 진입 흐름을 명확한 계층 구조로 재배치하고 안정적으로 마이그레이션한다.
+**Goal:** 혼재된 리팩토링 상태를 정리해 `session` 중심 실행 경로를 명확한 계층 구조로 재배치하고, 동작 회귀 없이 점진 마이그레이션한다.
 
-**Architecture:** 런타임 진입점/핸들러/세션 실행/채널 경계/프로바이더 경계를 분리한다. 우선은 동작을 유지한 채 파일 책임을 분해하고, 이후 인터페이스를 기준으로 교체 가능한 구조로 수렴한다.
+**Architecture:** runtime wiring / handler input boundary / core session lifecycle / provider boundary / channel boundary를 분리한다.
 
 **Tech Stack:** TypeScript, Bun, grammY, Claude Agent SDK, bd tracker
 
+## 0) 2026-02-10 Review Snapshot
+
+### Verified current baseline
+
+- 주요 파일 크기
+  - `src/index.ts`: 514 lines
+  - `src/session.ts`: 1376 lines
+  - `src/handlers/text.ts`: 985 lines
+  - `src/handlers/commands.ts`: 863 lines
+  - `src/scheduler.ts`: 397 lines
+- 품질 게이트 현황
+  - `bun run typecheck`: pass
+  - `make lint`: pass (warnings only)
+  - `make test`: command bug (`/bin/sh: line 0: [: too many arguments`)
+  - `bun test`: env 필요 (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`)
+
+### Gaps fixed by this update
+
+1. 품질 게이트 계약(`make test`)이 현재 기준선 검증에 부적합
+2. `RR-08 (soma-zfz.9)`는 app wiring 전제(`RR-02`)에 직접 의존해야 함
+3. RR 태스크 설명은 충분히 상세하지만 실행 단위를 1시간 체크포인트로 더 잘게 관리할 필요가 있음
+4. 경로 목표를 "최종 구조"와 "중간 호환 shim 구조"로 분리해 문서화할 필요가 있음
+
 ## 1) Scope and Rules
 
-- 이번 문서는 기존 v3 문서군을 대체하는 기준 계획이다.
-- 목표는 "완전 재작성"이 아니라 "현재 코드와 테스트를 살리는 점진적 재구성"이다.
-- 우선순위:
-  1. 런타임 안정성 (`src/index.ts`, `src/session.ts`, `src/handlers/text.ts`)
-  2. 경계 명확화 (channel/provider boundary)
-  3. 타입/유틸 분리 (`src/types.ts`, `src/utils.ts`)
+- 이 문서는 `soma-zfz` 에픽의 단일 기준 계획(SSOT)이다.
+- 목표는 재작성이 아니라 동작 보존 기반 점진 리팩토링이다.
+- 모든 RR 태스크는 **1시간 단위 execution slice**로 진행하고, 슬라이스 종료 시 테스트를 남긴다.
+- 호환 shim(`src/*.ts` root entry)은 RR-14 전까지 유지하고, RR-14에서만 제거한다.
+- 한 RR에서 실패하면 다음 RR로 넘어가지 않는다.
 
 ## 2) AS-IS Directory Target (Current Reality)
 
@@ -29,16 +51,12 @@ src/
   scheduler.ts
   types.ts
   utils.ts
-  formatting.ts
-  security.ts
-  usage.ts
-  message-queue.ts
   handlers/
   core/session/
-  channels/
   adapters/
     telegram/
     slack/
+  channels/
   providers/
   routing/
   scheduler/
@@ -48,138 +66,222 @@ src/
   constants/
 ```
 
-### AS-IS 문제 요약
+### AS-IS issues
 
-- 루트 레벨 파일(`index.ts`, `session.ts`, `scheduler.ts`) 책임이 과도하게 크다.
-- `src/session.ts` 중심 구조와 `src/core/session/*`, `src/providers/*`, `src/channels/*` 추출 구조가 병행되어 경계가 불명확하다.
-- 핸들러(`src/handlers/text.ts`)가 채널 경계/세션 제어/사용자 UX/에러 처리까지 동시에 담당한다.
-- 공통 타입/유틸(`src/types.ts`, `src/utils.ts`)이 집약되어 변경 영향 범위가 크다.
+- 루트 레벨 대형 파일(`index.ts`, `session.ts`, `scheduler.ts`)에 책임 집중
+- `session.ts` 중심 구조와 추출된 `core/session/*` 구조가 병행되어 경계 혼재
+- `handlers/text.ts`가 inbound filtering, UX, session control, error mapping을 동시에 담당
+- `types.ts`, `utils.ts`의 변경 영향 범위가 과도함
 
-## 3) TO-BE Directory Target (Refactor Goal)
+## 3) TO-BE Directory Target (Final + Transitional)
 
 ```text
 src/
-  app/                        # 런타임 조립(부트스트랩/등록/시작)
+  app/
     bootstrap.ts
     telegram-bot.ts
     scheduler-runner.ts
-  config/                     # 환경변수/모델 설정
+  config/
     index.ts
+    env.ts
     model.ts
+    safety-prompt.ts
   core/
-    session/                  # 상태 머신, 선택 흐름, 쿼리 실행
+    session/
       state-machine.ts
       choice-flow.ts
       steering-manager.ts
       query-runtime.ts
       session.ts
       session-manager.ts
+      session-store.ts
     routing/
       session-key.ts
       resolve-route.ts
-  channels/
-    boundary/
-      types.ts
-    outbound/
-      orchestrator.ts
   adapters/
     telegram/
       channel-boundary.ts
+      auth-policy.ts
+      rate-limit-policy.ts
+      order-policy.ts
       outbound-port.ts
     slack/
       channel-boundary.ts
+  channels/
+    plugins/
+      types.core.ts
+    outbound/
+      normalize-payload.ts
+      render-choice.ts
+    outbound-orchestrator.ts   # RR-14 전까지 compatibility 유지 가능
   providers/
     orchestrator.ts
+    retry-policy.ts
+    create-orchestrator.ts
     registry.ts
-    anthropic-adapter.ts
+    claude-adapter.ts
     codex-adapter.ts
-  handlers/                   # 얇은 입력 어댑터
-    commands.ts
-    text.ts
-    voice.ts
-    photo.ts
-    document.ts
-    callback.ts
-  scheduler/                  # 스케줄링 도메인
+  scheduler/
     service.ts
+    queue.ts
+    file-watcher.ts
     route.ts
     runtime-boundary.ts
-  services/
-  storage/
+  handlers/
+    text/
+      direct-input-flow.ts
+      interrupt-flow.ts
+      query-flow.ts
+      inbound-guard.ts
+    commands/
+      session-commands.ts
+      system-commands.ts
+      usage-commands.ts
+      formatters.ts
+      index.ts
   types/
     runtime.ts
-    external.ts
+    session.ts
+    provider.ts
+    audit.ts
   utils/
     audit.ts
     typing.ts
-    error.ts
+    voice.ts
+    interrupt.ts
 ```
 
-### TO-BE 원칙
+## 4) Architecture Decisions (Oracle-equivalent review result)
 
-- `app`은 wiring만, `core`는 비즈니스 상태 전이만 담당한다.
-- `handlers`는 input-normalize + route 호출만 수행한다.
-- `providers`는 SDK 의존성을 내부에 가둔다.
-- 루트 단일 파일 의존성을 줄이고 디렉토리 기반 책임 단위로 이동한다.
+1. **Compatibility shim policy**
+   - Option A: early-delete root files
+   - Option B: keep shim until cutover
+   - **Decision: B (recommended)**
+   - Reason: 현재 회귀 리스크가 큰 구조에서 롤백 비용을 최소화함
 
-## 4) Major Files and Refactoring Goals
+2. **Routing contract placement**
+   - Option A: keep `src/routing/*` permanently
+   - Option B: move to `src/core/routing/*` and keep re-export shim
+   - **Decision: B (recommended)**
+   - Reason: session identity는 core invariant이며 channel adapter 계층 밖에 두는 것이 맞음
 
-| File | Current Risk | Refactoring Goal | Done Criteria |
-| --- | --- | --- | --- |
-| `src/index.ts` | 초기화/등록/스케줄러/종료 훅이 한 파일에 집중 | `app/bootstrap` + `app/telegram-bot`로 분리 | 엔트리 파일 150라인 이하, 부트스트랩/등록 테스트 분리 |
-| `src/session.ts` | 세션 상태, 스트리밍, 훅, SDK 호출이 결합 | `core/session/query-runtime.ts`와 `core/session/session.ts`로 책임 분리 | SDK 호출 경로가 query-runtime 단일 모듈로 수렴 |
-| `src/session-manager.ts` | 세션 생성 + 파일 스토리지 + 작업 디렉토리 관리 결합 | 세션 수명주기와 영속화 경계를 분리 (`session-manager` vs `session-store`) | 세션 매니저 단위 테스트에서 파일 I/O mocking 단순화 |
-| `src/handlers/text.ts` | 900+ 라인급 핸들러, 입력/상태/응답 흐름 혼재 | `text.ts`를 오케스트레이션 전용으로 축소, direct-input/interrupt 처리 분리 | 텍스트 핸들러의 핵심 함수 길이 100라인 이하 |
-| `src/handlers/commands.ts` | 명령 핸들러가 하나의 거대 모듈 | 명령별 서브모듈 또는 registry 기반 분리 | 신규 커맨드 추가 시 파일 1개만 수정 |
-| `src/core/session/state-machine.ts` | 상태 전이는 존재하나 규칙 선언이 분산 | 전이 규칙표와 불변식 검증 함수 추가 | 허용되지 않은 전이는 테스트에서 즉시 실패 |
-| `src/core/session/choice-flow.ts` | 선택 흐름 규칙이 핸들러와 상호결합 | choice 상태 전이를 core에 고정하고 핸들러는 입출력만 담당 | callback/direct-input 경로가 동일 transition API 사용 |
-| `src/providers/orchestrator.ts` | fallback/retry 정책이 하드코딩 | provider별 정책 설정을 config로 분리 | 정책 변경이 코드 수정 없이 설정으로 가능 |
-| `src/providers/create-orchestrator.ts` | provider wiring 위치가 임시 구성 | `app` 레이어에서 orchestrator 조립 | 테스트에서 mock provider 삽입 경로 명확 |
-| `src/adapters/telegram/channel-boundary.ts` | 인가/레이트리밋/정규화가 단일 클래스에 집중 | 인증/레이트리밋을 분리 가능한 전략으로 분해 | 채널 바운더리 테스트에서 정책 모듈 독립 검증 |
-| `src/channels/outbound-orchestrator.ts` | payload normalize와 dispatch가 결합 | normalize 전략을 분리하고 orchestrator는 dispatch만 수행 | choice/status 텍스트 변환 테스트가 독립 모듈로 이동 |
-| `src/scheduler.ts` | 큐/락/파일 watcher/실행이 단일 파일 | `scheduler/service.ts` 중심으로 실행·큐·watcher 분리 | 큐 처리 단위 테스트 추가, 런타임 경계 의존성 주입 |
-| `src/config.ts` | 환경 파싱과 정책/메시지 설정 결합 | 설정 스키마 모듈화 (`config/index.ts`, `config/model.ts`) | 설정 변경 영향이 한 모듈로 제한 |
-| `src/types.ts` | 광범위 공용 타입 집중 | `types/runtime.ts`, `types/external.ts`로 분해 | import cycle 없이 타입 의존 방향 단순화 |
-| `src/utils.ts` | 감사로그/타이핑/전사 등 다기능 집합 | 용도별 유틸 파일로 분리 | 핸들러가 `utils.ts` wildcard 의존을 제거 |
+3. **Provider execution path**
+   - Option A: `ClaudeSession` direct SDK call 유지
+   - Option B: runtime path를 `ProviderOrchestrator.executeProviderQuery()`로 단일화
+   - **Decision: B (recommended)**
+   - Reason: fallback/retry 정책 일관성과 테스트 가능성 확보
 
-## 5) Migration Phases
+4. **Quality gate contract**
+   - Option A: `make test` 유지 (현재 상태)
+   - Option B: RR-01 단계에서 테스트 실행 계약을 고정
+   - **Decision: B (recommended)**
+   - Reason: baseline safety net 자체가 실행 불가능하면 이후 RR 검증이 무의미함
 
-### Phase A: Stabilize Runtime Boundary
+## 5) Feature Workstreams
 
-1. `src/index.ts` 책임 분해 (`app` 디렉토리 도입)
-2. `src/session.ts`에서 SDK 실행 경로를 별도 모듈로 추출
-3. `src/handlers/text.ts`를 interrupt/direct-input/normal flow로 분할
+- Runtime bootstrap 분리 (`index.ts` -> `app/*`)
+- Config/module boundary 분리 (`config.ts`, `model-config.ts`)
+- Routing/session identity core 이전
+- Session query runtime 분리
+- `ClaudeSession` class core 이동
+- Session lifecycle/persistence 분리
+- Text handler flow 분해
+- Commands handler 분해
+- Provider policy/wiring 외부화
+- Telegram/Slack channel policy 분해
+- Outbound normalize 분리
+- Scheduler service/queue/watcher 분리
+- Shared types 분해
+- Shared utils 분해
+- Import cutover + dead compatibility 제거 + full verification
 
-### Phase B: Normalize Boundaries
+## 6) Revised RR Task Tree (with 1h execution slices)
 
-1. provider orchestrator 조립 지점을 `app`으로 이동
-2. telegram/slack boundary 계약 테스트 보강
-3. outbound normalize 로직 분리
+### Setup + Phase A
 
-### Phase C: Type and Utility Debt Cleanup
+1. `soma-zfz.1` RR-00 (1h)
+   - Slice A: `codex/` 브랜치/워크트리 분리
+   - Slice B: baseline SHA/branch 기록
+2. `soma-zfz.19` RR-01B (1h, new)
+   - Slice A: `make test` 실행 계약 보정 계획 확정
+   - Slice B: baseline test command 입력값/환경 변수 기준 문서화
+3. `soma-zfz.2` RR-01 (1-2h)
+   - Slice A: 리그레션 테스트 추가
+   - Slice B: state/session contract 경계 테스트 보강
+4. `soma-zfz.3` RR-02 (1-2h)
+   - Slice A: `app/telegram-bot.ts` 추출
+   - Slice B: `app/bootstrap.ts` + `app/scheduler-runner.ts` 추출
+5. `soma-zfz.4` RR-03 (1-2h)
+   - Slice A: `config/env.ts`, `config/safety-prompt.ts` 분리
+   - Slice B: `config/index.ts`, `config/model.ts`로 import 정리
+6. `soma-zfz.17` RR-03B (1h)
+   - Slice A: `routing/*` -> `core/routing/*` 이동 + shim 유지
+7. `soma-zfz.5` RR-04 (1-2h)
+   - Slice A: `query-runtime.ts` 생성
+   - Slice B: `sendMessageStreaming()` orchestration-only로 축소
+8. `soma-zfz.18` RR-04B (1h)
+   - Slice A: `ClaudeSession` core 이동 + compatibility export
+9. `soma-zfz.6` RR-05 (1-2h)
+   - Slice A: `session-store.ts` 분리
+   - Slice B: manager lifecycle + persistence 경계 분리
+10. `soma-zfz.7` RR-06 (1-2h)
+    - Slice A: direct-input/interrupt flow 분리
+    - Slice B: `handleText()` thin orchestrator화
+11. `soma-zfz.8` RR-07 (1-2h)
+    - Slice A: command group 모듈 분리
+    - Slice B: export compatibility 유지
 
-1. `types.ts` 분해
-2. `utils.ts` 분해
-3. `scheduler.ts` 서비스화
+### Phase B + C + D
 
-### Phase D: Cleanup and Cutover
+12. `soma-zfz.9` RR-08 (1h)
+    - Slice A: retry policy 외부화 + app wiring 경유 실행 경로 확정
+13. `soma-zfz.10` RR-09 (1h)
+    - Slice A: telegram boundary policy 모듈 분리 + slack parity 맞춤
+14. `soma-zfz.11` RR-10 (1h)
+    - Slice A: outbound normalize/render 모듈 분리
+15. `soma-zfz.12` RR-11 (1-2h)
+    - Slice A: scheduler service/queue 분리
+    - Slice B: file-watcher 분리 + runtime-boundary 정리
+16. `soma-zfz.13` RR-12 (1h)
+    - Slice A: types 분해 + barrel compatibility 유지
+17. `soma-zfz.14` RR-13 (1h)
+    - Slice A: utils 분해 + wildcard import 제거
+18. `soma-zfz.15` RR-14 (1-2h)
+    - Slice A: import cutover
+    - Slice B: compatibility 삭제 + dead files 정리
+19. `soma-zfz.16` RR-15 (1h)
+    - Slice A: 전체 품질 게이트 + handoff log 작성
 
-1. 구 경로 import 제거 및 dead file 삭제
-2. e2e + handler + contract 테스트 전체 재실행
-3. 문서(`docs/plans/*`)를 최종 구조 기준으로 갱신
+## 7) Dependency Corrections Applied
 
-## 6) Quality Gates
+- `RR-01B (soma-zfz.19)` 추가
+  - blocked by: `soma-zfz.1`
+  - blocks: `soma-zfz.2`, `soma-zfz.16`
+- `RR-08 (soma-zfz.9)`는 `RR-02 (soma-zfz.3)`에 직접 의존하도록 수정
+
+## 8) Quality Gates (updated execution contract)
 
 - `make lint`
-- `make test`
 - `bun run typecheck`
-- 경계 회귀 테스트:
-  - `src/adapters/telegram/channel-boundary.test.ts`
-  - `src/channels/outbound-orchestrator.test.ts`
-  - `src/session-manager.contract.test.ts`
-  - `src/e2e/v3-runtime.e2e.test.ts`
+- `make test` (must execute `bun test` when `src/**/*.test.ts` exists)
+- `TELEGRAM_BOT_TOKEN=dummy TELEGRAM_ALLOWED_USERS=1 bun test`
+- critical regression tests
+  - `bun test src/e2e/v3-runtime.e2e.test.ts`
+  - `bun test src/session-manager.contract.test.ts`
+  - `bun test src/adapters/telegram/channel-boundary.test.ts`
+  - `bun test src/channels/outbound-orchestrator.test.ts`
 
-## 7) Legacy Refactor Docs Policy
+### Test env contract
 
-- 기존 v3 리팩토링 문서는 `docs/archive/refactor-reset-2026-02-09/`로 이관한다.
-- 신규 기준 문서는 본 문서 1개(`docs/plans/2026-02-09-refactor-reset-plan.md`)를 단일 진실원천(SSOT)으로 사용한다.
+- Required runtime env for tests:
+  - `TELEGRAM_BOT_TOKEN` (use `dummy` in local/CI when not calling real Telegram)
+  - `TELEGRAM_ALLOWED_USERS` (use `1` for local/CI baseline)
+- `make test` must provide deterministic defaults:
+  - `TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-dummy}`
+  - `TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-1}`
+- RR-01 baseline, per-task slice checks, and RR-15 final validation must all use this same contract.
+
+## 9) Legacy Refactor Docs Policy
+
+- 기존 v3 리팩토링 문서는 `docs/archive/refactor-reset-2026-02-09/`로 이관 유지
+- 본 문서(`docs/plans/2026-02-09-refactor-reset-plan.md`)를 `soma-zfz` 실행 기준 SSOT로 유지
