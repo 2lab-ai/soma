@@ -5,7 +5,7 @@ import {
   type SessionIdentity,
   type SessionKey,
   type StoragePartitionKey,
-} from "../routing/session-key";
+} from "../core/routing/session-key";
 
 const SCHEDULER_TENANT_ID = "cron";
 const SCHEDULER_CHANNEL_ID = "scheduler";
