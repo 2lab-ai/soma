@@ -28,6 +28,10 @@ export interface ProviderQueryInput {
   tools?: ReadonlyArray<ProviderToolDefinition>;
   metadata?: Readonly<Record<string, unknown>>;
   permissionMode?: QueryPermissionMode;
+  hooks?: unknown;
+  pathToClaudeCodeExecutable?: string;
+  allowDangerouslySkipPermissions?: boolean;
+  abortController?: AbortController;
 }
 
 export interface ProviderQueryHandle {
@@ -109,9 +113,7 @@ export type ProviderEvent =
   | ProviderRateLimitEvent
   | ProviderDoneEvent;
 
-export type ProviderEventHandler = (
-  event: ProviderEvent
-) => void | Promise<void>;
+export type ProviderEventHandler = (event: ProviderEvent) => void | Promise<void>;
 
 export type ProviderBoundaryErrorCode =
   | "RATE_LIMIT"

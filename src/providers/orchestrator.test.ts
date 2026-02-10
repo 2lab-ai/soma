@@ -211,8 +211,8 @@ describe("ProviderOrchestrator", () => {
     expect(result.providerId).toBe("codex");
     expect(primary.starts).toBe(1);
     expect(fallback.starts).toBe(1);
-    expect(events.some((event) => event.providerId === "codex" && event.type === "done")).toBe(
-      true
-    );
+    expect(
+      events.some((event) => event.providerId === "codex" && event.type === "done")
+    ).toBe(true);
   });
 });

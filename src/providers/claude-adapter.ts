@@ -9,12 +9,10 @@ import type {
 } from "./types.models";
 import { normalizeProviderError } from "./error-normalizer";
 
-type ClaudeQueryFactory = (
-  payload: {
-    prompt: string;
-    options: Options & { abortController: AbortController };
-  }
-) => AsyncGenerator<SDKMessage>;
+type ClaudeQueryFactory = (payload: {
+  prompt: string;
+  options: Options & { abortController: AbortController };
+}) => AsyncGenerator<SDKMessage>;
 
 interface ActiveClaudeQuery {
   input: ProviderQueryInput;
@@ -52,9 +50,7 @@ function toClaudeOptions(
   abortController: AbortController
 ): Options & { abortController: AbortController } {
   const permissionMode =
-    input.permissionMode === "bypass"
-      ? "bypassPermissions"
-      : undefined;
+    input.permissionMode === "bypass" ? "bypassPermissions" : undefined;
 
   return {
     model: input.modelId,
@@ -67,7 +63,9 @@ function toClaudeOptions(
       : undefined,
     resume: input.resumeSessionId,
     permissionMode,
-    allowDangerouslySkipPermissions: true,
+    allowDangerouslySkipPermissions: input.allowDangerouslySkipPermissions ?? true,
+    hooks: input.hooks as Options["hooks"],
+    pathToClaudeCodeExecutable: input.pathToClaudeCodeExecutable,
     abortController,
   };
 }
@@ -88,7 +86,7 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
   }
 
   async startQuery(input: ProviderQueryInput): Promise<ProviderQueryHandle> {
-    const abortController = new AbortController();
+    const abortController = input.abortController ?? new AbortController();
     this.activeQueries.set(input.queryId, { input, abortController });
     return {
       queryId: input.queryId,

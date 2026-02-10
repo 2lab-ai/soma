@@ -10,7 +10,7 @@ import { execFileSync } from "child_process";
 import { createHash } from "crypto";
 import os from "os";
 import path from "path";
-import type { ClaudeUsage, CodexUsage, GeminiUsage, AllUsage } from "./types";
+import type { AllUsage, ClaudeUsage, CodexUsage, GeminiUsage } from "./types/provider";
 
 const API_TIMEOUT_MS = 5000;
 const DEFAULT_CACHE_TTL_SECONDS = 60;

@@ -3,7 +3,10 @@ import { NormalizedProviderError, normalizeProviderError } from "./error-normali
 
 describe("normalizeProviderError", () => {
   test("classifies rate-limit errors as retryable", () => {
-    const error = normalizeProviderError("anthropic", new Error("429 rate limit exceeded"));
+    const error = normalizeProviderError(
+      "anthropic",
+      new Error("429 rate limit exceeded")
+    );
     expect(error.providerId).toBe("anthropic");
     expect(error.code).toBe("RATE_LIMIT");
     expect(error.retryable).toBe(true);
@@ -16,7 +19,10 @@ describe("normalizeProviderError", () => {
   });
 
   test("classifies network errors as retryable", () => {
-    const error = normalizeProviderError("anthropic", new Error("fetch failed: ETIMEDOUT"));
+    const error = normalizeProviderError(
+      "anthropic",
+      new Error("fetch failed: ETIMEDOUT")
+    );
     expect(error.code).toBe("NETWORK");
     expect(error.retryable).toBe(true);
   });
