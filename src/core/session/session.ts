@@ -628,9 +628,16 @@ export class ClaudeSession {
     }
 
     this.abortController = new AbortController();
+    console.log(`[QUERY] Runtime cwd for ${this.sessionKey}: ${this.workingDir}`);
+    if (this.sessionKey === "cron:scheduler:heartbeat") {
+      const heartbeatPath = `${this.workingDir}/HEARTBEAT.md`;
+      console.log(
+        `[CRON:heartbeat] HEARTBEAT probe path: ${heartbeatPath} (exists=${existsSync(heartbeatPath)})`
+      );
+    }
     const runtimeOptions = buildQueryRuntimeOptions({
       model: effectiveModel,
-      cwd: WORKING_DIR,
+      cwd: this.workingDir,
       systemPrompt: `${SAFETY_PROMPT}\n\n${UI_ASKUSER_INSTRUCTIONS}\n\n${CHAT_HISTORY_ACCESS_INFO}`,
       mcpServers: MCP_SERVERS,
       maxThinkingTokens: thinkingTokens,

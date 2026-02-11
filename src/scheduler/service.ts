@@ -318,6 +318,13 @@ export function createSchedulerService(
 
       const route = dependencies.buildSchedulerRoute(name);
       const userId = dependencies.allowedUsers[0] || 0;
+      const heartbeatPath = resolve(WORKING_DIR, "HEARTBEAT.md");
+      if (name === "heartbeat") {
+        const heartbeatExists = dependencies.existsSync(heartbeatPath);
+        dependencies.logger.log(
+          `[CRON:heartbeat] HEARTBEAT path check: ${heartbeatPath} (exists=${heartbeatExists}, workingDir=${WORKING_DIR}, sessionKey=${route.sessionKey})`
+        );
+      }
       const result = await runtime.execute({
         prompt,
         sessionKey: route.sessionKey as string,
@@ -325,6 +332,13 @@ export function createSchedulerService(
         statusCallback,
         modelContext: "cron",
       });
+
+      if (name === "heartbeat" && /No HEARTBEAT\.md found/i.test(result)) {
+        const heartbeatExists = dependencies.existsSync(heartbeatPath);
+        dependencies.logger.warn(
+          `[CRON:heartbeat] Model reported missing HEARTBEAT.md. attemptedPath=${heartbeatPath} existsNow=${heartbeatExists} workingDir=${WORKING_DIR} sessionKey=${route.sessionKey}`
+        );
+      }
 
       dependencies.logger.log(`[CRON] Job ${name} completed`);
       dependencies.logger.log(
