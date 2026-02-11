@@ -13,6 +13,7 @@ import {
   formatErrorForUser,
   formatRateLimitForUser,
   handleAbortError,
+  isAuthenticationError,
   isRateLimitError,
   isSonnetAvailable,
 } from "../../utils/error-classification";
@@ -260,9 +261,22 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         break;
       } catch (error) {
         const errorStr = String(error);
+        const authInfo = isAuthenticationError(error);
         const isClaudeCodeCrash = errorStr.includes("exited with code");
 
         cleanupToolMessages(ctx, state.toolMessages);
+
+        if (authInfo.isAuthenticationError) {
+          console.error(`[AUTH] Claude authentication failed: ${errorStr}`);
+          await session.kill();
+          session.clearStopRequested();
+          const guidance =
+            authInfo.reason === "expired_token"
+              ? "🔐 **Claude 인증이 만료되었습니다.**\n\n호스트 터미널에서 `/login` 실행 후 같은 메시지를 다시 보내주세요."
+              : "🔐 **Claude 인증에 실패했습니다.**\n\n인증 정보 확인 후 다시 시도해주세요.";
+          await sendSystemMessage(ctx, guidance, { parse_mode: "Markdown" });
+          break;
+        }
 
         if (isClaudeCodeCrash) {
           console.error(`[CRASH] Claude Code crashed: ${errorStr}`);
