@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, symlinkSync } from "fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readlinkSync,
+  symlinkSync,
+  unlinkSync,
+} from "fs";
+import { dirname, isAbsolute, resolve } from "path";
 import { WORKING_DIR } from "../../config";
 import { buildStoragePartitionKey, parseSessionKey } from "../routing/session-key";
 
@@ -24,8 +32,35 @@ export function getThreadWorkingDir(
   ensureThreadWorkdirsDir(threadWorkdirsDir);
   const aliasName = storagePartitionKey.replace(/\//g, "__");
   const aliasPath = `${threadWorkdirsDir}/${aliasName}`;
-  if (existsSync(aliasPath)) {
-    return aliasPath;
+
+  try {
+    const stat = lstatSync(aliasPath);
+    if (!stat.isSymbolicLink()) {
+      console.warn(
+        `[ThreadWorkdir] Alias path exists but is not a symlink: ${aliasPath}. Falling back to working dir ${workingDir}`
+      );
+      return workingDir;
+    }
+
+    const linkTarget = readlinkSync(aliasPath);
+    const resolvedTarget = isAbsolute(linkTarget)
+      ? linkTarget
+      : resolve(dirname(aliasPath), linkTarget);
+    if (resolvedTarget === workingDir) {
+      return aliasPath;
+    }
+
+    console.warn(
+      `[ThreadWorkdir] Stale thread workdir alias detected for ${aliasName}. Repointing ${aliasPath} -> ${workingDir} (was: ${resolvedTarget})`
+    );
+    unlinkSync(aliasPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      console.warn(
+        `[ThreadWorkdir] Failed to inspect thread workdir alias ${aliasPath}: ${error}`
+      );
+    }
   }
 
   try {

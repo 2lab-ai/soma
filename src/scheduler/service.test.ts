@@ -6,6 +6,9 @@ interface SchedulerTestHarness {
   service: ReturnType<typeof createSchedulerService>;
   scheduledTicks: Array<() => Promise<void>>;
   stopCalls: Array<ReturnType<typeof mock>>;
+  logs: string[];
+  warnings: string[];
+  errors: string[];
   executeCalls: Array<{
     prompt: string;
     sessionKey: string;
@@ -34,6 +37,9 @@ function createHarness(initialConfig: CronConfig | null): SchedulerTestHarness {
   let runtimeBusy = false;
   const scheduledTicks: Array<() => Promise<void>> = [];
   const stopCalls: Array<ReturnType<typeof mock>> = [];
+  const logs: string[] = [];
+  const warnings: string[] = [];
+  const errors: string[] = [];
   const executeCalls: Array<{
     prompt: string;
     sessionKey: string;
@@ -106,9 +112,15 @@ function createHarness(initialConfig: CronConfig | null): SchedulerTestHarness {
     }),
     escapeHtml: (value: string) => value,
     logger: {
-      log: () => {},
-      warn: () => {},
-      error: () => {},
+      log: (...args: unknown[]) => {
+        logs.push(args.map(String).join(" "));
+      },
+      warn: (...args: unknown[]) => {
+        warnings.push(args.map(String).join(" "));
+      },
+      error: (...args: unknown[]) => {
+        errors.push(args.map(String).join(" "));
+      },
     },
     existsSync: () => false,
     statSync: () => ({ mtimeMs: 0 }) as never,
@@ -127,6 +139,9 @@ function createHarness(initialConfig: CronConfig | null): SchedulerTestHarness {
     service,
     scheduledTicks,
     stopCalls,
+    logs,
+    warnings,
+    errors,
     executeCalls,
     setRuntimeBusy: (busy) => {
       runtimeBusy = busy;
@@ -194,5 +209,27 @@ describe("scheduler service", () => {
     await harness.scheduledTicks[0]!();
 
     expect(harness.executeCalls).toHaveLength(1);
+  });
+
+  test("logs heartbeat diagnostics with absolute HEARTBEAT.md path", async () => {
+    const harness = createHarness({
+      schedules: [
+        buildSchedule("heartbeat", {
+          prompt: "HEARTBEAT.md 확인",
+        }),
+      ],
+    });
+
+    harness.service.startScheduler();
+    await harness.scheduledTicks[0]!();
+
+    expect(
+      harness.logs.some(
+        (line) =>
+          line.includes("[CRON:heartbeat]") &&
+          line.includes("HEARTBEAT.md") &&
+          line.includes("exists=")
+      )
+    ).toBe(true);
   });
 });
