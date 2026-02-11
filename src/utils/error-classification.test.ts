@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   isRateLimitError,
+  isAuthenticationError,
   isSonnetAvailable,
   isAbortError,
   extractErrorDetails,
@@ -79,6 +80,32 @@ describe("isRateLimitError", () => {
     err.name = "TooManyRequests429";
     const result = isRateLimitError(err);
     expect(result.isRateLimit).toBe(true);
+  });
+});
+
+describe("isAuthenticationError", () => {
+  test("detects OAuth token expiry errors", () => {
+    const result = isAuthenticationError(
+      new Error(
+        'API Error: 401 {"error":{"type":"authentication_error","message":"OAuth token has expired"}}'
+      )
+    );
+    expect(result.isAuthenticationError).toBe(true);
+    expect(result.reason).toBe("expired_token");
+  });
+
+  test("detects invalid credential errors", () => {
+    const result = isAuthenticationError(
+      new Error("HTTP 401 unauthorized: invalid api key")
+    );
+    expect(result.isAuthenticationError).toBe(true);
+    expect(result.reason).toBe("invalid_credentials");
+  });
+
+  test("returns false for non-auth errors", () => {
+    const result = isAuthenticationError(new Error("network timeout"));
+    expect(result.isAuthenticationError).toBe(false);
+    expect(result.reason).toBeNull();
   });
 });
 
@@ -178,6 +205,15 @@ describe("extractErrorDetails", () => {
   test("adds ENOENT hint", () => {
     const details = extractErrorDetails(new Error("ENOENT: no such file"));
     expect(details.hint).toContain("File not found");
+  });
+
+  test("adds authentication hint for expired OAuth token", () => {
+    const details = extractErrorDetails(
+      new Error(
+        'API Error: 401 {"error":{"type":"authentication_error","message":"OAuth token has expired"}}'
+      )
+    );
+    expect(details.hint).toContain("/login");
   });
 });
 

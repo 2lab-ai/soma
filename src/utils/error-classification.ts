@@ -24,9 +24,28 @@ const RATE_LIMIT_PATTERNS = [
   "token limit",
 ];
 
+const AUTHENTICATION_PATTERNS = [
+  "authentication_error",
+  "oauth token has expired",
+  "auth token has expired",
+  "please run /login",
+  "api error: 401",
+  "http 401",
+  "unauthorized",
+  "invalid_api_key",
+  "invalid api key",
+  "invalid x-api-key",
+];
+
 export interface RateLimitInfo {
   isRateLimit: boolean;
   bucket: "opus" | "sonnet" | "unknown" | null;
+  rawMessage: string;
+}
+
+export interface AuthenticationInfo {
+  isAuthenticationError: boolean;
+  reason: "expired_token" | "invalid_credentials" | "unknown" | null;
   rawMessage: string;
 }
 
@@ -43,6 +62,34 @@ export function isRateLimitError(error: unknown): RateLimitInfo {
   else if (lower.includes("sonnet")) bucket = "sonnet";
 
   return { isRateLimit: true, bucket, rawMessage: msg };
+}
+
+export function isAuthenticationError(error: unknown): AuthenticationInfo {
+  const msg = error instanceof Error ? error.message : String(error);
+  const name = error instanceof Error ? error.name : "";
+  const lower = `${msg} ${name}`.toLowerCase();
+
+  const matched = AUTHENTICATION_PATTERNS.some((p) => lower.includes(p));
+  if (!matched) {
+    return {
+      isAuthenticationError: false,
+      reason: null,
+      rawMessage: msg,
+    };
+  }
+
+  let reason: AuthenticationInfo["reason"] = "unknown";
+  if (lower.includes("expired") || lower.includes("please run /login")) {
+    reason = "expired_token";
+  } else if (lower.includes("invalid") || lower.includes("unauthorized")) {
+    reason = "invalid_credentials";
+  }
+
+  return {
+    isAuthenticationError: true,
+    reason,
+    rawMessage: msg,
+  };
 }
 
 function formatTimeRemaining(resetAt: string | null): string {
@@ -194,6 +241,15 @@ export function extractErrorDetails(error: unknown): ErrorDetails {
     stack: error.stack,
     cause: (error as Error & { cause?: unknown }).cause,
   };
+
+  const authInfo = isAuthenticationError(error);
+  if (authInfo.isAuthenticationError) {
+    details.hint =
+      authInfo.reason === "expired_token"
+        ? "Authentication expired. Run /login, then retry."
+        : "Authentication failed. Verify credentials and retry.";
+    return details;
+  }
 
   // Extract exit code from message
   const exitMatch = error.message.match(/exited with code (\d+)/);
