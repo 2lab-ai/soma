@@ -47,7 +47,7 @@ up: install build preflight
 		$(SYSTEMCTL) daemon-reload; \
 		$(SYSTEMCTL) enable $(SERVICE_NAME) 2>/dev/null || true; \
 		echo "   Killing any existing processes..."; \
-		pkill -f "bun run src/index.ts" 2>/dev/null && echo "   Killed orphan processes" || echo "   No orphan processes"; \
+		pkill -f "[b]un run src/index.ts" 2>/dev/null && echo "   Killed orphan processes" || echo "   No orphan processes"; \
 		sleep 1; \
 		echo "   Starting service..."; \
 		$(SYSTEMCTL) restart $(SERVICE_NAME); \
@@ -76,7 +76,7 @@ up-force: install build
 		$(SYSTEMCTL) daemon-reload; \
 		$(SYSTEMCTL) enable $(SERVICE_NAME) 2>/dev/null || true; \
 		echo "   Killing any existing processes..."; \
-		pkill -f "bun run src/index.ts" 2>/dev/null && echo "   Killed orphan processes" || echo "   No orphan processes"; \
+		pkill -f "[b]un run src/index.ts" 2>/dev/null && echo "   Killed orphan processes" || echo "   No orphan processes"; \
 		sleep 1; \
 		echo "   Starting service..."; \
 		$(SYSTEMCTL) restart $(SERVICE_NAME); \
