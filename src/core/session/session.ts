@@ -254,9 +254,11 @@ export class ClaudeSession {
     const {
       input_tokens = 0,
       cache_creation_input_tokens = 0,
-      cache_read_input_tokens = 0,
+      // cache_read_input_tokens are NOT additive — they represent tokens
+      // already counted in input_tokens that were served from cache.
+      // Including them double-counts and produces absurd values like 791%.
     } = this.contextWindowUsage;
-    const total = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
+    const total = input_tokens + cache_creation_input_tokens;
     return total > 0 ? total : null;
   }
 
@@ -283,7 +285,9 @@ export class ClaudeSession {
   }
 
   get needsSave(): boolean {
-    return this.contextLimitWarned && !this.recentlyRestored;
+    // DISABLED: auto-save causing issues with context overflow loops
+    return false;
+    // return this.contextLimitWarned && !this.recentlyRestored;
   }
 
   get needsWarning70(): boolean {
@@ -465,9 +469,25 @@ export class ClaudeSession {
     return this.steering.peekSteering();
   }
 
+  /**
+   * Get count of messages tracked for injection during query execution.
+   * Used to detect text-only responses where PostToolUse hook didn't fire.
+   */
+  getInjectedCount(): number {
+    return this.steering.getInjectedCount();
+  }
+
+  /**
+   * Explicitly track buffered messages for injection.
+   * Called when text-only response completes without tool hooks firing.
+   */
+  trackBufferedMessagesForInjection(): number {
+    return this.steering.trackBufferedMessagesForInjection();
+  }
+
   startProcessing(): () => void {
     this.applyRuntimeState(startProcessingTransition(this.getRuntimeState()));
-    const PROCESSING_TIMEOUT_MS = 300_000;
+    const PROCESSING_TIMEOUT_MS = 60_000;
     let released = false;
     const timer = setTimeout(() => {
       if (!released && this.isProcessing) {
@@ -628,10 +648,30 @@ export class ClaudeSession {
     }
 
     this.abortController = new AbortController();
+
+    // Explicitly load CLAUDE.md from working directory (resolving symlinks)
+    let claudeMdContent = "";
+    try {
+      const { realpathSync } = require("fs");
+      const resolvedCwd = realpathSync(this.workingDir);
+      const claudeMdPath = `${resolvedCwd}/CLAUDE.md`;
+      if (existsSync(claudeMdPath)) {
+        claudeMdContent = readFileSync(claudeMdPath, "utf-8");
+        console.log(`[SESSION] Loaded CLAUDE.md from ${claudeMdPath} (${claudeMdContent.length} chars)`);
+      } else {
+        console.warn(`[SESSION] No CLAUDE.md found at ${claudeMdPath}`);
+      }
+    } catch (err) {
+      console.error(`[SESSION] Failed to load CLAUDE.md:`, err);
+    }
+    const claudeMdSection = claudeMdContent
+      ? `\n\n# Project Instructions (CLAUDE.md)\n${claudeMdContent}\n`
+      : "";
+
     const runtimeOptions = buildQueryRuntimeOptions({
       model: effectiveModel,
-      cwd: WORKING_DIR,
-      systemPrompt: `${SAFETY_PROMPT}\n\n${UI_ASKUSER_INSTRUCTIONS}\n\n${CHAT_HISTORY_ACCESS_INFO}`,
+      cwd: this.workingDir,
+      systemPrompt: `${SAFETY_PROMPT}\n\n${UI_ASKUSER_INSTRUCTIONS}\n\n${CHAT_HISTORY_ACCESS_INFO}${claudeMdSection}`,
       mcpServers: MCP_SERVERS,
       maxThinkingTokens: thinkingTokens,
       additionalDirectories: ALLOWED_PATHS,
@@ -951,6 +991,14 @@ export class ClaudeSession {
       }
     }
 
+    // Reset contextLimitWarned if context dropped significantly (compaction detected)
+    if (this.contextLimitWarned && currentContext < CONTEXT_LIMIT * 0.8) {
+      console.log(
+        `[CONTEXT] Compaction detected: ${currentContext}/${CONTEXT_LIMIT} (${((currentContext / CONTEXT_LIMIT) * 100).toFixed(1)}%). Resetting contextLimitWarned.`
+      );
+      this.contextLimitWarned = false;
+    }
+
     this.checkThreshold(currentContext, CONTEXT_LIMIT, 0.7, "warned70", "70% reached");
     this.checkThreshold(currentContext, CONTEXT_LIMIT, 0.85, "warned85", "85% reached");
     this.checkThreshold(
@@ -979,7 +1027,8 @@ export class ClaudeSession {
       );
     }
 
-    this.saveSession();
+    // DISABLED: auto-save on every accumulation
+    // this.saveSession();
   }
 
   private checkThreshold(
