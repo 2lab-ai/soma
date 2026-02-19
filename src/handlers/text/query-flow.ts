@@ -67,6 +67,17 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         const MAX_AUTO_CONTINUE_ROUNDS = 5;
         let autoContinueRound = 0;
 
+        // Fix soma-vig7: For text-only responses, PostToolUse hook never fires,
+        // so trackBufferedMessagesForInjection() is never called.
+        // Messages stay in steeringBuffer but restoreInjectedSteering() can't find them.
+        // Explicitly check buffer before auto-continue loop.
+        if (session.getSteeringCount() > 0 && session.getInjectedCount() === 0) {
+          console.log(
+            `[AUTO-CONTINUE] Text-only response detected: ${session.getSteeringCount()} message(s) in buffer but 0 injected. Tracking for restoration.`
+          );
+          session.trackBufferedMessagesForInjection();
+        }
+
         while (true) {
           const bufferBeforeRestore = session.getSteeringCount();
           const restoredCount = session.restoreInjectedSteering();
@@ -170,11 +181,12 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
         if (session.needsSave) {
           const currentTokens = session.currentContextTokens;
-          const percentage = ((currentTokens / 200_000) * 100).toFixed(1);
+          const windowSize = session.contextWindowSize;
+          const percentage = ((currentTokens / windowSize) * 100).toFixed(1);
           await sendSystemMessage(
             ctx,
             `⚠️ **Context Limit Approaching**\n\n` +
-              `Current: ${currentTokens.toLocaleString()} / 200,000 tokens (${percentage}%)\n\n` +
+              `Current: ${currentTokens.toLocaleString()} / ${windowSize.toLocaleString()} tokens (${percentage}%)\n\n` +
               `Initiating automatic save...`,
             { parse_mode: "Markdown" }
           );
