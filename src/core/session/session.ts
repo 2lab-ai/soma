@@ -254,11 +254,11 @@ export class ClaudeSession {
     const {
       input_tokens = 0,
       cache_creation_input_tokens = 0,
-      // cache_read_input_tokens are NOT additive — they represent tokens
-      // already counted in input_tokens that were served from cache.
-      // Including them double-counts and produces absurd values like 791%.
+      cache_read_input_tokens = 0,
     } = this.contextWindowUsage;
-    const total = input_tokens + cache_creation_input_tokens;
+    // Per Anthropic API docs: these 3 fields are mutually exclusive (no overlap).
+    // total = all tokens that occupy the context window.
+    const total = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
     return total > 0 ? total : null;
   }
 
