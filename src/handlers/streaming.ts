@@ -511,12 +511,22 @@ export async function createStatusCallback(
       if (statusType === "steering_pending") {
         // User sent messages during execution but Claude responded with text-only
         // Their messages weren't delivered via PreToolUse hook
-        // Auto-continue in text.ts will handle processing immediately
+        // FIX (soma-t5d): Immediately restore steering to prevent race condition
         const steeringCount =
           (metadata as { steeringCount?: number })?.steeringCount || 0;
-        console.log(
-          `[STEERING PENDING] ${steeringCount} message(s) in buffer - auto-continue will process after sendMessageStreaming returns`
-        );
+
+        // CRITICAL: Restore steering immediately to avoid async race condition
+        // where clearInjectedSteeringTracking() is called before restoration
+        if (session) {
+          const injected = session.restoreInjectedSteering();
+          console.log(
+            `[STEERING PENDING] ${steeringCount} message(s) restored immediately (injected: ${injected})`
+          );
+        } else {
+          console.log(
+            `[STEERING PENDING] ${steeringCount} message(s) in buffer - session unavailable`
+          );
+        }
 
         // Store flag but don't show notification - auto-continue handles immediately
         // Old behavior showed "다음 응답에서 처리됩니다" which was misleading
