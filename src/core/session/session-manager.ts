@@ -123,6 +123,32 @@ export class SessionManager {
   }
 
   /**
+   * Get or create a session by raw session key (for scheduler/admin use).
+   * Unlike getSession(), this accepts a pre-built session key directly.
+   */
+  getSessionByKey(sessionKey: string): ClaudeSession {
+    if (!this.sessions.has(sessionKey)) {
+      const session = new ClaudeSession(sessionKey, this.chatCaptureService, {
+        workingDir: this.threadWorkdirProvider.getThreadWorkingDirFromSessionKey(
+          sessionKey
+        ),
+        providerOrchestrator: this.providerOrchestrator,
+      });
+      this.sessions.set(sessionKey, session);
+
+      const loaded = this.sessionStore.loadSession(sessionKey);
+      if (loaded) {
+        session.restoreFromData(loaded);
+        console.log(`[SessionManager] Loaded session by key: ${sessionKey}`);
+      } else {
+        console.log(`[SessionManager] Created new session by key: ${sessionKey}`);
+      }
+    }
+
+    return this.sessions.get(sessionKey)!;
+  }
+
+  /**
    * Check if a session exists for the given chat/thread.
    */
   hasSession(chatId: number, threadId?: number): boolean {

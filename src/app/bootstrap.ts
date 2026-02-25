@@ -57,6 +57,7 @@ interface SessionPort {
 interface SessionManagerPort {
   getGlobalStats(): SessionStatsSnapshot;
   getSession(userId: number): SessionPort;
+  getSessionByKey(sessionKey: string): SessionPort;
   saveAllSessions(): void;
   setProviderOrchestrator?(
     orchestrator: ReturnType<typeof createProviderOrchestrator>
