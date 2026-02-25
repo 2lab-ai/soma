@@ -48,6 +48,20 @@ describe("bootstrapApplication", () => {
         formatToolStats: () => "",
         sendMessageStreaming: mock(async () => "ok"),
       }),
+      getSessionByKey: () => ({
+        isActive: false,
+        sessionStartTime: null,
+        currentContextTokens: 0,
+        contextWindowSize: 200000,
+        totalQueries: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        hasSteeringMessages: () => false,
+        getSteeringCount: () => 0,
+        consumeSteering: () => null,
+        formatToolStats: () => "",
+        sendMessageStreaming: mock(async () => "ok"),
+      }),
       saveAllSessions,
     };
 
