@@ -5,10 +5,16 @@ import {
 } from "../../types/session";
 import { formatSteeringMessages } from "./session-helpers";
 
+export interface SteeringAddResult {
+  evicted: boolean;
+  evictedMessage: SteeringMessage | null;
+}
+
 export class SteeringManager {
   private steeringBuffer: SteeringMessage[] = [];
   private injectedSteeringDuringQuery: SteeringMessage[] = [];
   private pendingRecovery: PendingRecovery | null = null;
+  private _evictionCount = 0;
 
   constructor(
     private readonly maxSteeringMessages: number,
@@ -23,15 +29,20 @@ export class SteeringManager {
     return this.steeringBuffer.length > 0;
   }
 
+  /** Total messages evicted since last reset. */
+  get evictionCount(): number {
+    return this._evictionCount;
+  }
+
   addSteering(
     message: string,
     messageId: number,
     receivedDuringTool?: string
-  ): boolean {
-    let evicted = false;
+  ): SteeringAddResult {
+    let evictedMessage: SteeringMessage | null = null;
     if (this.steeringBuffer.length >= this.maxSteeringMessages) {
-      this.steeringBuffer.shift();
-      evicted = true;
+      evictedMessage = this.steeringBuffer.shift() ?? null;
+      this._evictionCount++;
     }
 
     const steeringMessage = createSteeringMessage(
@@ -40,7 +51,7 @@ export class SteeringManager {
       receivedDuringTool
     );
     this.steeringBuffer.push(steeringMessage);
-    return evicted;
+    return { evicted: evictedMessage !== null, evictedMessage };
   }
 
   consumeSteering(): string | null {
@@ -141,5 +152,6 @@ export class SteeringManager {
     this.steeringBuffer = [];
     this.injectedSteeringDuringQuery = [];
     this.pendingRecovery = null;
+    this._evictionCount = 0;
   }
 }
