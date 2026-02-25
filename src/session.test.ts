@@ -131,14 +131,14 @@ describe("ClaudeSession - steering", () => {
   });
 
   test("addSteering evicts oldest when MAX_STEERING_MESSAGES reached", () => {
-    // Fill buffer to MAX_STEERING_MESSAGES (20)
-    for (let i = 1; i <= 20; i++) {
+    // Fill buffer to MAX_STEERING_MESSAGES (100)
+    for (let i = 1; i <= 100; i++) {
       const evicted = session.addSteering(`msg ${i}`, i);
       expect(evicted).toBe(false);
     }
 
-    // 21st message should trigger eviction
-    const evicted = session.addSteering("msg 21", 21);
+    // 101st message should trigger eviction
+    const evicted = session.addSteering("msg 101", 101);
     expect(evicted).toBe(true);
 
     // Verify oldest message (msg 1) was evicted, newest present
@@ -149,11 +149,11 @@ describe("ClaudeSession - steering", () => {
 
     // First should be msg 2 (msg 1 evicted)
     expect(firstLine).toMatch(/^\[\d{2}:\d{2}:\d{2}\] msg 2$/);
-    // Last should be msg 21
-    expect(lastLine).toMatch(/^\[\d{2}:\d{2}:\d{2}\] msg 21$/);
+    // Last should be msg 101
+    expect(lastLine).toMatch(/^\[\d{2}:\d{2}:\d{2}\] msg 101$/);
 
-    // Buffer should have exactly 20 messages
-    expect(result!.split("\n---\n")).toHaveLength(20);
+    // Buffer should have exactly 100 messages (max buffer size)
+    expect(result!.split("\n---\n")).toHaveLength(100);
   });
 
   test("consumeSteering includes tool context when provided", () => {

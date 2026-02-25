@@ -136,7 +136,7 @@ export class ClaudeSession {
   private _generation = initialRuntimeState.generation;
   private _wasInterruptedByNewMessage = initialRuntimeState.wasInterruptedByNewMessage;
   private _isInterrupting = initialRuntimeState.isInterrupting;
-  private steering = new SteeringManager(20, PENDING_RECOVERY_TIMEOUT_MS);
+  private steering = new SteeringManager(100, PENDING_RECOVERY_TIMEOUT_MS);
 
   choiceState: ChoiceState | null = null;
   pendingDirectInput: DirectInputState | null = null;
@@ -397,14 +397,16 @@ export class ClaudeSession {
     messageId: number,
     receivedDuringTool?: string
   ): boolean {
-    const evicted = this.steering.addSteering(message, messageId, receivedDuringTool);
-    if (evicted) {
-      console.warn("[STEERING] Buffer full, evicting oldest message");
+    const result = this.steering.addSteering(message, messageId, receivedDuringTool);
+    if (result.evicted && result.evictedMessage) {
+      console.warn(
+        `[STEERING] Buffer full (${this.steering.getSteeringCount()}/${100}), evicted message #${result.evictedMessage.messageId}: "${result.evictedMessage.content.slice(0, 80)}"`
+      );
     }
     console.log(
       `[STEERING DEBUG] Added message to buffer. Buffer now: ${this.steering.getSteeringCount()}, content: "${message.slice(0, 50)}"`
     );
-    return evicted;
+    return result.evicted;
   }
 
   consumeSteering(): string | null {

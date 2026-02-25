@@ -149,7 +149,7 @@ export async function handleSteeringGate(params: SteeringGateParams): Promise<bo
   if (evicted) {
     console.warn("[STEERING] Buffer full, oldest message evicted", {
       ...steeringContext,
-      bufferSize: 20,
+      bufferSize: session.getSteeringCount(),
     });
 
     let notified = false;
