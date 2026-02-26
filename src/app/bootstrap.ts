@@ -41,6 +41,7 @@ interface SessionPort {
   getSteeringCount(): number;
   consumeSteering(): string | null;
   formatToolStats(): string;
+  kill(): Promise<{ count: number; messages: unknown[] }>;
   sendMessageStreaming(
     prompt: string,
     statusCallback: (
@@ -443,6 +444,20 @@ export async function bootstrapApplication(
     savePendingSteering();
     await sendShutdownMessage();
     await saveShutdownContext();
+
+    // Kill user session so next boot starts a fresh Claude Code session.
+    // Without this, session resume causes Claude to re-execute "make up"
+    // from the previous context, creating an infinite restart loop.
+    const userId = ALLOWED_USERS[0];
+    if (userId) {
+      const session = manager.getSession(userId);
+      if (session.isActive) {
+        console.log("[SIGTERM] Killing session to prevent restart loop");
+        await session.kill();
+      }
+    }
+    manager.saveAllSessions();
+
     stopRunner();
     await sleep(1000);
   };
