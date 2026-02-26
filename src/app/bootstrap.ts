@@ -2,6 +2,8 @@ import { run } from "@grammyjs/runner";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import type { Bot, Context } from "grammy";
 import { ALLOWED_USERS, RESTART_FILE, SYS_MSG_PREFIX, WORKING_DIR } from "../config";
+
+const RESTART_MARKER_FILE = "/tmp/soma-restart-marker.json";
 import { createProviderOrchestrator } from "../providers/create-orchestrator";
 import type { ProviderRetryPolicyMap } from "../providers/retry-policy";
 import { addSystemReaction, sendSystemMessage } from "../utils/system-message";
@@ -41,7 +43,7 @@ interface SessionPort {
   getSteeringCount(): number;
   consumeSteering(): string | null;
   formatToolStats(): string;
-  kill(): Promise<{ count: number; messages: unknown[] }>;
+  nextQueryContext: string | null;
   sendMessageStreaming(
     prompt: string,
     statusCallback: (
@@ -236,6 +238,26 @@ export async function bootstrapApplication(
       } catch {
         // Ignore cleanup errors.
       }
+    }
+  }
+
+  // Inject restart context so Claude knows not to re-execute previous commands
+  if (fsOps.existsSync(RESTART_MARKER_FILE)) {
+    try {
+      const marker = JSON.parse(fsOps.readFileSync(RESTART_MARKER_FILE, "utf-8"));
+      const userId = ALLOWED_USERS[0];
+      if (userId) {
+        const session = manager.getSession(userId);
+        session.nextQueryContext =
+          `[SYSTEM] 서비스가 방금 재시작되었습니다 (make up / systemctl restart).\n` +
+          `이전 세션의 명령(make up, restart 등)은 이미 완료되었습니다. 절대 재실행하지 마세요.\n` +
+          `이전 종료 시각: ${marker.timestamp || "unknown"}`;
+        console.log("[STARTUP] Restart marker found, injected system context");
+      }
+      fsOps.unlinkSync(RESTART_MARKER_FILE);
+    } catch (e) {
+      console.warn("[STARTUP] Failed to process restart marker:", e);
+      try { fsOps.unlinkSync(RESTART_MARKER_FILE); } catch {}
     }
   }
 
@@ -445,18 +467,19 @@ export async function bootstrapApplication(
     await sendShutdownMessage();
     await saveShutdownContext();
 
-    // Kill user session so next boot starts a fresh Claude Code session.
-    // Without this, session resume causes Claude to re-execute "make up"
-    // from the previous context, creating an infinite restart loop.
-    const userId = ALLOWED_USERS[0];
-    if (userId) {
-      const session = manager.getSession(userId);
-      if (session.isActive) {
-        console.log("[SIGTERM] Killing session to prevent restart loop");
-        await session.kill();
-      }
+    // Write restart marker so next boot injects a system message.
+    // Without this, Claude Code session resumes with "make up 해줘"
+    // still in context and re-executes it → infinite restart loop.
+    try {
+      fsOps.writeFileSync(
+        RESTART_MARKER_FILE,
+        JSON.stringify({ timestamp: new Date().toISOString(), pid: process.pid }),
+        "utf-8"
+      );
+      console.log("[SIGTERM] Restart marker written");
+    } catch (e) {
+      console.error("[SIGTERM] Failed to write restart marker:", e);
     }
-    manager.saveAllSessions();
 
     stopRunner();
     await sleep(1000);
