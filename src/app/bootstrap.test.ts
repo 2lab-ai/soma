@@ -47,7 +47,7 @@ describe("bootstrapApplication", () => {
         consumeSteering: () => null,
         formatToolStats: () => "",
         sendMessageStreaming: mock(async () => "ok"),
-        kill: mock(async () => ({ count: 0, messages: [] })),
+        nextQueryContext: null,
       }),
       getSessionByKey: () => ({
         isActive: false,
@@ -62,7 +62,7 @@ describe("bootstrapApplication", () => {
         consumeSteering: () => null,
         formatToolStats: () => "",
         sendMessageStreaming: mock(async () => "ok"),
-        kill: mock(async () => ({ count: 0, messages: [] })),
+        nextQueryContext: null,
       }),
       saveAllSessions,
     };
