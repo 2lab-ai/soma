@@ -2,6 +2,43 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 🔴🟢 RED-GREEN TDD — MANDATORY FOR ALL WORK
+
+**Every bug fix and every feature MUST follow red-green TDD. No exceptions.**
+
+### Bug Fix Workflow
+```
+1. REPRODUCE: Write a test that FAILS (RED) on the current broken code
+2. VERIFY RED: Run the test. It MUST fail. If it passes, your test is wrong.
+3. FIX: Write the minimal code fix
+4. VERIFY GREEN: Run the test. It MUST pass.
+5. PROVE: Show RED output and GREEN output as evidence
+```
+
+### Feature Workflow
+```
+1. SPEC: Write tests that describe the desired behavior (RED — feature doesn't exist yet)
+2. VERIFY RED: Run tests. They MUST fail.
+3. IMPLEMENT: Write the feature code
+4. VERIFY GREEN: Run tests. They MUST pass.
+5. REFACTOR: Clean up, tests must stay GREEN
+```
+
+### Rules
+- **NEVER** close a bd task without a passing test that proves the fix/feature
+- **NEVER** say "looks good" or "should work" — prove it with a test
+- **NEVER** skip the RED step — if you can't make it fail first, you don't understand the bug
+- **Tests go in the same directory** as the code, or in `src/scheduler/` for integration tests
+- **Mock telegram (grammY Context)** and **mock model (Claude responses)** for integration tests
+- **Name tests after the bd task**: `test("BUG soma-xxx: description", ...)`
+- Run `bun test` after every fix. All existing tests must still pass.
+
+### What Counts as a Test
+- Unit test proving specific function behavior
+- Integration test with mocked telegram + model proving message flow
+- Source code assertion (checking actual code content) is a LAST RESORT, not preferred
+- **Preferred**: Actual function calls with real inputs/outputs
+
 ## Task Management
 
 **CRITICAL: All work must be managed through `bd` (beads issue tracker).**
