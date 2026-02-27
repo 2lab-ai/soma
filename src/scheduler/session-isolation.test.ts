@@ -119,6 +119,91 @@ describe("scheduler session isolation (red-green proof)", () => {
     expect(typeof SessionManager.prototype.getSessionByKey).toBe("function");
   });
 
+  test("BUG soma-uqb9: trackBufferedMessagesForInjection + restoreInjectedSteering must NOT duplicate messages", () => {
+    // Root cause: text-only response path called trackBufferedMessagesForInjection()
+    // which COPIED buffer to injectedSteeringDuringQuery WITHOUT clearing buffer.
+    // Then restoreInjectedSteering() PREPENDED injected to existing buffer → 2x duplication.
+    //
+    // User sends 3 messages during processing → buffer has 3.
+    // OLD: track(3→injected) + restore(injected+buffer) = 6 messages (BUG!)
+    // NEW: No track call for text-only → restore returns 0 → buffer stays 3 (CORRECT)
+
+    const { SteeringManager } = require("../core/session/steering-manager");
+    const mgr = new SteeringManager(100, 60000);
+
+    // Simulate 3 messages arriving during processing
+    mgr.addSteering("1", 101);
+    mgr.addSteering("2", 102);
+    mgr.addSteering("3", 103);
+    expect(mgr.getSteeringCount()).toBe(3);
+
+    // OLD BUG PATH: track without consume, then restore
+    // This simulates what query-flow.ts used to do for text-only responses
+    mgr.trackBufferedMessagesForInjection();
+    // At this point: buffer=[1,2,3], injected=[1,2,3]
+    expect(mgr.getInjectedCount()).toBe(3);
+    // Buffer was NOT cleared by track — this is the root cause
+    expect(mgr.getSteeringCount()).toBe(3);
+
+    // Now restore — this MERGES injected + buffer
+    const restored = mgr.restoreInjectedSteering();
+    expect(restored).toBe(3);
+    // BUG: buffer now has [1,2,3,1,2,3] = 6 messages!
+    // This test documents the duplication behavior
+    expect(mgr.getSteeringCount()).toBe(6); // Documents the bug exists in SteeringManager
+
+    // CLEANUP: verify the fix is in query-flow.ts (not calling track for text-only)
+    const fs = require("fs");
+    const queryFlowSource = fs.readFileSync(
+      require.resolve("../handlers/text/query-flow"),
+      "utf-8"
+    );
+
+    // The fix: query-flow.ts should NOT call trackBufferedMessagesForInjection()
+    // before the auto-continue loop for text-only responses
+    // OLD: had "trackBufferedMessagesForInjection()" called when steeringCount > 0 && injectedCount === 0
+    // NEW: removed that call entirely — buffer is consumed directly in auto-continue loop
+
+    // The old buggy pattern: check steering count then track
+    const hasOldBuggyPattern =
+      queryFlowSource.includes("session.trackBufferedMessagesForInjection()");
+
+    // RED on old code: trackBufferedMessagesForInjection was called → causes duplication
+    // GREEN on new code: removed → no duplication
+    expect(hasOldBuggyPattern).toBe(false);
+  });
+
+  test("BUG soma-uqb9: postToolUseHook track+consume pattern must NOT duplicate", () => {
+    // postToolUseHook correctly calls track() THEN consume() — buffer is cleared.
+    // This is the CORRECT pattern. Verify it doesn't duplicate.
+
+    const { SteeringManager } = require("../core/session/steering-manager");
+    const mgr = new SteeringManager(100, 60000);
+
+    mgr.addSteering("a", 201);
+    mgr.addSteering("b", 202);
+    expect(mgr.getSteeringCount()).toBe(2);
+
+    // postToolUseHook pattern: track THEN consume
+    const tracked = mgr.trackBufferedMessagesForInjection();
+    expect(tracked).toBe(2);
+    const formatted = mgr.consumeSteering(); // clears buffer
+    expect(formatted).not.toBeNull();
+    expect(mgr.getSteeringCount()).toBe(0); // buffer cleared after consume
+
+    // Now when auto-continue loop calls restore:
+    const restored = mgr.restoreInjectedSteering();
+    expect(restored).toBe(2); // restores from injected
+    expect(mgr.getSteeringCount()).toBe(2); // exactly 2, no duplication!
+
+    // Consume again — should get exactly the original 2
+    const formatted2 = mgr.consumeSteering()!;
+    const lines = formatted2.split("\n---\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("a");
+    expect(lines[1]).toContain("b");
+  });
+
   test("BUG: steering buffer was too small (20) causing silent message drops", () => {
     // Old: maxSteeringMessages = 20, messages silently evicted via shift()
     // New: maxSteeringMessages = 100, eviction returns details

@@ -67,18 +67,20 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         const MAX_AUTO_CONTINUE_ROUNDS = 5;
         let autoContinueRound = 0;
 
-        // Fix soma-vig7: For text-only responses, PostToolUse hook never fires,
-        // so trackBufferedMessagesForInjection() is never called.
-        // Messages stay in steeringBuffer but restoreInjectedSteering() can't find them.
-        // Explicitly check buffer before auto-continue loop.
-        if (session.getSteeringCount() > 0 && session.getInjectedCount() === 0) {
-          console.log(
-            `[AUTO-CONTINUE] Text-only response detected: ${session.getSteeringCount()} message(s) in buffer but 0 injected. Tracking for restoration.`
-          );
-          session.trackBufferedMessagesForInjection();
-        }
+        // Fix soma-uqb9: For text-only responses, PostToolUse hook never fires,
+        // so messages remain in steeringBuffer (not tracked via injectedSteering).
+        // Previously we called trackBufferedMessagesForInjection() here, but that
+        // COPIES to injectedSteering without clearing the buffer. Then
+        // restoreInjectedSteering() merges injected BACK into the still-populated
+        // buffer, duplicating every message (3 messages → 6).
+        //
+        // Fix: Skip the track→restore round-trip entirely for text-only responses.
+        // The auto-continue loop below already consumes directly from the buffer.
+        // For tool-use responses, postToolUseHook handles track+consume correctly.
 
         while (true) {
+          // Restore any injected messages from tool-use hooks back to buffer
+          // (only relevant when postToolUseHook ran during the query)
           const bufferBeforeRestore = session.getSteeringCount();
           const restoredCount = session.restoreInjectedSteering();
           const bufferAfterRestore = session.getSteeringCount();
