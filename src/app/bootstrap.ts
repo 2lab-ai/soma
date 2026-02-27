@@ -553,7 +553,22 @@ export async function bootstrapApplication(
         timestamp: new Date().toISOString(),
         pid: process.pid,
       };
-      // Superpower: include verification task if set
+
+      // Superpower: check for verification task — either set in-process
+      // or written to /tmp/soma-verification-task.json by external tool (e.g., Claude Code Bash)
+      const VERIFICATION_TASK_FILE = "/tmp/soma-verification-task.json";
+      if (!pendingVerificationTask && fsOps.existsSync(VERIFICATION_TASK_FILE)) {
+        try {
+          pendingVerificationTask = JSON.parse(
+            fsOps.readFileSync(VERIFICATION_TASK_FILE, "utf-8")
+          ) as VerificationTask;
+          console.log(`[SIGTERM] Loaded verification task from file: ${pendingVerificationTask.bdTaskId}`);
+          fsOps.unlinkSync(VERIFICATION_TASK_FILE);
+        } catch (e) {
+          console.warn("[SIGTERM] Failed to read verification task file:", e);
+        }
+      }
+
       if (pendingVerificationTask) {
         markerData.verificationTask = pendingVerificationTask;
         console.log(`[SIGTERM] Including verification task: ${pendingVerificationTask.bdTaskId}`);

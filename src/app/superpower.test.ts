@@ -274,4 +274,51 @@ describe("Superpower: autonomous deploy + verify (soma-86ew)", () => {
     // setVerificationTask must exist as a function
     expect(typeof (app as any).setVerificationTask).toBe("function");
   });
+
+  test("SIGTERM reads verification task from external file (/tmp/soma-verification-task.json)", async () => {
+    const { bot } = createFakeBot();
+    const session = createFakeSession();
+    const manager = createFakeManager(session);
+
+    // Simulate: Claude Code wrote verification task to file before make up
+    const verificationTaskFile = "/tmp/soma-verification-task.json";
+    const taskData = JSON.stringify({
+      command: "bun test src/app/superpower.test.ts",
+      bdTaskId: "soma-86ew",
+      description: "superpower self-test",
+    });
+
+    const fs = createFakeFs({
+      [verificationTaskFile]: taskData,
+    });
+
+    const app = await bootstrapApplication({
+      createTelegramBot: () => bot,
+      registerBotMiddleware: () => {},
+      registerBotCommands: async () => {},
+      registerBotHandlers: () => {},
+      configureAndStartScheduler: () => {},
+      stopSchedulerRunner: () => {},
+      startRunner: () => ({ isRunning: () => true, stop: () => {} }),
+      sessionManager: manager,
+      createFormStore: () => ({ loadForms: async () => 0 }),
+      fs: fs.ops,
+      sendSystemMessage: mock(async () => null),
+      addSystemReaction: mock(async () => {}),
+      sleep: async () => {},
+    });
+
+    // Do NOT call setVerificationTask — it should be loaded from file during SIGTERM
+    await app.handleSigterm();
+
+    // Verify the marker includes the verification task loaded from file
+    const markerContent = fs.written["/tmp/soma-restart-marker.json"];
+    expect(markerContent).toBeDefined();
+    const marker = JSON.parse(markerContent!);
+    expect(marker.verificationTask).toBeDefined();
+    expect(marker.verificationTask.bdTaskId).toBe("soma-86ew");
+
+    // Verify the external file was cleaned up
+    expect(fs.deleted).toContain(verificationTaskFile);
+  });
 });
