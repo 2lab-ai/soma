@@ -1,8 +1,11 @@
 import { existsSync, mkdirSync, symlinkSync } from "fs";
+import { basename } from "path";
 import { WORKING_DIR } from "../../config";
 import { buildStoragePartitionKey, parseSessionKey } from "../routing/session-key";
 
-export const THREAD_WORKDIRS_DIR = "/tmp/soma-thread-workdirs";
+// Per-service isolation: each WORKING_DIR gets its own thread-workdirs to prevent
+// symlink collisions when multiple bot instances share the same binary (e.g. p9 + np1)
+export const THREAD_WORKDIRS_DIR = `/tmp/soma-thread-workdirs-${basename(WORKING_DIR)}`;
 
 export interface ThreadWorkdirProvider {
   ensureDirectory(): void;

@@ -28,9 +28,9 @@ preflight:
 	@bun run lint:check || (echo "❌ Lint errors found. Run: bun run lint:check" && exit 1)
 	@echo "✅ Preflight passed"
 
-# Full deployment pipeline with preflight (reinstalls service on WSL)
+# Full deployment pipeline with preflight (service must be pre-installed via make install-service)
 up: install build preflight
-	@echo "🔄 Deploying..."
+	@echo "🔄 Deploying $(SERVICE_NAME)..."
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
 		if [ -f $(MACOS_PLIST) ]; then \
 			$(MAKE) restart; \
@@ -39,19 +39,20 @@ up: install build preflight
 			echo "⚠️  macOS: Run 'make install-service' first"; \
 		fi \
 	elif [ "$(IS_WSL)" = "1" ]; then \
-		echo "   Updating service file..."; \
-		echo "   Using env file: $(ENV_EXPANDED)"; \
-		$(SYSTEMCTL) unmask $(SERVICE_NAME) 2>/dev/null || true; \
-		mkdir -p ~/.config/systemd/user; \
-		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nEnvironmentFile=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(ENV_EXPANDED)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
-		$(SYSTEMCTL) daemon-reload; \
-		$(SYSTEMCTL) enable $(SERVICE_NAME) 2>/dev/null || true; \
-		echo "   Killing any existing processes..."; \
-		pkill -f "[b]un run src/index.ts" 2>/dev/null && echo "   Killed orphan processes" || echo "   No orphan processes"; \
-		sleep 1; \
-		echo "   Starting service..."; \
+		if ! $(SYSTEMCTL) is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
+			echo "⚠️  Service '$(SERVICE_NAME)' not installed. Run: ENV=$(ENV) make install-service"; \
+			exit 1; \
+		fi; \
+		echo "   Restarting $(SERVICE_NAME)..."; \
 		$(SYSTEMCTL) restart $(SERVICE_NAME); \
-		echo "✅ Deployment complete"; \
+		sleep 1; \
+		if $(SYSTEMCTL) is-active $(SERVICE_NAME) >/dev/null 2>&1; then \
+			echo "✅ Deployment complete - $(SERVICE_NAME) restarted"; \
+		else \
+			echo "❌ $(SERVICE_NAME) failed to start"; \
+			$(SYSTEMCTL) status $(SERVICE_NAME) --no-pager 2>&1 | tail -5; \
+			exit 1; \
+		fi \
 	else \
 		echo "⚠️  Unsupported platform"; \
 	fi
@@ -59,7 +60,7 @@ up: install build preflight
 # Emergency deployment without preflight (use with caution)
 up-force: install build
 	@echo "⚠️  Skipping preflight checks (emergency mode)..."
-	@echo "🔄 Deploying..."
+	@echo "🔄 Deploying $(SERVICE_NAME)..."
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
 		if [ -f $(MACOS_PLIST) ]; then \
 			$(MAKE) restart; \
@@ -68,19 +69,20 @@ up-force: install build
 			echo "⚠️  macOS: Run 'make install-service' first"; \
 		fi \
 	elif [ "$(IS_WSL)" = "1" ]; then \
-		echo "   Updating service file..."; \
-		echo "   Using env file: $(ENV_EXPANDED)"; \
-		$(SYSTEMCTL) unmask $(SERVICE_NAME) 2>/dev/null || true; \
-		mkdir -p ~/.config/systemd/user; \
-		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nEnvironmentFile=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(ENV_EXPANDED)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
-		$(SYSTEMCTL) daemon-reload; \
-		$(SYSTEMCTL) enable $(SERVICE_NAME) 2>/dev/null || true; \
-		echo "   Killing any existing processes..."; \
-		pkill -f "[b]un run src/index.ts" 2>/dev/null && echo "   Killed orphan processes" || echo "   No orphan processes"; \
-		sleep 1; \
-		echo "   Starting service..."; \
+		if ! $(SYSTEMCTL) is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
+			echo "⚠️  Service '$(SERVICE_NAME)' not installed. Run: ENV=$(ENV) make install-service"; \
+			exit 1; \
+		fi; \
+		echo "   Restarting $(SERVICE_NAME)..."; \
 		$(SYSTEMCTL) restart $(SERVICE_NAME); \
-		echo "✅ Deployment complete"; \
+		sleep 1; \
+		if $(SYSTEMCTL) is-active $(SERVICE_NAME) >/dev/null 2>&1; then \
+			echo "✅ Deployment complete - $(SERVICE_NAME) restarted"; \
+		else \
+			echo "❌ $(SERVICE_NAME) failed to start"; \
+			$(SYSTEMCTL) status $(SERVICE_NAME) --no-pager 2>&1 | tail -5; \
+			exit 1; \
+		fi \
 	else \
 		echo "⚠️  Unsupported platform"; \
 	fi
