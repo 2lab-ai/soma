@@ -313,8 +313,8 @@ export async function bootstrapApplication(
               );
             } catch {}
 
-            // Inject fix request — next Claude message will see this context
-            session.nextQueryContext =
+            // Proactive boot: auto-trigger fix via sendMessageStreaming
+            const fixPrompt =
               `[SYSTEM] 배포 후 자동 검증 실패. 자동 수정 필요.\n` +
               `Task: ${vt.bdTaskId} (${vt.description})\n` +
               `Command: ${vt.command}\n` +
@@ -322,6 +322,19 @@ export async function bootstrapApplication(
               `Output:\n${output}\n\n` +
               `이전 세션의 명령(make up, restart 등)은 이미 완료됨. 절대 재실행하지 마세요.\n` +
               `위 검증 실패를 분석하고 코드를 수정하세요.`;
+            session.nextQueryContext = fixPrompt;
+
+            // Proactive: auto-start fix without waiting for user message
+            try {
+              console.log(`[SUPERPOWER] Proactive boot: auto-triggering fix for ${vt.bdTaskId}`);
+              await session.sendMessageStreaming(
+                fixPrompt,
+                async () => {},
+                userId,
+              );
+            } catch (e) {
+              console.error(`[SUPERPOWER] Proactive fix trigger failed:`, e);
+            }
           }
         } else {
           // No verification task — just inject restart notice
