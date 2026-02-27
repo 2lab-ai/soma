@@ -1,9 +1,24 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import type { Context } from "grammy";
+import { ALLOWED_USERS } from "../config";
 import { handleNew, handleResume } from "./commands";
 import { formatDuration, formatTimeRemaining } from "./commands/formatters";
 import { sessionManager } from "../core/session/session-manager";
 import type { SteeringMessage } from "../types/session";
+
+const TEST_USER_ID = 1;
+
+// Inject test userId into ALLOWED_USERS so isAuthorizedForChat passes
+beforeAll(() => {
+  if (!ALLOWED_USERS.includes(TEST_USER_ID)) {
+    ALLOWED_USERS.push(TEST_USER_ID);
+  }
+});
+
+afterAll(() => {
+  const idx = ALLOWED_USERS.indexOf(TEST_USER_ID);
+  if (idx !== -1) ALLOWED_USERS.splice(idx, 1);
+});
 
 interface ReplyCall {
   text: string;

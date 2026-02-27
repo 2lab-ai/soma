@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import type { Context } from "grammy";
+import { ALLOWED_USERS } from "../config";
 import { sessionManager } from "../core/session/session-manager";
 import { rateLimiter } from "../security";
 import { handleText, setBotUsername } from "./text";
@@ -74,6 +75,19 @@ function createMockContext(messageText: string): {
 
 const originalGetSession = sessionManager.getSession;
 const originalRateLimitCheck = rateLimiter.check;
+const TEST_USER_ID = 1;
+
+// Inject test userId into ALLOWED_USERS so boundary auth passes
+beforeAll(() => {
+  if (!ALLOWED_USERS.includes(TEST_USER_ID)) {
+    ALLOWED_USERS.push(TEST_USER_ID);
+  }
+});
+
+afterAll(() => {
+  const idx = ALLOWED_USERS.indexOf(TEST_USER_ID);
+  if (idx !== -1) ALLOWED_USERS.splice(idx, 1);
+});
 
 afterEach(() => {
   (sessionManager as unknown as { getSession: typeof originalGetSession }).getSession =
