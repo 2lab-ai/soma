@@ -322,3 +322,139 @@ describe("Superpower: autonomous deploy + verify (soma-86ew)", () => {
     expect(fs.deleted).toContain(verificationTaskFile);
   });
 });
+
+describe("Superpower: proactive boot (soma-70kl)", () => {
+  test("RED: on verification FAILURE, boot auto-triggers sendMessageStreaming with fix prompt", async () => {
+    const { bot, sentMessages } = createFakeBot();
+    const session = createFakeSession();
+    const manager = createFakeManager(session);
+
+    const markerData = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      pid: 12345,
+      verificationTask: {
+        command: "exit 1",
+        bdTaskId: "soma-test",
+        description: "intentional failure",
+      },
+    });
+
+    const fs = createFakeFs({
+      [RESTART_MARKER_FILE]: markerData,
+    });
+
+    const mockExecSync = mock(() => {
+      return { status: 1, stdout: "", stderr: "test failed" };
+    });
+
+    await bootstrapApplication({
+      createTelegramBot: () => bot,
+      registerBotMiddleware: () => {},
+      registerBotCommands: async () => {},
+      registerBotHandlers: () => {},
+      configureAndStartScheduler: () => {},
+      stopSchedulerRunner: () => {},
+      startRunner: () => ({ isRunning: () => true, stop: () => {} }),
+      sessionManager: manager,
+      createFormStore: () => ({ loadForms: async () => 0 }),
+      fs: fs.ops,
+      sendSystemMessage: mock(async () => null),
+      addSystemReaction: mock(async () => {}),
+      sleep: async () => {},
+      execSync: mockExecSync,
+    });
+
+    // CRITICAL: sendMessageStreaming should have been called PROACTIVELY
+    // (not waiting for user message)
+    expect(session.sendMessageStreaming).toHaveBeenCalledTimes(1);
+
+    // The prompt should contain fix instructions
+    const call = (session.sendMessageStreaming as ReturnType<typeof mock>).mock.calls[0];
+    const prompt = call?.[0] as string;
+    expect(prompt).toContain("검증 실패");
+    expect(prompt).toContain("soma-test");
+  });
+
+  test("RED: on verification SUCCESS, does NOT auto-trigger sendMessageStreaming", async () => {
+    const { bot } = createFakeBot();
+    const session = createFakeSession();
+    const manager = createFakeManager(session);
+
+    const markerData = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      pid: 12345,
+      verificationTask: {
+        command: "echo ok",
+        bdTaskId: "soma-pass",
+        description: "should pass",
+      },
+    });
+
+    const fs = createFakeFs({
+      [RESTART_MARKER_FILE]: markerData,
+    });
+
+    await bootstrapApplication({
+      createTelegramBot: () => bot,
+      registerBotMiddleware: () => {},
+      registerBotCommands: async () => {},
+      registerBotHandlers: () => {},
+      configureAndStartScheduler: () => {},
+      stopSchedulerRunner: () => {},
+      startRunner: () => ({ isRunning: () => true, stop: () => {} }),
+      sessionManager: manager,
+      createFormStore: () => ({ loadForms: async () => 0 }),
+      fs: fs.ops,
+      sendSystemMessage: mock(async () => null),
+      addSystemReaction: mock(async () => {}),
+      sleep: async () => {},
+      execSync: mock(() => ({ status: 0, stdout: "ok", stderr: "" })),
+    });
+
+    // Should NOT have called sendMessageStreaming — verification passed, no fix needed
+    expect(session.sendMessageStreaming).toHaveBeenCalledTimes(0);
+  });
+
+  test("RED: proactive fix prompt includes verification output and task details", async () => {
+    const { bot } = createFakeBot();
+    const session = createFakeSession();
+    const manager = createFakeManager(session);
+
+    const markerData = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      pid: 12345,
+      verificationTask: {
+        command: "bun test failing.test.ts",
+        bdTaskId: "soma-xyz",
+        description: "integration test for XYZ",
+      },
+    });
+
+    const fs = createFakeFs({
+      [RESTART_MARKER_FILE]: markerData,
+    });
+
+    await bootstrapApplication({
+      createTelegramBot: () => bot,
+      registerBotMiddleware: () => {},
+      registerBotCommands: async () => {},
+      registerBotHandlers: () => {},
+      configureAndStartScheduler: () => {},
+      stopSchedulerRunner: () => {},
+      startRunner: () => ({ isRunning: () => true, stop: () => {} }),
+      sessionManager: manager,
+      createFormStore: () => ({ loadForms: async () => 0 }),
+      fs: fs.ops,
+      sendSystemMessage: mock(async () => null),
+      addSystemReaction: mock(async () => {}),
+      sleep: async () => {},
+      execSync: mock(() => ({ status: 1, stdout: "Expected 3 got 6", stderr: "FAIL" })),
+    });
+
+    const call = (session.sendMessageStreaming as ReturnType<typeof mock>).mock.calls[0];
+    const prompt = call?.[0] as string;
+    expect(prompt).toContain("bun test failing.test.ts");
+    expect(prompt).toContain("soma-xyz");
+    expect(prompt).toContain("integration test for XYZ");
+  });
+});
