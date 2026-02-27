@@ -84,12 +84,19 @@ interface FileOps {
   mkdirSync(path: string, options?: { recursive?: boolean }): void;
 }
 
+export interface VerificationTask {
+  command: string;
+  bdTaskId: string;
+  description: string;
+}
+
 export interface BootstrappedApplication {
   bot: Bot<Context>;
   runner: RunnerPort;
   formStore: FormStorePort;
   stopRunner: () => void;
   handleSigterm: () => Promise<void>;
+  setVerificationTask: (task: VerificationTask | null) => void;
 }
 
 interface BootstrapDependencies {
@@ -110,6 +117,7 @@ interface BootstrapDependencies {
   addSystemReaction?: typeof addSystemReaction;
   sleep?: (ms: number) => Promise<void>;
   createProviderOrchestrator?: typeof createProviderOrchestrator;
+  execSync?: (command: string) => { status: number; stdout: string; stderr: string };
 }
 
 const defaultFileOps: FileOps = {
@@ -179,6 +187,24 @@ export async function bootstrapApplication(
   const sleep = dependencies.sleep ?? ((ms: number) => Bun.sleep(ms));
   const buildProviderOrchestrator =
     dependencies.createProviderOrchestrator ?? createProviderOrchestrator;
+  const execSyncFn = dependencies.execSync ?? ((command: string) => {
+    try {
+      const result = Bun.spawnSync(["bash", "-c", command], {
+        cwd: process.cwd(),
+        timeout: 120_000,
+      });
+      return {
+        status: result.exitCode,
+        stdout: result.stdout?.toString() || "",
+        stderr: result.stderr?.toString() || "",
+      };
+    } catch (e) {
+      return { status: 1, stdout: "", stderr: String(e) };
+    }
+  });
+
+  // Superpower: pending verification task to include in restart marker
+  let pendingVerificationTask: VerificationTask | null = null;
 
   if (typeof manager.setProviderOrchestrator === "function") {
     const retryPolicies = parseProviderRetryPoliciesFromEnv(
@@ -248,11 +274,63 @@ export async function bootstrapApplication(
       const userId = ALLOWED_USERS[0];
       if (userId) {
         const session = manager.getSession(userId);
-        session.nextQueryContext =
-          `[SYSTEM] 서비스가 방금 재시작되었습니다 (make up / systemctl restart).\n` +
-          `이전 세션의 명령(make up, restart 등)은 이미 완료되었습니다. 절대 재실행하지 마세요.\n` +
-          `이전 종료 시각: ${marker.timestamp || "unknown"}`;
-        console.log("[STARTUP] Restart marker found, injected system context");
+
+        // Superpower: auto-verify if verification task was set before SIGTERM
+        if (marker.verificationTask) {
+          const vt = marker.verificationTask as VerificationTask;
+          console.log(`[SUPERPOWER] Running verification: ${vt.command}`);
+
+          const result = execSyncFn(vt.command);
+          const passed = result.status === 0;
+
+          if (passed) {
+            // SUCCESS: notify telegram
+            console.log(`[SUPERPOWER] ✅ Verification PASSED for ${vt.bdTaskId}`);
+            try {
+              await bot.api.sendMessage(
+                userId,
+                `✅ **Verification PASSED** [${vt.bdTaskId}]\n\n` +
+                  `\`${vt.description}\`\n` +
+                  `Command: \`${vt.command}\`\n` +
+                  `배포 후 자동 검증 성공.`,
+                { parse_mode: "Markdown" }
+              );
+            } catch {}
+          } else {
+            // FAILURE: notify telegram + inject fix request into session
+            console.error(`[SUPERPOWER] ❌ Verification FAILED for ${vt.bdTaskId}`);
+            const output = (result.stderr || result.stdout || "").slice(0, 500);
+            try {
+              await bot.api.sendMessage(
+                userId,
+                `❌ **Verification FAILED** [${vt.bdTaskId}]\n\n` +
+                  `\`${vt.description}\`\n` +
+                  `Command: \`${vt.command}\`\n` +
+                  `Exit code: ${result.status}\n\n` +
+                  `\`\`\`\n${output}\n\`\`\`\n\n` +
+                  `자동 수정을 시도합니다.`,
+                { parse_mode: "Markdown" }
+              );
+            } catch {}
+
+            // Inject fix request — next Claude message will see this context
+            session.nextQueryContext =
+              `[SYSTEM] 배포 후 자동 검증 실패. 자동 수정 필요.\n` +
+              `Task: ${vt.bdTaskId} (${vt.description})\n` +
+              `Command: ${vt.command}\n` +
+              `Exit code: ${result.status}\n` +
+              `Output:\n${output}\n\n` +
+              `이전 세션의 명령(make up, restart 등)은 이미 완료됨. 절대 재실행하지 마세요.\n` +
+              `위 검증 실패를 분석하고 코드를 수정하세요.`;
+          }
+        } else {
+          // No verification task — just inject restart notice
+          session.nextQueryContext =
+            `[SYSTEM] 서비스가 방금 재시작되었습니다 (make up / systemctl restart).\n` +
+            `이전 세션의 명령(make up, restart 등)은 이미 완료되었습니다. 절대 재실행하지 마세요.\n` +
+            `이전 종료 시각: ${marker.timestamp || "unknown"}`;
+        }
+        console.log("[STARTUP] Restart marker processed");
       }
       fsOps.unlinkSync(RESTART_MARKER_FILE);
     } catch (e) {
@@ -471,9 +549,18 @@ export async function bootstrapApplication(
     // Without this, Claude Code session resumes with "make up 해줘"
     // still in context and re-executes it → infinite restart loop.
     try {
+      const markerData: Record<string, unknown> = {
+        timestamp: new Date().toISOString(),
+        pid: process.pid,
+      };
+      // Superpower: include verification task if set
+      if (pendingVerificationTask) {
+        markerData.verificationTask = pendingVerificationTask;
+        console.log(`[SIGTERM] Including verification task: ${pendingVerificationTask.bdTaskId}`);
+      }
       fsOps.writeFileSync(
         RESTART_MARKER_FILE,
-        JSON.stringify({ timestamp: new Date().toISOString(), pid: process.pid }),
+        JSON.stringify(markerData),
         "utf-8"
       );
       console.log("[SIGTERM] Restart marker written");
@@ -485,11 +572,21 @@ export async function bootstrapApplication(
     await sleep(1000);
   };
 
+  const setVerificationTask = (task: VerificationTask | null): void => {
+    pendingVerificationTask = task;
+    if (task) {
+      console.log(`[SUPERPOWER] Verification task set: ${task.bdTaskId} — ${task.description}`);
+    } else {
+      console.log("[SUPERPOWER] Verification task cleared");
+    }
+  };
+
   return {
     bot,
     runner,
     formStore,
     stopRunner,
     handleSigterm,
+    setVerificationTask,
   };
 }

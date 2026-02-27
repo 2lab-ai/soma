@@ -239,18 +239,16 @@ describe("Integration: Steering message flow (soma-uqb9)", () => {
 
     // Count occurrences of each message in the follow-up
     // Each message "1", "2", "3" should appear EXACTLY ONCE
-    const count1 = (followUp.match(/\n1\n/g) || []).length +
-      (followUp.startsWith("1\n") ? 1 : 0) +
-      (followUp.endsWith("\n1") ? 1 : 0);
-    const occurrences = followUp.split("\n---\n");
+    const followUpStr = followUp!;
+    const occurrences = followUpStr.split("\n---\n");
 
     // CRITICAL: Must be exactly 3 segments, not 6
     expect(occurrences.length).toBeLessThanOrEqual(4); // header + 3 messages at most
 
     // The follow-up should NOT contain duplicated content
     // Extract just the steering part after the header
-    const steeringPart = followUp.split("지금 처리합니다]\n")[1] || followUp;
-    const segments = steeringPart.split("\n---\n").map((s) => s.trim());
+    const steeringPart = followUpStr.split("지금 처리합니다]\n")[1] || followUpStr;
+    const segments = steeringPart!.split("\n---\n").map((s: string) => s.trim());
 
     // Filter out empty segments
     const nonEmpty = segments.filter((s) => s.length > 0);
