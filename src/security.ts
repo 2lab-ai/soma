@@ -78,6 +78,8 @@ export const rateLimiter = new RateLimiter();
 // ============== Path Validation ==============
 
 export function isPathAllowed(path: string): boolean {
+  if (!path || !path.trim()) return false;
+
   try {
     // Expand ~ and resolve to absolute path
     const expanded = path.replace(/^~/, process.env.HOME || "");
