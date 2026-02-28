@@ -563,6 +563,14 @@ export class ClaudeSession {
     chatId?: number,
     modelContext: ConfigContext = "general"
   ): Promise<string> {
+    // Re-entrancy guard: prevent concurrent calls from corrupting session state
+    if (this.isRunning) {
+      console.warn(
+        `[QUERY] Re-entrant sendMessageStreaming blocked (queryState=${this.queryState}, sessionId=${this.sessionId?.slice(0, 8) || "null"})`
+      );
+      throw new Error("sendMessageStreaming is already running. Concurrent calls are not supported.");
+    }
+
     if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);
 
     const prevInjectedCount = this.steering.restoreInjectedSteering();
