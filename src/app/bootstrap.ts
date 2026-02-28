@@ -295,7 +295,9 @@ export async function bootstrapApplication(
                   `배포 후 자동 검증 성공.`,
                 { parse_mode: "Markdown" }
               );
-            } catch {}
+            } catch (e) {
+              console.error(`[SUPERPOWER] Failed to send PASS notification:`, e);
+            }
           } else {
             // FAILURE: notify telegram + inject fix request into session
             console.error(`[SUPERPOWER] ❌ Verification FAILED for ${vt.bdTaskId}`);
@@ -311,7 +313,9 @@ export async function bootstrapApplication(
                   `자동 수정을 시도합니다.`,
                 { parse_mode: "Markdown" }
               );
-            } catch {}
+            } catch (e) {
+              console.error(`[SUPERPOWER] Failed to send FAIL notification:`, e);
+            }
 
             // Proactive boot: auto-trigger fix via sendMessageStreaming
             const fixPrompt =
@@ -348,7 +352,9 @@ export async function bootstrapApplication(
       fsOps.unlinkSync(RESTART_MARKER_FILE);
     } catch (e) {
       console.warn("[STARTUP] Failed to process restart marker:", e);
-      try { fsOps.unlinkSync(RESTART_MARKER_FILE); } catch {}
+      try { fsOps.unlinkSync(RESTART_MARKER_FILE); } catch (cleanupErr) {
+        console.error("[STARTUP] Failed to delete restart marker:", cleanupErr);
+      }
     }
   }
 
