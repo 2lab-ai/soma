@@ -17,6 +17,7 @@ import {
   registerBotMiddleware,
 } from "./telegram-bot";
 import { configureAndStartScheduler, stopSchedulerRunner } from "./scheduler-runner";
+import { acquirePidLock, releasePidLock } from "./pid-lock";
 
 interface SessionStatsSnapshot {
   totalSessions: number;
@@ -202,6 +203,8 @@ export async function bootstrapApplication(
       return { status: 1, stdout: "", stderr: String(e) };
     }
   });
+
+  acquirePidLock();
 
   // Superpower: pending verification task to include in restart marker
   let pendingVerificationTask: VerificationTask | null = null;
@@ -602,6 +605,7 @@ export async function bootstrapApplication(
       console.error("[SIGTERM] Failed to write restart marker:", e);
     }
 
+    releasePidLock();
     stopRunner();
     await sleep(1000);
   };

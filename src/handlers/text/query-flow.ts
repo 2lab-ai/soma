@@ -16,6 +16,7 @@ import {
   isRateLimitError,
   isSonnetAvailable,
 } from "../../utils/error-classification";
+import { isReentrancyError } from "./query-flow-guard";
 import { sendSystemMessage } from "../../utils/system-message";
 import {
   StreamingState,
@@ -273,6 +274,16 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
         break;
       } catch (error) {
+        if (isReentrancyError(error)) {
+          console.warn(`[QUERY] Re-entrancy guard hit, buffering as steering: "${message.slice(0, 50)}"`);
+          const msgId = ctx.message?.message_id ?? 0;
+          session.addSteering(message, msgId);
+          try {
+            await sendSystemMessage(ctx, "⏳ 이전 요청 처리 중입니다. 메시지가 대기열에 추가되었습니다.");
+          } catch {}
+          return;
+        }
+
         const errorStr = String(error);
         const isClaudeCodeCrash = errorStr.includes("exited with code");
 
