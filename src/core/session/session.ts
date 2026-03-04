@@ -16,7 +16,7 @@ import {
 import {
   beginInterruptTransition,
   clearStopRequestedTransition,
-  completeQueryTransition,
+
   consumeInterruptFlagTransition,
   createInitialSessionRuntimeState,
   endInterruptTransition,
@@ -799,7 +799,7 @@ export class ClaudeSession {
         throw error;
       }
     } finally {
-      this.applyRuntimeState(completeQueryTransition(this.getRuntimeState()));
+      this.applyRuntimeState(finalizeQueryTransition(this.getRuntimeState()));
       if (this._activityState !== "idle") {
         this.setActivityState("idle");
       }
@@ -808,91 +808,94 @@ export class ClaudeSession {
       this.currentTool = null;
     }
 
-    this.lastActivity = new Date();
-    this.lastError = null;
-    this.lastErrorTime = null;
-
-    usageAfter = await captureUsageSnapshot();
-
-    const contextUsagePercent = this.contextWindowUsage
-      ? (this.currentContextTokens / this.contextWindowSize) * 100
-      : undefined;
-    const currentModelId = getModelForContext(modelContext);
-    const toolDurations = runtimeResult?.toolDurations ?? {};
-    const metadata = buildQueryRuntimeMetadata({
-      usageBefore,
-      usageAfter,
-      toolDurations,
-      queryStartedMs,
-      contextUsagePercent,
-      contextUsagePercentBefore,
-      modelDisplayName: MODEL_DISPLAY_NAMES[currentModelId] || currentModelId,
-      currentProvider: runtimeResult?.providerId,
-    });
-
-    for (const [toolName, stats] of Object.entries(toolDurations)) {
-      const existing = this.cumulativeToolDurations[toolName] || {
-        count: 0,
-        totalMs: 0,
-      };
-      this.cumulativeToolDurations[toolName] = {
-        count: existing.count + stats.count,
-        totalMs: existing.totalMs + stats.totalMs,
-      };
-    }
-
-    if (runtimeResult?.trailingSegmentText) {
-      await statusCallback(
-        "segment_end",
-        runtimeResult.trailingSegmentText,
-        runtimeResult.trailingSegmentId
-      );
-    }
-
-    await statusCallback("done", "", undefined, metadata);
-
-    const hasSteeringAtEnd = this.hasSteeringMessages();
-    const injectedCount = this.steering.getInjectedCount();
-    console.log(
-      `[STEERING DEBUG] End of query - buffer: ${this.steering.getSteeringCount()}, injected tracking: ${injectedCount}`
-    );
-
-    if (hasSteeringAtEnd) {
-      const steeringCount = this.getSteeringCount();
-      const steeringContent = this.peekSteering();
-      console.log(
-        `[STEERING] ${steeringCount} message(s) not delivered (text-only response)`
-      );
-      await statusCallback("steering_pending", steeringContent || "", undefined, {
-        ...metadata,
-        steeringCount,
-      } as QueryMetadata & { steeringCount: number });
-    }
-
     const fullResponse = runtimeResult?.fullResponse || "No response from Claude.";
 
-    if (this.chatCaptureService && this.sessionId) {
-      this.chatCaptureService
-        .captureAssistantMessage(
-          this.sessionKey,
-          this.sessionId,
-          getModelForContext(modelContext),
-          fullResponse,
-          {
-            tokenUsage: this.lastUsage
-              ? {
-                  input: this.lastUsage.input_tokens,
-                  output: this.lastUsage.output_tokens,
-                }
-              : undefined,
-          }
-        )
-        .catch((err) =>
-          console.error("[ChatCapture] Failed to capture assistant message:", err)
+    try {
+      this.lastActivity = new Date();
+      this.lastError = null;
+      this.lastErrorTime = null;
+
+      usageAfter = await captureUsageSnapshot();
+
+      const contextUsagePercent = this.contextWindowUsage
+        ? (this.currentContextTokens / this.contextWindowSize) * 100
+        : undefined;
+      const currentModelId = getModelForContext(modelContext);
+      const toolDurations = runtimeResult?.toolDurations ?? {};
+      const metadata = buildQueryRuntimeMetadata({
+        usageBefore,
+        usageAfter,
+        toolDurations,
+        queryStartedMs,
+        contextUsagePercent,
+        contextUsagePercentBefore,
+        modelDisplayName: MODEL_DISPLAY_NAMES[currentModelId] || currentModelId,
+        currentProvider: runtimeResult?.providerId,
+      });
+
+      for (const [toolName, stats] of Object.entries(toolDurations)) {
+        const existing = this.cumulativeToolDurations[toolName] || {
+          count: 0,
+          totalMs: 0,
+        };
+        this.cumulativeToolDurations[toolName] = {
+          count: existing.count + stats.count,
+          totalMs: existing.totalMs + stats.totalMs,
+        };
+      }
+
+      if (runtimeResult?.trailingSegmentText) {
+        await statusCallback(
+          "segment_end",
+          runtimeResult.trailingSegmentText,
+          runtimeResult.trailingSegmentId
         );
+      }
+
+      await statusCallback("done", "", undefined, metadata);
+
+      const hasSteeringAtEnd = this.hasSteeringMessages();
+      const injectedCount = this.steering.getInjectedCount();
+      console.log(
+        `[STEERING DEBUG] End of query - buffer: ${this.steering.getSteeringCount()}, injected tracking: ${injectedCount}`
+      );
+
+      if (hasSteeringAtEnd) {
+        const steeringCount = this.getSteeringCount();
+        const steeringContent = this.peekSteering();
+        console.log(
+          `[STEERING] ${steeringCount} message(s) not delivered (text-only response)`
+        );
+        await statusCallback("steering_pending", steeringContent || "", undefined, {
+          ...metadata,
+          steeringCount,
+        } as QueryMetadata & { steeringCount: number });
+      }
+
+      if (this.chatCaptureService && this.sessionId) {
+        this.chatCaptureService
+          .captureAssistantMessage(
+            this.sessionKey,
+            this.sessionId,
+            getModelForContext(modelContext),
+            fullResponse,
+            {
+              tokenUsage: this.lastUsage
+                ? {
+                    input: this.lastUsage.input_tokens,
+                    output: this.lastUsage.output_tokens,
+                  }
+                : undefined,
+            }
+          )
+          .catch((err) =>
+            console.error("[ChatCapture] Failed to capture assistant message:", err)
+          );
+      }
+    } catch (postQueryError) {
+      console.error("[POST-QUERY] Error in post-query processing:", postQueryError);
     }
 
-    this.applyRuntimeState(finalizeQueryTransition(this.getRuntimeState()));
     return fullResponse;
   }
 
