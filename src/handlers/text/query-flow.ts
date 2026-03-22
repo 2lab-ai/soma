@@ -184,8 +184,8 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
         if (session.needsSave) {
           const currentTokens = session.currentContextTokens;
-          const windowSize = session.contextWindowSize;
-          const percentage = ((currentTokens / windowSize) * 100).toFixed(1);
+          const windowSize = session.actualContextMax ?? session.contextWindowSize;
+          const percentage = windowSize > 0 ? ((currentTokens / windowSize) * 100).toFixed(1) : "?";
           await sendSystemMessage(
             ctx,
             `⚠️ **Context Limit Approaching**\n\n` +

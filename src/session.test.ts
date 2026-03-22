@@ -1195,3 +1195,101 @@ describe("BUG REPRODUCTION: steering message loss via hook→inject→clear cycl
     expect(round2Content).toContain("msg4");
   });
 });
+
+describe("ClaudeSession - actualContextUsed/Max (soma-u63c)", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-context");
+  });
+
+  test("actualContextUsed/Max default to null", () => {
+    expect(session.actualContextUsed).toBeNull();
+    expect(session.actualContextMax).toBeNull();
+  });
+
+  test("currentContextTokens prefers actualContextUsed over snapshot", () => {
+    // Set both old-style and new-style
+    session.contextWindowUsage = {
+      input_tokens: 50000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    session.actualContextUsed = 120000;
+
+    // Should use actualContextUsed (120000), not contextWindowUsage (50000)
+    expect(session.currentContextTokens).toBe(120000);
+  });
+
+  test("currentContextTokens falls back to snapshot when actualContextUsed is null", () => {
+    session.contextWindowUsage = {
+      input_tokens: 50000,
+      cache_creation_input_tokens: 10000,
+      cache_read_input_tokens: 5000,
+    };
+    session.actualContextUsed = null;
+
+    // Should use snapshot: 50000 + 10000 + 5000 = 65000
+    expect(session.currentContextTokens).toBe(65000);
+  });
+
+  test("restoreFromData resets actualContextUsed/Max to null", () => {
+    session.actualContextUsed = 100000;
+    session.actualContextMax = 1000000;
+
+    const mockData: SessionData = {
+      session_id: "test-restore",
+      saved_at: new Date().toISOString(),
+      working_dir: "/test",
+      contextWindowUsage: {
+        input_tokens: 50000,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      contextWindowSize: 200000,
+    };
+
+    session.restoreFromData(mockData);
+
+    // actualContext values should be null (not restored from stale data)
+    expect(session.actualContextUsed).toBeNull();
+    expect(session.actualContextMax).toBeNull();
+    // But legacy values should be restored
+    expect(session.contextWindowUsage).toEqual({
+      input_tokens: 50000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    });
+    expect(session.contextWindowSize).toBe(200000);
+  });
+
+  test("context % uses actualContextMax when available", () => {
+    session.actualContextUsed = 200000;
+    session.actualContextMax = 1000000;
+    session.contextWindowSize = 200000; // old stale value
+
+    const tokens = session.currentContextTokens;
+    const max = session.actualContextMax;
+    const pct = (tokens / max!) * 100;
+
+    // Should be 20% (200k/1M), NOT 100% (200k/200k stale)
+    expect(pct).toBe(20);
+  });
+
+  test("context % falls back to contextWindowSize when actualContextMax is null", () => {
+    session.actualContextUsed = null;
+    session.actualContextMax = null;
+    session.contextWindowSize = 200000;
+    session.contextWindowUsage = {
+      input_tokens: 100000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+
+    const tokens = session.currentContextTokens; // 100000 from snapshot
+    const max = session.actualContextMax ?? session.contextWindowSize;
+    const pct = (tokens / max) * 100;
+
+    expect(pct).toBe(50);
+  });
+});

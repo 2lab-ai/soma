@@ -69,6 +69,7 @@ import {
   createQueryRuntimeHooks,
   executeQueryRuntime,
 } from "./query-runtime";
+import type { McpServerConfig, McpStdioConfig } from "../../types";
 
 export type { ActivityState, QueryState } from "./state-machine";
 
@@ -91,12 +92,24 @@ export class ClaudeSession {
   lastMessage: string | null = null;
 
   // Context window from Claude Code (claude-dashboard style)
+  // WARNING: This is set from BOTH lastUsage (single API call) AND context events (actual window).
+  // For accurate context %, prefer actualContextUsed/actualContextMax below.
   contextWindowUsage: {
     input_tokens: number;
     cache_creation_input_tokens: number;
     cache_read_input_tokens: number;
   } | null = null;
-  contextWindowSize = 200_000;
+  // Dynamically set from SDK context events (event.type === "context" → event.maxTokens)
+  // No hardcoded default — 0 means "not yet received from SDK"
+  // Ref: https://platform.claude.com/docs/en/build-with-claude/context-windows
+  contextWindowSize = 0;
+
+  // === AUTHORITATIVE context window state (from SDK context events ONLY) ===
+  // These are set ONLY from event.type === "context" (actual window occupancy).
+  // Never set from lastUsage (single API call tokens).
+  // null = not yet received from SDK → UI shows "---" instead of stale values.
+  actualContextUsed: number | null = null;
+  actualContextMax: number | null = null;
 
   // Cumulative token tracking
   sessionStartTime: Date | null = null;
@@ -244,6 +257,12 @@ export class ClaudeSession {
   }
 
   get currentContextTokens(): number {
+    // Priority 1: Authoritative context event value (actual window occupancy)
+    if (this.actualContextUsed !== null && this.actualContextUsed > 0) {
+      return this.actualContextUsed;
+    }
+    // Priority 2: contextWindowUsage snapshot (may be from lastUsage — less accurate)
+    // Priority 3: Last query's usage as approximation
     return (
       this.getContextTokensFromSnapshot() ?? this.getContextTokensFromCumulatives()
     );
@@ -262,8 +281,23 @@ export class ClaudeSession {
     return total > 0 ? total : null;
   }
 
+  /**
+   * Fallback when snapshot is unavailable.
+   * WARNING: totalInputTokens is CUMULATIVE across entire session, NOT current context window usage.
+   * Using it directly causes wildly wrong percentages (169%, 575%, 5287%).
+   * Instead, use last query's input_tokens as best approximation of current context.
+   * Ref: https://platform.claude.com/docs/en/build-with-claude/context-windows
+   */
   private getContextTokensFromCumulatives(): number {
-    return this.totalInputTokens + this.totalCacheCreateTokens;
+    // Use last single query's input_tokens as approximation (NOT cumulative total)
+    if (this.lastUsage) {
+      const lastInput = (this.lastUsage.input_tokens || 0) +
+        (this.lastUsage.cache_creation_input_tokens || 0) +
+        (this.lastUsage.cache_read_input_tokens || 0);
+      if (lastInput > 0) return lastInput;
+    }
+    // Absolute last resort: return 0 rather than cumulative garbage
+    return 0;
   }
 
   /**
@@ -678,11 +712,33 @@ export class ClaudeSession {
       ? `\n\n# Project Instructions (CLAUDE.md)\n${claudeMdContent}\n`
       : "";
 
+    // Inject TELEGRAM_CHAT_ID into send-file MCP server dynamically per session
+    let mcpServersForQuery: Record<string, McpServerConfig> = MCP_SERVERS;
+    try {
+      const identity = parseSessionKey(this.sessionKey);
+      const chatId = identity.channelId;
+      if (chatId && MCP_SERVERS["send-file"] && "command" in MCP_SERVERS["send-file"]) {
+        const sendFileConfig = MCP_SERVERS["send-file"] as McpStdioConfig;
+        mcpServersForQuery = {
+          ...MCP_SERVERS,
+          "send-file": {
+            ...sendFileConfig,
+            env: {
+              ...sendFileConfig.env,
+              TELEGRAM_CHAT_ID: chatId,
+            },
+          },
+        };
+      }
+    } catch {
+      // If sessionKey can't be parsed, use MCP_SERVERS as-is
+    }
+
     const runtimeOptions = buildQueryRuntimeOptions({
       model: effectiveModel,
       cwd: this.workingDir,
       systemPrompt: `${SAFETY_PROMPT}\n\n${UI_ASKUSER_INSTRUCTIONS}\n\n${CHAT_HISTORY_ACCESS_INFO}${claudeMdSection}`,
-      mcpServers: MCP_SERVERS,
+      mcpServers: mcpServersForQuery,
       maxThinkingTokens: thinkingTokens,
       additionalDirectories: ALLOWED_PATHS,
       resumeSessionId: this.sessionId,
@@ -700,8 +756,9 @@ export class ClaudeSession {
     let queryCompleted = false;
     let runtimeResult: Awaited<ReturnType<typeof executeQueryRuntime>> | null = null;
 
-    const contextUsagePercentBefore = this.contextWindowUsage
-      ? (this.currentContextTokens / this.contextWindowSize) * 100
+    const effectiveContextMax = this.actualContextMax ?? (this.contextWindowSize > 0 ? this.contextWindowSize : null);
+    const contextUsagePercentBefore = effectiveContextMax
+      ? (this.currentContextTokens / effectiveContextMax) * 100
       : undefined;
     let usageBefore: UsageSnapshot | null = null;
     let usageAfter: UsageSnapshot | null = null;
@@ -772,18 +829,27 @@ export class ClaudeSession {
       ) {
         this.contextWindowSize = runtimeResult.contextWindowSize;
       }
+      // Authoritative context values from SDK context events
+      if (typeof runtimeResult.actualContextUsed === "number") {
+        this.actualContextUsed = runtimeResult.actualContextUsed;
+      }
+      if (typeof runtimeResult.actualContextMax === "number" && runtimeResult.actualContextMax > 0) {
+        this.actualContextMax = runtimeResult.actualContextMax;
+      }
       if (runtimeResult.lastUsage) {
         this.lastUsage = runtimeResult.lastUsage;
         this.accumulateUsage(this.lastUsage);
       }
 
-      if (this.contextWindowUsage) {
+      const effectiveMax = this.actualContextMax ?? (this.contextWindowSize > 0 ? this.contextWindowSize : 0);
+      if (effectiveMax > 0) {
         const pct = (
-          (this.currentContextTokens / this.contextWindowSize) *
+          (this.currentContextTokens / effectiveMax) *
           100
         ).toFixed(1);
+        const source = this.actualContextUsed !== null ? "context-event" : "fallback";
         console.log(
-          `Context: ${this.currentContextTokens}/${this.contextWindowSize} (${pct}%)`
+          `Context: ${this.currentContextTokens}/${effectiveMax} (${pct}%) [${source}]`
         );
       }
     } catch (error) {
@@ -817,8 +883,9 @@ export class ClaudeSession {
 
       usageAfter = await captureUsageSnapshot();
 
-      const contextUsagePercent = this.contextWindowUsage
-        ? (this.currentContextTokens / this.contextWindowSize) * 100
+      const effectiveContextMaxForPercent = this.actualContextMax ?? (this.contextWindowSize > 0 ? this.contextWindowSize : null);
+      const contextUsagePercent = effectiveContextMaxForPercent
+        ? (this.currentContextTokens / effectiveContextMaxForPercent) * 100
         : undefined;
       const currentModelId = getModelForContext(modelContext);
       const toolDurations = runtimeResult?.toolDurations ?? {};
@@ -976,6 +1043,10 @@ export class ClaudeSession {
       this.contextWindowUsage = data.contextWindowUsage || null;
     if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0)
       this.contextWindowSize = data.contextWindowSize;
+    // IMPORTANT: Do NOT restore actualContextUsed/actualContextMax from saved data.
+    // These must come fresh from SDK context events to prevent stale % calculations.
+    this.actualContextUsed = null;
+    this.actualContextMax = null;
     return { count: lostMessages.length, messages: lostMessages };
   }
 
@@ -988,11 +1059,20 @@ export class ClaudeSession {
     this.totalCacheCreateTokens += u.cache_creation_input_tokens || 0;
     this.totalQueries++;
 
+    const ctxSize = this.actualContextMax ?? this.contextWindowSize;
+    const ctxTokens = this.currentContextTokens;
+    const source = this.actualContextUsed !== null ? "ctx-event" : "fallback";
+    const ctxPctStr = ctxSize > 0 ? `(${((ctxTokens / ctxSize) * 100).toFixed(1)}% [${source}])` : "(window size unknown)";
     console.log(
-      `Usage: in=${u.input_tokens} out=${u.output_tokens} cache_read=${u.cache_read_input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0} cumulative=${this.currentContextTokens}`
+      `Usage: in=${u.input_tokens} out=${u.output_tokens} cache_read=${u.cache_read_input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0} ` +
+      `context_window=${ctxTokens}/${ctxSize} ${ctxPctStr} ` +
+      `cumulative_total=${this.totalInputTokens}`
     );
 
-    const CONTEXT_LIMIT = this.contextWindowSize || 200_000;
+    // Skip threshold checks if context window size not yet received from SDK
+    if (ctxSize <= 0) return;
+
+    const CONTEXT_LIMIT = ctxSize;
     const COOLDOWN_MESSAGES = 50;
     const currentContext = this.currentContextTokens;
 
@@ -1120,6 +1200,9 @@ export class ClaudeSession {
         this.contextWindowUsage = data.contextWindowUsage || null;
       if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0)
         this.contextWindowSize = data.contextWindowSize;
+      // Do NOT restore actualContextUsed/Max — must come fresh from SDK
+      this.actualContextUsed = null;
+      this.actualContextMax = null;
 
       const contextTokens = this.totalInputTokens + this.totalOutputTokens;
       console.log(
