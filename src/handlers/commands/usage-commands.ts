@@ -151,7 +151,7 @@ export async function handleContext(ctx: Context): Promise<void> {
     const session = sessionManager.getSession(chatId!, threadId);
 
     // Use last-known context usage snapshot (updated after each query, persisted across restarts)
-    const contextLimit = session.contextWindowSize || 200_000;
+    const contextLimit = session.actualContextMax ?? (session.contextWindowSize || 200_000);
     const contextUsed = session.currentContextTokens;
     const percentage = ((contextUsed / contextLimit) * 100).toFixed(1);
 

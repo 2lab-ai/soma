@@ -38,6 +38,7 @@ function createFakeSession() {
     sessionStartTime: null,
     currentContextTokens: 0,
     contextWindowSize: 200000,
+    actualContextMax: null,
     totalQueries: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,

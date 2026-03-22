@@ -175,6 +175,9 @@ export interface QueryRuntimeExecutionResult {
   contextWindowSize: number | null;
   lastUsage: TokenUsage | null;
   queryCompleted: boolean;
+  // Authoritative context values from SDK "context" events ONLY
+  actualContextUsed: number | null;
+  actualContextMax: number | null;
 }
 
 function hasContextWindowUsage(usage: ContextWindowUsage): boolean {
@@ -247,6 +250,8 @@ async function executeProviderRuntime(
   let lastUsage: TokenUsage | null = null;
   let contextWindowUsage: ContextWindowUsage | null = null;
   let contextWindowSize: number | null = null;
+  let actualContextUsed: number | null = null;
+  let actualContextMax: number | null = null;
   let generationMismatch = false;
   let usedProviderId = input.providerExecution.primaryProviderId;
 
@@ -382,12 +387,16 @@ async function executeProviderRuntime(
     }
 
     if (event.type === "context") {
+      // AUTHORITATIVE: This is the actual context window occupancy from the SDK.
+      // Set both legacy vars (for backward compat) AND new authoritative vars.
       contextWindowUsage = {
         input_tokens: event.usedTokens,
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
       };
       contextWindowSize = event.maxTokens;
+      actualContextUsed = event.usedTokens;
+      actualContextMax = event.maxTokens;
       return;
     }
 
@@ -437,6 +446,8 @@ async function executeProviderRuntime(
     contextWindowSize,
     lastUsage,
     queryCompleted,
+    actualContextUsed,
+    actualContextMax,
   };
 }
 
@@ -465,6 +476,8 @@ export async function executeQueryRuntime(
   let lastUsage: TokenUsage | null = null;
   let contextWindowUsage: ContextWindowUsage | null = null;
   let contextWindowSize: number | null = null;
+  let actualContextUsed: number | null = null;
+  let actualContextMax: number | null = null;
 
   let currentToolStart: { name: string; startMs: number } | null = null;
   const toolDurations: Record<string, { count: number; totalMs: number }> = {};
@@ -619,6 +632,12 @@ export async function executeQueryRuntime(
           contextWindowFromClaudeCode.size > 0
         ) {
           contextWindowSize = contextWindowFromClaudeCode.size;
+          // ClaudeCode context is authoritative — set actual values
+          const usedTokens = contextWindowFromClaudeCode.usage.input_tokens +
+            contextWindowFromClaudeCode.usage.cache_creation_input_tokens +
+            contextWindowFromClaudeCode.usage.cache_read_input_tokens;
+          actualContextUsed = usedTokens;
+          actualContextMax = contextWindowFromClaudeCode.size;
         }
       } else if (lastCallUsage) {
         const usage = {
@@ -679,6 +698,10 @@ export async function executeQueryRuntime(
 
         if (detectedContextWindow > 0) {
           contextWindowSize = detectedContextWindow;
+          // modelUsage contextWindow is authoritative if no context event yet
+          if (actualContextMax === null) {
+            actualContextMax = detectedContextWindow;
+          }
         }
 
         lastUsage = {
@@ -713,6 +736,8 @@ export async function executeQueryRuntime(
     contextWindowSize,
     lastUsage,
     queryCompleted,
+    actualContextUsed,
+    actualContextMax,
   };
 }
 

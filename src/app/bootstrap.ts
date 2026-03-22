@@ -17,7 +17,6 @@ import {
   registerBotMiddleware,
 } from "./telegram-bot";
 import { configureAndStartScheduler, stopSchedulerRunner } from "./scheduler-runner";
-import { acquirePidLock, releasePidLock } from "./pid-lock";
 
 interface SessionStatsSnapshot {
   totalSessions: number;
@@ -37,6 +36,7 @@ interface SessionPort {
   sessionStartTime: Date | null;
   currentContextTokens: number;
   contextWindowSize: number;
+  actualContextMax: number | null;
   totalQueries: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -203,8 +203,6 @@ export async function bootstrapApplication(
       return { status: 1, stdout: "", stderr: String(e) };
     }
   });
-
-  acquirePidLock();
 
   // Superpower: pending verification task to include in restart marker
   let pendingVerificationTask: VerificationTask | null = null;
@@ -406,11 +404,11 @@ export async function bootstrapApplication(
       let ctxPct = "0";
       if (userId) {
         const session = manager.getSession(userId);
-        ctxPct = (
-          (session.currentContextTokens / session.contextWindowSize) *
-          100
-        ).toFixed(1);
-        contextInfo = `Context: ${ctxPct}% (${session.currentContextTokens.toLocaleString()}/${session.contextWindowSize.toLocaleString()} tokens)`;
+        const effectiveMax = session.actualContextMax ?? session.contextWindowSize;
+        ctxPct = effectiveMax > 0
+          ? ((session.currentContextTokens / effectiveMax) * 100).toFixed(1)
+          : "?";
+        contextInfo = `Context: ${ctxPct}% (${session.currentContextTokens.toLocaleString()}/${effectiveMax.toLocaleString()} tokens)`;
       }
 
       const content = [
@@ -500,9 +498,9 @@ export async function bootstrapApplication(
     }
 
     const contextTokens = session.currentContextTokens;
-    const contextSize = session.contextWindowSize;
+    const contextSize = session.actualContextMax ?? session.contextWindowSize;
     const contextPct =
-      contextTokens > 0 ? ((contextTokens / contextSize) * 100).toFixed(1) : "0";
+      (contextTokens > 0 && contextSize > 0) ? ((contextTokens / contextSize) * 100).toFixed(1) : "?";
     const toolStats = session.formatToolStats();
 
     const lines = [
@@ -605,7 +603,6 @@ export async function bootstrapApplication(
       console.error("[SIGTERM] Failed to write restart marker:", e);
     }
 
-    releasePidLock();
     stopRunner();
     await sleep(1000);
   };
