@@ -836,6 +836,7 @@ export class ClaudeSession {
       if (typeof runtimeResult.actualContextMax === "number" && runtimeResult.actualContextMax > 0) {
         this.actualContextMax = runtimeResult.actualContextMax;
       }
+      console.log(`[CTX-SYNC] actualContextMax=${this.actualContextMax} contextWindowSize=${this.contextWindowSize} actualContextUsed=${this.actualContextUsed} currentContextTokens=${this.currentContextTokens}`);
       if (runtimeResult.lastUsage) {
         this.lastUsage = runtimeResult.lastUsage;
         this.accumulateUsage(this.lastUsage);

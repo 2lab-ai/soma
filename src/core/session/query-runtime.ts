@@ -389,6 +389,7 @@ async function executeProviderRuntime(
     if (event.type === "context") {
       // AUTHORITATIVE: This is the actual context window occupancy from the SDK.
       // Set both legacy vars (for backward compat) AND new authoritative vars.
+      console.log(`[CTX-EVENT] type=context maxTokens=${event.maxTokens} usedTokens=${event.usedTokens} pct=${((event.usedTokens / event.maxTokens) * 100).toFixed(1)}%`);
       contextWindowUsage = {
         input_tokens: event.usedTokens,
         cache_creation_input_tokens: 0,
@@ -626,6 +627,7 @@ export async function executeQueryRuntime(
       })();
 
       if (contextWindowFromClaudeCode) {
+        console.log(`[CTX-EVENT] type=claudeCode size=${contextWindowFromClaudeCode.size} usage=${JSON.stringify(contextWindowFromClaudeCode.usage)}`);
         contextWindowUsage = contextWindowFromClaudeCode.usage;
         if (
           typeof contextWindowFromClaudeCode.size === "number" &&
@@ -697,6 +699,7 @@ export async function executeQueryRuntime(
         }
 
         if (detectedContextWindow > 0) {
+          console.log(`[CTX-EVENT] type=modelUsage contextWindow=${detectedContextWindow} totalIn=${totalIn} totalOut=${totalOut} cacheRead=${totalCacheRead} cacheCreate=${totalCacheCreate}`);
           contextWindowSize = detectedContextWindow;
           // modelUsage contextWindow is authoritative if no context event yet
           if (actualContextMax === null) {
