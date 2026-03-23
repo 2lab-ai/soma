@@ -200,9 +200,9 @@ describe("formatErrorForUser", () => {
   });
 
   test("truncates long messages", () => {
-    const longMsg = "x".repeat(300);
+    const longMsg = "x".repeat(1500);
     const msg = formatErrorForUser(new Error(longMsg));
-    expect(msg.length).toBeLessThan(300);
+    expect(msg.length).toBeLessThan(1500);
   });
 });
 

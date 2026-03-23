@@ -4,6 +4,7 @@ import type { Bot, Context } from "grammy";
 import { ALLOWED_USERS, RESTART_FILE, SYS_MSG_PREFIX, WORKING_DIR } from "../config";
 
 const RESTART_MARKER_FILE = "/tmp/soma-restart-marker.json";
+const CRASH_MARKER_FILE = "/tmp/soma-crash-marker.json";
 import { createProviderOrchestrator } from "../providers/create-orchestrator";
 import type { ProviderRetryPolicyMap } from "../providers/retry-policy";
 import { addSystemReaction, sendSystemMessage } from "../utils/system-message";
@@ -98,6 +99,8 @@ export interface BootstrappedApplication {
   stopRunner: () => void;
   handleSigterm: () => Promise<void>;
   setVerificationTask: (task: VerificationTask | null) => void;
+  /** Best-effort crash notification to user before process dies */
+  notifyCrash?: (reason: string, error?: unknown) => void;
 }
 
 interface BootstrapDependencies {
@@ -342,11 +345,42 @@ export async function bootstrapApplication(
             }
           }
         } else {
-          // No verification task — just inject restart notice
-          session.nextQueryContext =
-            `[SYSTEM] 서비스가 방금 재시작되었습니다 (make up / systemctl restart).\n` +
+          // No verification task — determine restart reason from crash marker
+          let restartReason = "make up / systemctl restart";
+          let crashError: string | null = null;
+
+          if (fsOps.existsSync(CRASH_MARKER_FILE)) {
+            try {
+              const crashData = JSON.parse(fsOps.readFileSync(CRASH_MARKER_FILE, "utf-8"));
+              const reason = crashData.reason as string;
+              if (reason === "uncaughtException") {
+                restartReason = "💥 uncaughtException (프로세스 크래시)";
+                crashError = crashData.error || null;
+              } else if (reason === "unhandledRejection") {
+                restartReason = "💥 unhandledRejection (프로세스 크래시)";
+                crashError = crashData.error || null;
+              } else if (reason === "sigint") {
+                restartReason = "Ctrl+C (SIGINT)";
+              } else if (reason === "sigterm") {
+                restartReason = "make up / systemctl restart (SIGTERM)";
+              }
+              fsOps.unlinkSync(CRASH_MARKER_FILE);
+            } catch {
+              // ignore
+            }
+          }
+
+          let contextMsg =
+            `[SYSTEM] 서비스가 방금 재시작되었습니다.\n` +
+            `재시작 원인: ${restartReason}\n` +
             `이전 세션의 명령(make up, restart 등)은 이미 완료되었습니다. 절대 재실행하지 마세요.\n` +
             `이전 종료 시각: ${marker.timestamp || "unknown"}`;
+
+          if (crashError) {
+            contextMsg += `\n\n크래시 에러:\n${crashError.slice(0, 1000)}`;
+          }
+
+          session.nextQueryContext = contextMsg;
         }
         console.log("[STARTUP] Restart marker processed");
       }
@@ -356,6 +390,37 @@ export async function bootstrapApplication(
       try { fsOps.unlinkSync(RESTART_MARKER_FILE); } catch (cleanupErr) {
         console.error("[STARTUP] Failed to delete restart marker:", cleanupErr);
       }
+    }
+  }
+
+  // Handle crash marker WITHOUT restart marker — OS killed process (OOM, SIGKILL, etc.)
+  // No SIGTERM was caught, so no restart marker exists, but crash marker might.
+  if (fsOps.existsSync(CRASH_MARKER_FILE)) {
+    try {
+      const crashData = JSON.parse(fsOps.readFileSync(CRASH_MARKER_FILE, "utf-8"));
+      const reason = crashData.reason as string;
+      const userId = ALLOWED_USERS[0];
+
+      if (userId) {
+        const session = manager.getSession(userId);
+        let reasonLabel = `프로세스 크래시 (${reason})`;
+        if (reason === "uncaughtException") reasonLabel = "💥 uncaughtException";
+        else if (reason === "unhandledRejection") reasonLabel = "💥 unhandledRejection";
+
+        const errorStr = crashData.error ? `\n\n크래시 에러:\n${String(crashData.error).slice(0, 1000)}` : "";
+
+        session.nextQueryContext =
+          `[SYSTEM] 서비스가 비정상 종료 후 재시작되었습니다.\n` +
+          `종료 원인: ${reasonLabel}\n` +
+          `종료 시각: ${crashData.timestamp || "unknown"}` +
+          errorStr +
+          `\n\n이전 세션의 명령은 이미 완료되었습니다. 절대 재실행하지 마세요.`;
+      }
+
+      fsOps.unlinkSync(CRASH_MARKER_FILE);
+      console.log(`[STARTUP] Crash marker processed: reason=${reason}`);
+    } catch {
+      try { fsOps.unlinkSync(CRASH_MARKER_FILE); } catch {}
     }
   }
 
@@ -616,6 +681,30 @@ export async function bootstrapApplication(
     }
   };
 
+  // Best-effort crash notification — called from uncaughtException/unhandledRejection
+  // before process dies. Synchronous Telegram call via fetch (no await needed).
+  const notifyCrash = (reason: string, error?: unknown): void => {
+    const userId = ALLOWED_USERS[0];
+    if (!userId) return;
+
+    const errorStr = error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : error != null ? String(error).slice(0, 500) : "unknown";
+
+    const reasonLabel =
+      reason === "uncaughtException" ? "💥 Uncaught Exception" :
+      reason === "unhandledRejection" ? "💥 Unhandled Promise Rejection" :
+      `💥 Crash (${reason})`;
+
+    const text =
+      `${reasonLabel}\n\n` +
+      `\`\`\`\n${errorStr.slice(0, 800)}\n\`\`\`\n\n` +
+      `프로세스가 종료됩니다. systemd가 10초 후 재시작합니다.`;
+
+    // Fire-and-forget — process is about to die
+    bot.api.sendMessage(userId, text, { parse_mode: "Markdown" }).catch(() => {});
+  };
+
   return {
     bot,
     runner,
@@ -623,5 +712,6 @@ export async function bootstrapApplication(
     stopRunner,
     handleSigterm,
     setVerificationTask,
+    notifyCrash,
   };
 }
