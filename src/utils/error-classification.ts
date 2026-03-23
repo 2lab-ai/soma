@@ -254,7 +254,11 @@ export function formatErrorForUser(error: unknown): string {
   if (details.exitCode !== undefined) {
     userMessage += ` (code ${details.exitCode})`;
   }
-  userMessage += `\n${details.message.slice(0, 150)}`;
+  userMessage += `\n${details.message.slice(0, 800)}`;
+
+  if (details.stderr) {
+    userMessage += `\n\nstderr:\n${details.stderr.slice(0, 300)}`;
+  }
 
   if (details.hint) {
     userMessage += `\n\n💡 ${details.hint}`;

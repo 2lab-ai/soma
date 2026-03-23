@@ -285,6 +285,17 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         }
 
         const errorStr = String(error);
+
+        // Auto-retry on expired session ID (soma-nok6)
+        if (errorStr.includes("SESSION_EXPIRED") && attempt < MAX_RETRIES) {
+          console.log(`[SESSION-RESUME] Session expired, auto-retrying as new session (attempt ${attempt + 1})`);
+          cleanupToolMessages(ctx, state.toolMessages);
+          state.cleanup();
+          state = new StreamingState();
+          statusCallback = await createStatusCallback(ctx, state, session);
+          continue;
+        }
+
         const isClaudeCodeCrash = errorStr.includes("exited with code");
 
         cleanupToolMessages(ctx, state.toolMessages);
@@ -293,12 +304,12 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           console.error(`[CRASH] Claude Code crashed: ${errorStr}`);
           await session.kill();
           session.clearStopRequested();
-          const shortError = errorStr.slice(0, 500);
+          const shortError = errorStr.slice(0, 800);
           await sendSystemMessage(
             ctx,
             `💥 **Claude Code Exception**\n\n` +
               `\`\`\`\n${shortError}\n\`\`\`\n\n` +
-              `Session cleared. Send a new message to start fresh.`,
+              `세션 초기화됨. 새 메시지를 보내세요.`,
             { parse_mode: "Markdown" }
           );
           break;
