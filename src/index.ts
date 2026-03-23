@@ -85,13 +85,14 @@ process.on("uncaughtException", (error) => {
 
   writeCrashMarker("uncaughtException", error);
 
-  // Attempt to notify user via Telegram (best-effort, may fail)
+  // Attempt to notify user via Telegram, then exit
+  // Give 3 seconds for the message to send before dying
   try {
     app.notifyCrash?.("uncaughtException", error);
   } catch {}
 
-  // Let systemd restart us
-  process.exit(1);
+  // Wait briefly for fire-and-forget Telegram message to send
+  setTimeout(() => process.exit(1), 2000);
 });
 
 process.on("unhandledRejection", (reason) => {
@@ -102,11 +103,11 @@ process.on("unhandledRejection", (reason) => {
 
   writeCrashMarker("unhandledRejection", reason);
 
-  // Attempt to notify user via Telegram (best-effort, may fail)
+  // Attempt to notify user via Telegram, then exit
   try {
     app.notifyCrash?.("unhandledRejection", reason);
   } catch {}
 
-  // Let systemd restart us
-  process.exit(1);
+  // Wait briefly for fire-and-forget Telegram message to send
+  setTimeout(() => process.exit(1), 2000);
 });
