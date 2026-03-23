@@ -8,6 +8,7 @@ const CRASH_MARKER_FILE = "/tmp/soma-crash-marker.json";
 import { createProviderOrchestrator } from "../providers/create-orchestrator";
 import type { ProviderRetryPolicyMap } from "../providers/retry-policy";
 import { addSystemReaction, sendSystemMessage } from "../utils/system-message";
+import { convertMarkdownToHtml } from "../formatting";
 import { PendingFormStore } from "../stores/pending-form-store";
 import { sessionManager } from "../core/session/session-manager";
 import { setBotUsername } from "../handlers";
@@ -348,8 +349,136 @@ export async function bootstrapApplication(
               console.error(`[SUPERPOWER] Proactive fix trigger failed:`, e);
             }
           }
+        } else if (marker.restartPrompt) {
+          // Restart prompt: auto-execute a saved prompt on boot
+          // Response streams back to Telegram via bot.api
+          const restartPrompt = marker.restartPrompt as string;
+          console.log(`[RESTART-PROMPT] Auto-executing restart prompt (${restartPrompt.length} chars)`);
+
+          // Prepend system context to avoid re-executing make up
+          const fullPrompt =
+            `[SYSTEM] 서비스가 방금 재시작되었습니다. 이전 세션의 명령(make up, restart 등)은 이미 완료됨. 절대 재실행하지 마세요.\n\n` +
+            restartPrompt;
+
+          // Build a lightweight streaming callback using bot.api directly
+          // (no Grammy Context available at bootstrap time)
+          const TELEGRAM_SAFE_LIMIT = 4000;
+          const THROTTLE_MS = 800;
+          const textMessages = new Map<number, { message_id: number; chat_id: number | string }>();
+          const lastContent = new Map<number, string>();
+          const lastEditTimes = new Map<number, number>();
+
+          const bootstrapCallback = async (
+            type: string,
+            content: string,
+            segmentId?: number,
+          ): Promise<void> => {
+            try {
+              if (type === "tool") {
+                await bot.api.sendMessage(userId, content, { parse_mode: "HTML" });
+                return;
+              }
+
+              if (type === "text" && segmentId !== undefined) {
+                const now = Date.now();
+                const display = content.length > TELEGRAM_SAFE_LIMIT
+                  ? content.slice(0, TELEGRAM_SAFE_LIMIT) + "..."
+                  : content;
+                let formatted: string;
+                try {
+                  formatted = convertMarkdownToHtml(display);
+                } catch {
+                  formatted = display;
+                }
+
+                if (!textMessages.has(segmentId)) {
+                  try {
+                    const msg = await bot.api.sendMessage(userId, formatted, { parse_mode: "HTML" });
+                    textMessages.set(segmentId, { message_id: msg.message_id, chat_id: msg.chat.id });
+                    lastContent.set(segmentId, formatted);
+                  } catch {
+                    const msg = await bot.api.sendMessage(userId, display);
+                    textMessages.set(segmentId, { message_id: msg.message_id, chat_id: msg.chat.id });
+                    lastContent.set(segmentId, display);
+                  }
+                  lastEditTimes.set(segmentId, now);
+                  return;
+                }
+
+                const lastEdit = lastEditTimes.get(segmentId) || 0;
+                if (now - lastEdit <= THROTTLE_MS) return;
+                if (formatted === lastContent.get(segmentId)) return;
+
+                const existing = textMessages.get(segmentId)!;
+                try {
+                  await bot.api.editMessageText(existing.chat_id, existing.message_id, formatted, {
+                    parse_mode: "HTML",
+                  });
+                  lastContent.set(segmentId, formatted);
+                } catch {
+                  try {
+                    await bot.api.editMessageText(existing.chat_id, existing.message_id, display);
+                    lastContent.set(segmentId, display);
+                  } catch { /* edit failed */ }
+                }
+                lastEditTimes.set(segmentId, now);
+                return;
+              }
+
+              if (type === "segment_end" && segmentId !== undefined && content) {
+                const display = content.length > TELEGRAM_SAFE_LIMIT
+                  ? content.slice(0, TELEGRAM_SAFE_LIMIT) + "..."
+                  : content;
+                let formatted: string;
+                try {
+                  formatted = convertMarkdownToHtml(display);
+                } catch {
+                  formatted = display;
+                }
+
+                if (!textMessages.has(segmentId)) {
+                  try {
+                    const msg = await bot.api.sendMessage(userId, formatted, { parse_mode: "HTML" });
+                    textMessages.set(segmentId, { message_id: msg.message_id, chat_id: msg.chat.id });
+                  } catch {
+                    await bot.api.sendMessage(userId, display);
+                  }
+                  return;
+                }
+
+                if (formatted === lastContent.get(segmentId)) return;
+
+                const existing = textMessages.get(segmentId)!;
+                try {
+                  await bot.api.editMessageText(existing.chat_id, existing.message_id, formatted, {
+                    parse_mode: "HTML",
+                  });
+                } catch {
+                  try {
+                    await bot.api.editMessageText(existing.chat_id, existing.message_id, display);
+                  } catch { /* edit failed */ }
+                }
+                return;
+              }
+            } catch (e) {
+              console.error(`[RESTART-PROMPT] Streaming callback error (${type}):`, e);
+            }
+          };
+
+          try {
+            await session.sendMessageStreaming(
+              fullPrompt,
+              bootstrapCallback,
+              userId,
+            );
+            console.log("[RESTART-PROMPT] Auto-execution completed");
+          } catch (e) {
+            console.error("[RESTART-PROMPT] Auto-execution failed:", e);
+            // Fallback: set as nextQueryContext so it runs on next user message
+            session.nextQueryContext = fullPrompt;
+          }
         } else {
-          // No verification task — determine restart reason from crash marker
+          // No verification task, no restart prompt — determine restart reason from crash marker
           let restartReason = "make up / systemctl restart";
           let restartType: "deploy" | "sigint" | "crash" = "deploy";
           let restartEmoji = "🔄";
@@ -501,6 +630,14 @@ export async function bootstrapApplication(
   console.log(`[STARTUP] PID: ${process.pid}`);
   console.log(`[STARTUP] Working dir: ${WORKING_DIR}`);
   console.log(`[STARTUP] Allowed users: ${ALLOWED_USERS.length}`);
+
+  // Write PID file for soma-tools MCP server to send SIGTERM
+  try {
+    fsOps.writeFileSync("/tmp/soma.pid", String(process.pid), "utf-8");
+    console.log(`[STARTUP] PID file written: /tmp/soma.pid → ${process.pid}`);
+  } catch (e) {
+    console.warn("[STARTUP] Failed to write PID file:", e);
+  }
 
   const runner = startRunner(bot);
   console.log("[STARTUP] Bot runner started");
@@ -730,6 +867,23 @@ export async function bootstrapApplication(
         markerData.verificationTask = pendingVerificationTask;
         console.log(`[SIGTERM] Including verification task: ${pendingVerificationTask.bdTaskId}`);
       }
+
+      // Restart prompt: auto-execute a prompt on next boot
+      // Written to /tmp/soma-restart-prompt.txt by Claude before triggering make up
+      const RESTART_PROMPT_FILE = "/tmp/soma-restart-prompt.txt";
+      if (fsOps.existsSync(RESTART_PROMPT_FILE)) {
+        try {
+          const restartPrompt = fsOps.readFileSync(RESTART_PROMPT_FILE, "utf-8").trim();
+          if (restartPrompt) {
+            markerData.restartPrompt = restartPrompt;
+            console.log(`[SIGTERM] Including restart prompt (${restartPrompt.length} chars)`);
+          }
+          fsOps.unlinkSync(RESTART_PROMPT_FILE);
+        } catch (e) {
+          console.warn("[SIGTERM] Failed to read restart prompt file:", e);
+        }
+      }
+
       fsOps.writeFileSync(
         RESTART_MARKER_FILE,
         JSON.stringify(markerData),

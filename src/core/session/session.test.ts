@@ -10,9 +10,9 @@ describe("core/session/session", () => {
 });
 
 describe("sendMessageStreaming re-entrancy guard (soma-fkx2)", () => {
-  test("throws when called while already running", async () => {
+  test("throws when called while query is running", async () => {
     const session = new ClaudeSession("test:reentrant:guard");
-    (session as any)._queryState = "preparing";
+    (session as any)._queryState = "running";
 
     await expect(
       session.sendMessageStreaming("test", async () => {}, 1)
@@ -25,10 +25,16 @@ describe("sendMessageStreaming re-entrancy guard (soma-fkx2)", () => {
     expect(session.queryState).toBe("idle");
   });
 
-  test("rejects for all non-idle query states", async () => {
+  test("allows call when preparing (startProcessing sets preparing before sendMessageStreaming)", () => {
+    const session = new ClaudeSession("test:reentrant:preparing");
+    (session as any)._queryState = "preparing";
+    expect(session.isRunning).toBe(false);
+  });
+
+  test("rejects for running and aborting states", async () => {
     const session = new ClaudeSession("test:reentrant:states");
 
-    for (const state of ["preparing", "running", "responding"] as const) {
+    for (const state of ["running", "aborting"] as const) {
       (session as any)._queryState = state;
       expect(session.isRunning).toBe(true);
 
@@ -36,7 +42,6 @@ describe("sendMessageStreaming re-entrancy guard (soma-fkx2)", () => {
         session.sendMessageStreaming("test", async () => {}, 1)
       ).rejects.toThrow("already running");
 
-      // Reset for next iteration
       (session as any)._queryState = "idle";
     }
   });

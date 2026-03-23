@@ -17,6 +17,11 @@ export interface ClaudeCodeContextWindow {
     cache_read_input_tokens?: number;
   };
   context_window_size?: number;
+  // Authoritative percentage calculated by the SDK (available since claude-agent-sdk v0.2.x)
+  used_percentage?: number;
+  remaining_percentage?: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
 }
 
 export function getThinkingLevel(message: string): number {

@@ -43,6 +43,23 @@ try {
       };
     }
 
+    // Inject TELEGRAM_BOT_TOKEN into send-file MCP server
+    // TELEGRAM_CHAT_ID is injected dynamically per session in session.ts
+    if (MCP_SERVERS["send-file"] && "command" in MCP_SERVERS["send-file"]) {
+      const sendFileConfig = MCP_SERVERS["send-file"] as {
+        command: string;
+        args?: string[];
+        env?: Record<string, string>;
+      };
+      MCP_SERVERS["send-file"] = {
+        ...sendFileConfig,
+        env: {
+          ...sendFileConfig.env,
+          TELEGRAM_BOT_TOKEN: TELEGRAM_TOKEN,
+        },
+      };
+    }
+
     console.log(`Loaded ${Object.keys(MCP_SERVERS).length} MCP servers`);
   }
 } catch {

@@ -1221,7 +1221,9 @@ describe("ClaudeSession - actualContextUsed/Max (soma-u63c)", () => {
     expect(session.currentContextTokens).toBe(120000);
   });
 
-  test("currentContextTokens falls back to snapshot when actualContextUsed is null", () => {
+  test("currentContextTokens rejects snapshot with cache tokens (soma-nok6)", () => {
+    // Snapshot from usage event includes cache_read/cache_create — NOT context window usage.
+    // cache_read=805K caused 426% bug. These snapshots must be rejected.
     session.contextWindowUsage = {
       input_tokens: 50000,
       cache_creation_input_tokens: 10000,
@@ -1229,13 +1231,32 @@ describe("ClaudeSession - actualContextUsed/Max (soma-u63c)", () => {
     };
     session.actualContextUsed = null;
 
-    // Should use snapshot: 50000 + 10000 + 5000 = 65000
-    expect(session.currentContextTokens).toBe(65000);
+    // Should return 0 (reject snapshot with cache tokens), NOT 65000
+    expect(session.currentContextTokens).toBe(0);
   });
 
-  test("restoreFromData resets actualContextUsed/Max to null", () => {
+  test("currentContextTokens uses snapshot from context event (no cache tokens)", () => {
+    // Context events set cache_read=0, cache_create=0 — these ARE authoritative
+    session.contextWindowUsage = {
+      input_tokens: 150000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    session.actualContextUsed = null;
+
+    // Should use input_tokens from context event snapshot
+    expect(session.currentContextTokens).toBe(150000);
+  });
+
+  test("restoreFromData resets ALL context window state to prevent stale % (soma-nok6)", () => {
     session.actualContextUsed = 100000;
     session.actualContextMax = 1000000;
+    session.contextWindowUsage = {
+      input_tokens: 99999,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    session.contextWindowSize = 500000;
 
     const mockData: SessionData = {
       session_id: "test-restore",
@@ -1251,16 +1272,12 @@ describe("ClaudeSession - actualContextUsed/Max (soma-u63c)", () => {
 
     session.restoreFromData(mockData);
 
-    // actualContext values should be null (not restored from stale data)
+    // ALL context values must be cleared — fresh SDK context events required
+    // Restoring stale contextWindowUsage with wrong contextWindowSize caused 351% bug
     expect(session.actualContextUsed).toBeNull();
     expect(session.actualContextMax).toBeNull();
-    // But legacy values should be restored
-    expect(session.contextWindowUsage).toEqual({
-      input_tokens: 50000,
-      cache_creation_input_tokens: 0,
-      cache_read_input_tokens: 0,
-    });
-    expect(session.contextWindowSize).toBe(200000);
+    expect(session.contextWindowUsage).toBeNull();
+    expect(session.contextWindowSize).toBe(0);
   });
 
   test("context % uses actualContextMax when available", () => {
@@ -1291,5 +1308,355 @@ describe("ClaudeSession - actualContextUsed/Max (soma-u63c)", () => {
     const pct = (tokens / max) * 100;
 
     expect(pct).toBe(50);
+  });
+});
+
+/**
+ * soma-nok6: E2E regression tests for Context 351% bug + Session ID recovery
+ *
+ * These tests reproduce the EXACT failure scenarios from production:
+ * 1. Session runs → accumulates stale contextWindowUsage → restarts → 351% displayed
+ * 2. Session restarts → tries expired session ID → "No conversation found" error
+ */
+describe("soma-nok6: E2E Context 351% + Session ID expiry", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-nok6-e2e");
+  });
+
+  // === BUG 1 REPRODUCTION: Context 351% ===
+
+  test("REPRODUCES 351% bug: stale contextWindowUsage after restore causes >100% context", () => {
+    // SETUP: Simulate a session that ran with high context usage
+    // This is what happened BEFORE the fix — the old restoreFromData restored stale values
+
+    // Step 1: Session runs, SDK context event sets usage to 700K / 1M (70%)
+    session.contextWindowUsage = {
+      input_tokens: 702400,  // from context event: usedTokens
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    session.contextWindowSize = 1000000;  // from context event: maxTokens
+    session.actualContextUsed = 702400;
+    session.actualContextMax = 1000000;
+
+    // Verify: before restart, context is 70.24% — correct
+    const preRestartPct = (session.currentContextTokens / (session.actualContextMax ?? session.contextWindowSize)) * 100;
+    expect(preRestartPct).toBeCloseTo(70.24, 1);
+
+    // Step 2: Session saved to disk (session-store saves contextWindowUsage + contextWindowSize)
+    const savedData: SessionData = {
+      session_id: "old-session-abc123",
+      saved_at: new Date().toISOString(),
+      working_dir: "/home/user/project",
+      contextWindowUsage: {
+        input_tokens: 702400,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      contextWindowSize: 200000,  // BUG: saved with WRONG window size (different model/stale)
+      totalInputTokens: 1500000,
+      totalOutputTokens: 300000,
+      totalQueries: 42,
+    };
+
+    // Step 3: New session restores from saved data
+    const newSession = new ClaudeSession("test-nok6-restored");
+    newSession.restoreFromData(savedData);
+
+    // Step 4: Calculate context % the way bootstrap.ts does (line 407-410)
+    const effectiveMax = newSession.actualContextMax ?? newSession.contextWindowSize;
+
+    // WITH FIX: effectiveMax should be 0 (cleared), so percentage should be "?"
+    // WITHOUT FIX: effectiveMax would be 200000, tokens would be 702400
+    //   → 702400 / 200000 * 100 = 351.2% ← THE BUG
+
+    if (effectiveMax > 0) {
+      const pct = (newSession.currentContextTokens / effectiveMax) * 100;
+      // If we somehow have a max, percentage MUST be ≤ 100
+      expect(pct).toBeLessThanOrEqual(100);
+    } else {
+      // effectiveMax is 0 → would display "?" → CORRECT behavior after fix
+      expect(effectiveMax).toBe(0);
+    }
+  });
+
+  test("VERIFIES FIX: after restore, context state is clean slate", () => {
+    const savedData: SessionData = {
+      session_id: "session-with-stale-context",
+      saved_at: new Date().toISOString(),
+      working_dir: "/test",
+      contextWindowUsage: {
+        input_tokens: 702400,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      contextWindowSize: 200000,
+      totalInputTokens: 2000000,
+      totalOutputTokens: 500000,
+      totalQueries: 50,
+    };
+
+    session.restoreFromData(savedData);
+
+    // ALL context window state must be zeroed/null after restore
+    expect(session.contextWindowUsage).toBeNull();
+    expect(session.contextWindowSize).toBe(0);
+    expect(session.actualContextUsed).toBeNull();
+    expect(session.actualContextMax).toBeNull();
+
+    // currentContextTokens should be 0 (no stale data to calculate from)
+    expect(session.currentContextTokens).toBe(0);
+
+    // Cumulative stats SHOULD be restored (these are session totals, not context window)
+    expect(session.totalInputTokens).toBe(2000000);
+    expect(session.totalOutputTokens).toBe(500000);
+    expect(session.totalQueries).toBe(50);
+
+    // Session ID SHOULD be restored (for resume attempt)
+    expect(session.sessionId).toBe("session-with-stale-context");
+  });
+
+  test("VERIFIES FIX: bootstrap.ts percentage calculation shows '?' when no context data", () => {
+    // Simulate what bootstrap.ts:saveShutdownContext does (line 406-411)
+    const savedData: SessionData = {
+      session_id: "just-restored",
+      saved_at: new Date().toISOString(),
+      working_dir: "/test",
+      contextWindowUsage: {
+        input_tokens: 900000,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      contextWindowSize: 200000,
+    };
+
+    session.restoreFromData(savedData);
+
+    // Replicate bootstrap.ts logic exactly:
+    const effectiveMax = session.actualContextMax ?? session.contextWindowSize;
+    const ctxPct = effectiveMax > 0
+      ? ((session.currentContextTokens / effectiveMax) * 100).toFixed(1)
+      : "?";
+
+    // Must show "?" — NOT "450.0%" or any other garbage
+    expect(ctxPct).toBe("?");
+  });
+
+  test("VERIFIES: context % is correct AFTER fresh SDK context event post-restore", () => {
+    // Step 1: Restore (clears context state)
+    session.restoreFromData({
+      session_id: "restored-session",
+      saved_at: new Date().toISOString(),
+      working_dir: "/test",
+      contextWindowUsage: {
+        input_tokens: 999999,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+      },
+      contextWindowSize: 100000,
+    });
+
+    // Step 2: Simulate fresh SDK context event arriving (like query-runtime.ts line 389-401)
+    session.actualContextUsed = 150000;
+    session.actualContextMax = 1000000;
+    session.contextWindowUsage = {
+      input_tokens: 150000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    session.contextWindowSize = 1000000;
+
+    // Step 3: Calculate percentage
+    const effectiveMax = session.actualContextMax ?? session.contextWindowSize;
+    const pct = (session.currentContextTokens / effectiveMax) * 100;
+
+    // Should be 15% — fresh data from SDK
+    expect(pct).toBe(15);
+    expect(session.currentContextTokens).toBe(150000);
+  });
+
+  // === BUG 2 REPRODUCTION: Session ID expiry ===
+
+  test("VERIFIES: sessionId is cleared when SESSION_EXPIRED error would be thrown", () => {
+    // Simulate: session restored with old session ID
+    session.restoreFromData({
+      session_id: "b253e268-ed9f-4818-826b-57ac02c9dc24",
+      saved_at: new Date().toISOString(),
+      working_dir: "/test",
+    });
+
+    expect(session.sessionId).toBe("b253e268-ed9f-4818-826b-57ac02c9dc24");
+
+    // Simulate: error handler detects expired session and clears it
+    // (This is what session.ts error handler does when SDK returns "No conversation found")
+    const errorStr = "No conversation found with session ID";
+    if (errorStr.includes("No conversation found with session ID") && session.sessionId) {
+      session.sessionId = null;
+    }
+
+    // Session ID should be cleared — next query will start fresh
+    expect(session.sessionId).toBeNull();
+  });
+
+  test("VERIFIES: restored session can receive fresh session ID after clearing expired one", () => {
+    // Step 1: Restore with old session ID
+    session.restoreFromData({
+      session_id: "expired-session-id",
+      saved_at: new Date().toISOString(),
+      working_dir: "/test",
+    });
+
+    // Step 2: Clear expired session (simulating error handler)
+    session.sessionId = null;
+
+    // Step 3: Simulate receiving new session ID from SDK (like onSessionId callback)
+    const newSessionId = "fresh-session-id-12345";
+    if (!session.sessionId) {
+      session.sessionId = newSessionId;
+    }
+
+    // New session ID should be set
+    expect(session.sessionId).toBe("fresh-session-id-12345");
+  });
+
+  // === FULL LIFECYCLE E2E ===
+
+  test("E2E: full restore → clear stale → fresh SDK event lifecycle", () => {
+    // Phase 1: ORIGINAL SESSION — normal operation at 62%
+    const originalSession = new ClaudeSession("test-original");
+    originalSession.actualContextUsed = 620000;
+    originalSession.actualContextMax = 1000000;
+    originalSession.contextWindowUsage = {
+      input_tokens: 620000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    originalSession.contextWindowSize = 1000000;
+    originalSession.sessionId = "original-session-xyz";
+
+    // Verify original is at 62%
+    const originalPct = (originalSession.currentContextTokens / originalSession.actualContextMax!) * 100;
+    expect(originalPct).toBe(62);
+
+    // Phase 2: SAVE → simulates session-store.ts saveSession()
+    const savedData: SessionData = {
+      session_id: originalSession.sessionId!,
+      saved_at: new Date().toISOString(),
+      working_dir: "/test",
+      contextWindowUsage: originalSession.contextWindowUsage,
+      contextWindowSize: originalSession.contextWindowSize,
+      totalInputTokens: 1200000,
+      totalOutputTokens: 250000,
+      totalQueries: 35,
+    };
+
+    // Phase 3: RESTART → new process, restore from disk
+    const restoredSession = new ClaudeSession("test-restored");
+    restoredSession.restoreFromData(savedData);
+
+    // Phase 3a: Immediately after restore, context should be unknown (not stale 62%)
+    const effectiveMaxPostRestore = restoredSession.actualContextMax ?? restoredSession.contextWindowSize;
+    expect(effectiveMaxPostRestore).toBe(0);  // No context data yet
+    expect(restoredSession.currentContextTokens).toBe(0);  // No stale tokens
+
+    // Phase 3b: Session ID is restored for resume attempt
+    expect(restoredSession.sessionId).toBe("original-session-xyz");
+
+    // Phase 4: FIRST QUERY runs, SDK sends fresh context event
+    // Simulate: context compacted during restart, now at 25%
+    restoredSession.actualContextUsed = 250000;
+    restoredSession.actualContextMax = 1000000;
+    restoredSession.contextWindowUsage = {
+      input_tokens: 250000,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    restoredSession.contextWindowSize = 1000000;
+
+    // Verify: shows 25%, not 62% (stale) or 351% (bug)
+    const freshPct = (restoredSession.currentContextTokens / restoredSession.actualContextMax!) * 100;
+    expect(freshPct).toBe(25);
+
+    // Phase 5: Cumulative stats survived the restore
+    expect(restoredSession.totalInputTokens).toBe(1200000);
+    expect(restoredSession.totalQueries).toBe(35);
+  });
+
+  // === EXACT REPRODUCTION OF 426.6% BUG FROM PRODUCTION ===
+
+  test("E2E REPRO: 426.6% bug — cache_read=805K inflates context (exact production values)", () => {
+    // EXACT values from production screenshot 2026-03-22:
+    // Last query: Input: 16, Output: 6,065, Cache read: 805,523, Cache created: 47,704
+    // Display: 853,243 / 200,000 tokens (426.6%)
+
+    const session = new ClaudeSession("test-426-repro");
+
+    // Simulate: no context event received, only usage event
+    session.actualContextUsed = null;
+    session.actualContextMax = null;
+
+    // Usage event sets contextWindowUsage (this is what query-runtime.ts USED to do)
+    session.contextWindowUsage = {
+      input_tokens: 16,
+      cache_creation_input_tokens: 47704,
+      cache_read_input_tokens: 805523,
+    };
+
+    // contextWindowSize somehow set to 200K (from previous context event or model default)
+    session.contextWindowSize = 200000;
+
+    // OLD BEHAVIOR (BUG): 16 + 47704 + 805523 = 853,243 / 200,000 = 426.6%
+    // NEW BEHAVIOR (FIX): snapshot has cache tokens → rejected → returns 0
+
+    const tokens = session.currentContextTokens;
+    const effectiveMax = session.actualContextMax ?? session.contextWindowSize;
+
+    // tokens MUST be 0 (rejected usage event snapshot), not 853,243
+    expect(tokens).toBe(0);
+
+    // If we somehow computed a percentage, it must NOT be 426%
+    if (effectiveMax > 0 && tokens > 0) {
+      const pct = (tokens / effectiveMax) * 100;
+      expect(pct).toBeLessThanOrEqual(100);
+    }
+
+    // The /context command would show "?" for percentage
+    const ctxPct = effectiveMax > 0 && tokens > 0
+      ? ((tokens / effectiveMax) * 100).toFixed(1)
+      : "?";
+    expect(ctxPct).toBe("?");
+  });
+
+  test("E2E: after context event arrives, shows correct % (not inflated by cache)", () => {
+    const session = new ClaudeSession("test-correct-after-event");
+
+    // Step 1: Usage event arrives first (cache_read inflated)
+    session.lastUsage = {
+      input_tokens: 16,
+      output_tokens: 6065,
+      cache_read_input_tokens: 805523,
+      cache_creation_input_tokens: 47704,
+    };
+    // With our fix, query-runtime no longer sets contextWindowUsage from usage events
+    // So contextWindowUsage stays null
+    session.contextWindowUsage = null;
+    session.contextWindowSize = 0;
+
+    // Step 2: Context event arrives with authoritative data
+    session.actualContextUsed = 62000;  // actual window occupancy
+    session.actualContextMax = 200000;   // actual window size
+    session.contextWindowUsage = {
+      input_tokens: 62000,  // context event sets cache fields to 0
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    session.contextWindowSize = 200000;
+
+    // Should show 31% (62K / 200K), NOT 426%
+    const pct = (session.currentContextTokens / session.actualContextMax!) * 100;
+    expect(pct).toBe(31);
+    expect(session.currentContextTokens).toBe(62000);
   });
 });

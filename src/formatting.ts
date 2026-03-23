@@ -275,7 +275,7 @@ export function formatToolStatus(
         }>
       | undefined;
 
-    if (!todos || todos.length === 0) {
+    if (!todos || !Array.isArray(todos) || todos.length === 0) {
       return `📋 Task List (empty)`;
     }
 

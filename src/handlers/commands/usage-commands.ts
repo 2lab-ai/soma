@@ -150,10 +150,11 @@ export async function handleContext(ctx: Context): Promise<void> {
   try {
     const session = sessionManager.getSession(chatId!, threadId);
 
-    // Use last-known context usage snapshot (updated after each query, persisted across restarts)
-    const contextLimit = session.actualContextMax ?? (session.contextWindowSize || 200_000);
+    // Use authoritative context data from SDK context events ONLY.
+    // Do NOT hardcode 200K fallback — wrong model size causes 426% bug (soma-nok6).
+    const contextLimit = session.actualContextMax ?? (session.contextWindowSize > 0 ? session.contextWindowSize : 0);
     const contextUsed = session.currentContextTokens;
-    const percentage = ((contextUsed / contextLimit) * 100).toFixed(1);
+    const percentage = contextLimit > 0 ? ((contextUsed / contextLimit) * 100).toFixed(1) : "?";
 
     // Format numbers with commas for readability
     const formatNumber = (n: number): string => n.toLocaleString("en-US");

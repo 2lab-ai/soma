@@ -599,10 +599,10 @@ export async function executeQueryRuntime(
 
       const contextWindowFromClaudeCode = (() => {
         const cw = (event as unknown as { context_window?: unknown }).context_window;
-        if (!isClaudeCodeContextWindow(cw) || !cw.current_usage) return null;
+        if (!isClaudeCodeContextWindow(cw)) return null;
 
         const cu = cw.current_usage;
-        const usage = {
+        const usage = cu ? {
           input_tokens: typeof cu.input_tokens === "number" ? cu.input_tokens : 0,
           cache_creation_input_tokens:
             typeof cu.cache_creation_input_tokens === "number"
@@ -612,33 +612,48 @@ export async function executeQueryRuntime(
             typeof cu.cache_read_input_tokens === "number"
               ? cu.cache_read_input_tokens
               : 0,
-        };
+        } : null;
 
-        return hasContextWindowUsage(usage)
-          ? { usage, size: cw.context_window_size || null }
-          : null;
+        return {
+          usage,
+          size: cw.context_window_size || null,
+          usedPercentage: typeof cw.used_percentage === "number" ? cw.used_percentage : null,
+          totalInputTokens: typeof cw.total_input_tokens === "number" ? cw.total_input_tokens : null,
+        };
       })();
 
       if (contextWindowFromClaudeCode) {
-        console.log(`[CTX-EVENT] type=claudeCode size=${contextWindowFromClaudeCode.size} usage=${JSON.stringify(contextWindowFromClaudeCode.usage)}`);
-        // ClaudeCode context_window is authoritative for actual window occupancy.
-        // Set actualContext* which are the ONLY values used for % calculation.
-        if (
-          typeof contextWindowFromClaudeCode.size === "number" &&
-          contextWindowFromClaudeCode.size > 0
-        ) {
-          contextWindowSize = contextWindowFromClaudeCode.size;
-          const usedTokens = contextWindowFromClaudeCode.usage.input_tokens +
-            contextWindowFromClaudeCode.usage.cache_creation_input_tokens +
-            contextWindowFromClaudeCode.usage.cache_read_input_tokens;
-          actualContextUsed = usedTokens;
-          actualContextMax = contextWindowFromClaudeCode.size;
-          // Also set legacy contextWindowUsage for backward compat, but only from authoritative source
-          contextWindowUsage = {
-            input_tokens: usedTokens,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-          };
+        const { size, usedPercentage, totalInputTokens, usage: cwUsage } = contextWindowFromClaudeCode;
+        console.log(`[CTX-EVENT] type=claudeCode size=${size} usedPct=${usedPercentage} totalInput=${totalInputTokens} usage=${JSON.stringify(cwUsage)}`);
+
+        if (typeof size === "number" && size > 0) {
+          contextWindowSize = size;
+          actualContextMax = size;
+
+          if (typeof usedPercentage === "number") {
+            // AUTHORITATIVE: SDK-calculated used_percentage. Derive used tokens from it.
+            // This avoids the 103%+ bug from summing billing tokens (cache_read + cache_create + input).
+            actualContextUsed = Math.round((usedPercentage / 100) * size);
+            contextWindowUsage = {
+              input_tokens: actualContextUsed,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            };
+            console.log(`[CTX-EVENT] Using SDK used_percentage: ${usedPercentage}% → ${actualContextUsed} / ${size}`);
+          } else if (typeof totalInputTokens === "number" && totalInputTokens > 0) {
+            // Fallback: total_input_tokens (cumulative input, may not be exact context occupancy)
+            actualContextUsed = Math.min(totalInputTokens, size);
+            contextWindowUsage = {
+              input_tokens: actualContextUsed,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            };
+            console.log(`[CTX-EVENT] Fallback total_input_tokens: ${actualContextUsed} / ${size}`);
+          } else {
+            // Last resort: only set max, leave used as unknown
+            // UI will show "?" which is better than 103%
+            console.log(`[CTX-EVENT] No authoritative used value. Only setting max: ${size}`);
+          }
         }
       }
       // DO NOT set contextWindowUsage from lastCallUsage, event.usage, or transcript (soma-u63c).

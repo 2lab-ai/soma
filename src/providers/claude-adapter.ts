@@ -150,6 +150,7 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
                 usageRecord.cache_creation_input_tokens
               ),
             };
+
             if (hasUsageData(normalizedUsage)) {
               await onEvent({
                 providerId: this.providerId,
@@ -223,16 +224,29 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
               });
             }
 
-            if (contextWindow > 0) {
-              await onEvent({
-                providerId: this.providerId,
-                queryId: handle.queryId,
-                timestamp: Date.now(),
-                type: "context",
-                usedTokens: totalInput + totalCacheRead + totalCacheCreate,
-                maxTokens: contextWindow,
-              });
-            }
+            // Context window estimation using num_turns (soma-nok6/soma-u63c fix).
+            //
+            // modelUsage is CUMULATIVE across all API calls within a query.
+            // Each API call sends the full context (input + cache_read + cache_create).
+            // For N turns: cumulative ≈ N × actual_context.
+            // So: actual_context ≈ cumulative / num_turns.
+            //
+            // For single-turn queries: exact.
+            // For multi-turn (tool use): good approximation (context grows slowly between turns).
+            const numTurns = safeNumber((event as Record<string, unknown>).num_turns) || 1;
+            const cumulativeContext = totalInput + totalCacheRead + totalCacheCreate;
+            const estimatedContextUsed = Math.round(cumulativeContext / numTurns);
+            const maxTokens = contextWindow > 0 ? contextWindow : 200000;
+
+            console.log(`[ADAPTER] context: cumulative=${cumulativeContext} numTurns=${numTurns} estimated=${estimatedContextUsed} max=${maxTokens} pct=${((estimatedContextUsed / maxTokens) * 100).toFixed(1)}%`);
+            await onEvent({
+              providerId: this.providerId,
+              queryId: handle.queryId,
+              timestamp: Date.now(),
+              type: "context",
+              usedTokens: estimatedContextUsed,
+              maxTokens,
+            });
           }
 
           await onEvent({
