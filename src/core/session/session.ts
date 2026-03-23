@@ -13,6 +13,7 @@ import {
   type ConfigContext,
   type ModelId,
 } from "../../config/model";
+import { getModelContextWindow } from "../../config/model-specs";
 import {
   beginInterruptTransition,
   clearStopRequestedTransition,
@@ -55,7 +56,6 @@ import { isAbortError } from "../../utils/error-classification";
 import type { ChatCaptureService } from "../../services/chat-capture-service";
 import {
   captureUsageSnapshot,
-  findLatestMainAssistantContextUsageFromTranscript,
   getThinkingLevel,
 } from "./session-helpers";
 import {
@@ -224,23 +224,13 @@ export class ClaudeSession {
     }
   }
 
+  // DEPRECATED: Transcript usage contains billing tokens (cache_read 800K+),
+  // NOT actual context window occupancy. Using it causes 351%/426% bugs (soma-u63c/nok6).
+  // Context % now comes exclusively from actualContextUsed/actualContextMax (SDK context events).
+  // Kept as no-op for interface compatibility.
   private async refreshContextWindowUsageFromTranscript(
-    minTimestampMs: number
+    _minTimestampMs: number
   ): Promise<boolean> {
-    if (!this.sessionId) return false;
-
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const usage = findLatestMainAssistantContextUsageFromTranscript(
-        this.sessionId,
-        this.workingDir,
-        minTimestampMs
-      );
-      if (usage) {
-        this.contextWindowUsage = usage;
-        return true;
-      }
-      if (attempt < 2) await Bun.sleep(50);
-    }
     return false;
   }
 
@@ -257,15 +247,16 @@ export class ClaudeSession {
   }
 
   get currentContextTokens(): number {
-    // Priority 1: Authoritative context event value (actual window occupancy)
+    // ONLY use authoritative context event value (actual window occupancy from SDK).
+    // Usage event tokens (input + cache_read + cache_create) are NOT context window usage —
+    // cache_read can be 800K+ while actual window is 60K, causing 426% bug (soma-nok6).
+    // If no context event received yet, return 0 → UI shows "?" instead of garbage.
     if (this.actualContextUsed !== null && this.actualContextUsed > 0) {
       return this.actualContextUsed;
     }
-    // Priority 2: contextWindowUsage snapshot (may be from lastUsage — less accurate)
-    // Priority 3: Last query's usage as approximation
-    return (
-      this.getContextTokensFromSnapshot() ?? this.getContextTokensFromCumulatives()
-    );
+    // Fallback: contextWindowUsage ONLY if it was set from a context event
+    // (context events set cache_read=0, cache_create=0; usage events set them to real values)
+    return this.getContextTokensFromSnapshot() ?? 0;
   }
 
   private getContextTokensFromSnapshot(): number | null {
@@ -275,29 +266,15 @@ export class ClaudeSession {
       cache_creation_input_tokens = 0,
       cache_read_input_tokens = 0,
     } = this.contextWindowUsage;
-    // Per Anthropic API docs: these 3 fields are mutually exclusive (no overlap).
-    // total = all tokens that occupy the context window.
-    const total = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
-    return total > 0 ? total : null;
-  }
-
-  /**
-   * Fallback when snapshot is unavailable.
-   * WARNING: totalInputTokens is CUMULATIVE across entire session, NOT current context window usage.
-   * Using it directly causes wildly wrong percentages (169%, 575%, 5287%).
-   * Instead, use last query's input_tokens as best approximation of current context.
-   * Ref: https://platform.claude.com/docs/en/build-with-claude/context-windows
-   */
-  private getContextTokensFromCumulatives(): number {
-    // Use last single query's input_tokens as approximation (NOT cumulative total)
-    if (this.lastUsage) {
-      const lastInput = (this.lastUsage.input_tokens || 0) +
-        (this.lastUsage.cache_creation_input_tokens || 0) +
-        (this.lastUsage.cache_read_input_tokens || 0);
-      if (lastInput > 0) return lastInput;
+    // If cache_read > 0, this snapshot came from a usage event (NOT context event).
+    // Usage event tokens are NOT context window occupancy — they include cache hits
+    // that inflate the number far beyond actual window size (805K cache_read → 426% bug).
+    // Context events set cache_read=0 and cache_create=0 (see query-runtime.ts line 393-397).
+    if (cache_read_input_tokens > 0 || cache_creation_input_tokens > 0) {
+      // This is from a usage event — not authoritative for context window
+      return null;
     }
-    // Absolute last resort: return 0 rather than cumulative garbage
-    return 0;
+    return input_tokens > 0 ? input_tokens : null;
   }
 
   /**
@@ -836,6 +813,14 @@ export class ClaudeSession {
       if (typeof runtimeResult.actualContextMax === "number" && runtimeResult.actualContextMax > 0) {
         this.actualContextMax = runtimeResult.actualContextMax;
       }
+      // Apply max(SDK, model-specs) — SDK might report 200K while model supports 1M
+      const specMax = getModelContextWindow(effectiveModel);
+      const sdkMax = this.actualContextMax ?? (this.contextWindowSize > 0 ? this.contextWindowSize : 0);
+      if (specMax > sdkMax) {
+        console.log(`[CTX-SPEC] Model spec (${specMax}) > SDK (${sdkMax}), using spec value`);
+        this.actualContextMax = specMax;
+        this.contextWindowSize = specMax;
+      }
       console.log(`[CTX-SYNC] actualContextMax=${this.actualContextMax} contextWindowSize=${this.contextWindowSize} actualContextUsed=${this.actualContextUsed} currentContextTokens=${this.currentContextTokens}`);
       if (runtimeResult.lastUsage) {
         this.lastUsage = runtimeResult.lastUsage;
@@ -860,6 +845,24 @@ export class ClaudeSession {
       if (isExpectedAbort) {
         console.warn(`Suppressed expected abort (completed: ${queryCompleted})`);
       } else {
+        // Check if this is a stale session ID error — auto-retry without resume
+        const errorStr = String(error);
+        if (
+          errorStr.includes("No conversation found with session ID") &&
+          this.sessionId
+        ) {
+          console.warn(
+            `[SESSION-RESUME] Stale session ID detected (${this.sessionId.slice(0, 8)}...). ` +
+            `Clearing sessionId and retrying as new session. Ref: soma-nok6`
+          );
+          this.sessionId = null;
+          this.saveSession();
+          // Re-throw with clear message so caller can retry
+          throw new Error(
+            `SESSION_EXPIRED: Previous session expired. Please resend your message.`
+          );
+        }
+
         console.error("Error in query:", error);
         this.lastError = String(error).slice(0, 100);
         this.lastErrorTime = new Date();
@@ -1040,12 +1043,14 @@ export class ClaudeSession {
     this.sessionStartTime = data.sessionStartTime
       ? new Date(data.sessionStartTime)
       : null;
-    if (data.contextWindowUsage !== undefined)
-      this.contextWindowUsage = data.contextWindowUsage || null;
-    if (typeof data.contextWindowSize === "number" && data.contextWindowSize > 0)
-      this.contextWindowSize = data.contextWindowSize;
-    // IMPORTANT: Do NOT restore actualContextUsed/actualContextMax from saved data.
-    // These must come fresh from SDK context events to prevent stale % calculations.
+    // IMPORTANT: Do NOT restore ANY context window values from saved data.
+    // All context data (contextWindowUsage, contextWindowSize, actualContext*) must
+    // come fresh from SDK context events to prevent stale/mixed % calculations.
+    // Previously, restoring stale contextWindowUsage with a different contextWindowSize
+    // caused 351% context readings (stale tokens / wrong window size).
+    // Ref: soma-nok6, soma-u63c
+    this.contextWindowUsage = null;
+    this.contextWindowSize = 0;
     this.actualContextUsed = null;
     this.actualContextMax = null;
     return { count: lostMessages.length, messages: lostMessages };
@@ -1156,8 +1161,14 @@ export class ClaudeSession {
         session_id: this.sessionId,
         saved_at: new Date().toISOString(),
         working_dir: this.workingDir,
-        contextWindowUsage: this.contextWindowUsage,
-        contextWindowSize: this.contextWindowSize,
+        // Save authoritative context values only. If actualContext* is set,
+        // save that as a clean snapshot (cache_read=0). Otherwise save contextWindowUsage as-is.
+        // On restore, ALL context values are cleared anyway (soma-nok6), so this is
+        // primarily for debugging/logging purposes.
+        contextWindowUsage: this.actualContextUsed !== null
+          ? { input_tokens: this.actualContextUsed, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }
+          : this.contextWindowUsage,
+        contextWindowSize: this.actualContextMax ?? this.contextWindowSize,
         totalInputTokens: this.totalInputTokens,
         totalOutputTokens: this.totalOutputTokens,
         totalQueries: this.totalQueries,

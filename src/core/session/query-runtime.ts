@@ -2,6 +2,7 @@ import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent
 import type { ProviderOrchestrator } from "../../providers/orchestrator";
 import type { ProviderEvent, ProviderQueryInput } from "../../providers/types.models";
 import { STREAMING_THROTTLE_MS, TEMP_PATHS } from "../../config";
+import { getModelBetas } from "../../config/model-specs";
 import { formatToolStatus } from "../../formatting";
 import { checkCommandSafety, isPathAllowed } from "../../security";
 import type { QueryMetadata, StatusCallback, UsageSnapshot } from "../../types/runtime";
@@ -103,6 +104,11 @@ export interface BuildQueryRuntimeOptionsInput {
 export function buildQueryRuntimeOptions(
   input: BuildQueryRuntimeOptionsInput
 ): Options & { abortController: AbortController } {
+  // Enable 1M context window beta for compatible models.
+  // - Opus 4.6/Sonnet 4.6: GA (beta ignored but harmless)
+  // - Sonnet 4.5/4: Required for 1M activation
+  const betas = getModelBetas(input.model);
+
   const options: Options & { abortController: AbortController } = {
     model: input.model,
     cwd: input.cwd,
@@ -115,6 +121,7 @@ export function buildQueryRuntimeOptions(
     maxThinkingTokens: input.maxThinkingTokens,
     additionalDirectories: input.additionalDirectories,
     resume: input.resumeSessionId || undefined,
+    betas: betas.length > 0 ? betas : undefined,
     hooks: {
       PreToolUse: [
         {
@@ -370,19 +377,10 @@ async function executeProviderRuntime(
         cache_read_input_tokens: event.usage.cacheReadInputTokens || 0,
         cache_creation_input_tokens: event.usage.cacheCreationInputTokens || 0,
       };
-      if (
-        !contextWindowUsage &&
-        lastUsage.input_tokens +
-          (lastUsage.cache_read_input_tokens || 0) +
-          (lastUsage.cache_creation_input_tokens || 0) >
-          0
-      ) {
-        contextWindowUsage = {
-          input_tokens: lastUsage.input_tokens,
-          cache_creation_input_tokens: lastUsage.cache_creation_input_tokens || 0,
-          cache_read_input_tokens: lastUsage.cache_read_input_tokens || 0,
-        };
-      }
+      // DO NOT set contextWindowUsage from usage events (soma-nok6).
+      // Usage event tokens include cache_read (800K+) which is NOT context window occupancy.
+      // Only context events (event.type === "context") provide authoritative window usage.
+      // Previously: cache_read=805K + input=16 + cache_create=47K = 853K / 200K window = 426%.
       return;
     }
 
@@ -426,14 +424,9 @@ async function executeProviderRuntime(
     }
   }
 
-  if (!contextWindowUsage && queryCompleted) {
-    const refreshedUsage = await input.onRefreshContextWindowUsageFromTranscript(
-      input.queryStartedMs
-    );
-    if (refreshedUsage) {
-      contextWindowUsage = refreshedUsage;
-    }
-  }
+  // NOTE: Removed transcript fallback for contextWindowUsage (soma-nok6).
+  // Transcript usage includes cache_read tokens which inflate context % to 400%+.
+  // Only SDK context events provide authoritative window usage.
 
   closeCurrentTool();
 
@@ -628,46 +621,29 @@ export async function executeQueryRuntime(
 
       if (contextWindowFromClaudeCode) {
         console.log(`[CTX-EVENT] type=claudeCode size=${contextWindowFromClaudeCode.size} usage=${JSON.stringify(contextWindowFromClaudeCode.usage)}`);
-        contextWindowUsage = contextWindowFromClaudeCode.usage;
+        // ClaudeCode context_window is authoritative for actual window occupancy.
+        // Set actualContext* which are the ONLY values used for % calculation.
         if (
           typeof contextWindowFromClaudeCode.size === "number" &&
           contextWindowFromClaudeCode.size > 0
         ) {
           contextWindowSize = contextWindowFromClaudeCode.size;
-          // ClaudeCode context is authoritative — set actual values
           const usedTokens = contextWindowFromClaudeCode.usage.input_tokens +
             contextWindowFromClaudeCode.usage.cache_creation_input_tokens +
             contextWindowFromClaudeCode.usage.cache_read_input_tokens;
           actualContextUsed = usedTokens;
           actualContextMax = contextWindowFromClaudeCode.size;
-        }
-      } else if (lastCallUsage) {
-        const usage = {
-          input_tokens: lastCallUsage.input_tokens || 0,
-          cache_creation_input_tokens: lastCallUsage.cache_creation_input_tokens || 0,
-          cache_read_input_tokens: lastCallUsage.cache_read_input_tokens || 0,
-        };
-        if (hasContextWindowUsage(usage)) {
-          contextWindowUsage = usage;
-        }
-      } else if ("usage" in event && event.usage) {
-        const u = event.usage as unknown as TokenUsage;
-        const usage = {
-          input_tokens: u.input_tokens || 0,
-          cache_creation_input_tokens: u.cache_creation_input_tokens || 0,
-          cache_read_input_tokens: u.cache_read_input_tokens || 0,
-        };
-        if (hasContextWindowUsage(usage)) {
-          contextWindowUsage = usage;
+          // Also set legacy contextWindowUsage for backward compat, but only from authoritative source
+          contextWindowUsage = {
+            input_tokens: usedTokens,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          };
         }
       }
-
-      const refreshedUsage = await input.onRefreshContextWindowUsageFromTranscript(
-        input.queryStartedMs
-      );
-      if (refreshedUsage) {
-        contextWindowUsage = refreshedUsage;
-      }
+      // DO NOT set contextWindowUsage from lastCallUsage, event.usage, or transcript (soma-u63c).
+      // These contain billing tokens (cache_read 800K+) which are NOT context window occupancy.
+      // Only context events and ClaudeCode context_window are authoritative sources.
 
       if ("modelUsage" in event && event.modelUsage) {
         type ModelUsageEntry = {
@@ -714,13 +690,8 @@ export async function executeQueryRuntime(
           cache_creation_input_tokens: totalCacheCreate,
         };
 
-        if (!contextWindowUsage && totalIn + totalCacheRead + totalCacheCreate > 0) {
-          contextWindowUsage = {
-            input_tokens: totalIn,
-            cache_creation_input_tokens: totalCacheCreate,
-            cache_read_input_tokens: totalCacheRead,
-          };
-        }
+        // DO NOT set contextWindowUsage from modelUsage billing tokens (soma-u63c).
+        // modelUsage tokens include cache_read (800K+) which are NOT context window occupancy.
       } else if ("usage" in event && event.usage) {
         lastUsage = event.usage as TokenUsage;
       }

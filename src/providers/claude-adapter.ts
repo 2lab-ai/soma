@@ -8,6 +8,7 @@ import type {
   ProviderResumeResult,
 } from "./types.models";
 import { normalizeProviderError } from "./error-normalizer";
+import { getModelBetas } from "../config/model-specs";
 
 type ClaudeQueryFactory = (payload: {
   prompt: string;
@@ -52,6 +53,8 @@ function toClaudeOptions(
   const permissionMode =
     input.permissionMode === "bypass" ? "bypassPermissions" : undefined;
 
+  const betas = input.modelId ? getModelBetas(input.modelId) : [];
+
   return {
     model: input.modelId,
     cwd: input.workingDirectory,
@@ -64,6 +67,7 @@ function toClaudeOptions(
     resume: input.resumeSessionId,
     permissionMode,
     allowDangerouslySkipPermissions: input.allowDangerouslySkipPermissions ?? true,
+    betas: betas.length > 0 ? betas : undefined,
     hooks: input.hooks as Options["hooks"],
     pathToClaudeCodeExecutable: input.pathToClaudeCodeExecutable,
     abortController,
