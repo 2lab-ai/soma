@@ -8,6 +8,10 @@ import {
 } from "../../config/model";
 import { type ChatType, isAuthorizedForChat } from "../../security";
 import { sessionManager } from "../../core/session/session-manager";
+import {
+  calculateContextUsagePercent,
+  DEFAULT_CONTEXT_WINDOW_SIZE,
+} from "../../core/session/session-helpers";
 import { skillsRegistry } from "../../services/skills-registry";
 import { fetchAllUsage } from "../../usage";
 import {
@@ -131,8 +135,7 @@ export async function handleStats(ctx: Context): Promise<void> {
 }
 
 /**
- * /context - Display context window utilization against the current model's input token limit (default 200K).
- * Shows current input tokens (which count toward context) vs output tokens (which don't).
+ * /context - Display current context window utilization against the active limit.
  */
 export async function handleContext(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -150,20 +153,23 @@ export async function handleContext(ctx: Context): Promise<void> {
   try {
     const session = sessionManager.getSession(chatId!, threadId);
 
-    // Use last-known context usage snapshot (updated after each query, persisted across restarts)
-    const contextLimit = session.actualContextMax ?? (session.contextWindowSize || 200_000);
+    const contextLimit =
+      session.actualContextMax ??
+      session.contextWindowSize ??
+      DEFAULT_CONTEXT_WINDOW_SIZE;
     const contextUsed = session.currentContextTokens;
-    const percentage = ((contextUsed / contextLimit) * 100).toFixed(1);
+    const percentage = (
+      calculateContextUsagePercent(contextUsed, contextLimit) ?? 0
+    ).toFixed(1);
 
     // Format numbers with commas for readability
     const formatNumber = (n: number): string => n.toLocaleString("en-US");
 
-    // Get breakdown if lastUsage available
-    const usage = session.lastUsage;
+    const usage = session.contextWindowUsage ?? session.lastUsage;
     const breakdown = usage
       ? `\n\nLast query:\n` +
         `Input: ${formatNumber(usage.input_tokens)}\n` +
-        `Output: ${formatNumber(usage.output_tokens)}\n` +
+        `Output: ${formatNumber(usage.output_tokens || 0)}\n` +
         (usage.cache_read_input_tokens
           ? `Cache read: ${formatNumber(usage.cache_read_input_tokens)}\n`
           : "") +

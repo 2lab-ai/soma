@@ -10,13 +10,82 @@ import { fetchClaudeUsage } from "../../usage";
 
 export type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
 
+export const DEFAULT_CONTEXT_WINDOW_SIZE = 200_000;
+export const CONTEXT_1M_BETA = "context-1m-2025-08-07";
+
 export interface ClaudeCodeContextWindow {
   current_usage?: {
     input_tokens?: number;
+    output_tokens?: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
   };
   context_window_size?: number;
+}
+
+function safeTokenCount(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function toContextWindowUsage(
+  usage: Partial<TokenUsage> | null | undefined
+): ContextWindowUsage {
+  return {
+    input_tokens: safeTokenCount(usage?.input_tokens),
+    output_tokens: safeTokenCount(usage?.output_tokens),
+    cache_creation_input_tokens: safeTokenCount(usage?.cache_creation_input_tokens),
+    cache_read_input_tokens: safeTokenCount(usage?.cache_read_input_tokens),
+  };
+}
+
+export function getContextWindowUsedTokens(
+  usage: Partial<TokenUsage> | null | undefined
+): number {
+  return (
+    safeTokenCount(usage?.input_tokens) +
+    safeTokenCount(usage?.output_tokens) +
+    safeTokenCount(usage?.cache_creation_input_tokens) +
+    safeTokenCount(usage?.cache_read_input_tokens)
+  );
+}
+
+export function hasContextWindowUsageData(
+  usage: Partial<TokenUsage> | null | undefined
+): boolean {
+  return getContextWindowUsedTokens(usage) > 0;
+}
+
+export function calculateContextUsagePercent(
+  usedTokens: number,
+  contextWindow: number
+): number | null {
+  if (!(contextWindow > 0)) return null;
+  const rawPercent = (usedTokens / contextWindow) * 100;
+  return Math.min(100, Math.max(0, rawPercent));
+}
+
+export function lookupContextWindowSize(
+  model: string | undefined,
+  betas: readonly string[] | null | undefined
+): number {
+  const baseWindow =
+    typeof model === "string" && model.startsWith("claude-")
+      ? DEFAULT_CONTEXT_WINDOW_SIZE
+      : 0;
+  const betaWindow = betas?.includes(CONTEXT_1M_BETA) ? 1_000_000 : 0;
+  return Math.max(baseWindow, betaWindow);
+}
+
+export function resolveContextWindowSize(params: {
+  sdkWindow?: number | null;
+  model?: string;
+  betas?: readonly string[] | null;
+}): number | null {
+  const sdkWindow =
+    typeof params.sdkWindow === "number" && params.sdkWindow > 0 ? params.sdkWindow : 0;
+  const lookupWindow = lookupContextWindowSize(params.model, params.betas);
+  const resolved = Math.max(sdkWindow, lookupWindow);
+  return resolved > 0 ? resolved : null;
 }
 
 export function getThinkingLevel(message: string): number {
@@ -156,6 +225,8 @@ export function extractMainAssistantContextUsageFromTranscriptLine(
     const usageRecord = usage as Record<string, unknown>;
     const input_tokens =
       typeof usageRecord.input_tokens === "number" ? usageRecord.input_tokens : 0;
+    const output_tokens =
+      typeof usageRecord.output_tokens === "number" ? usageRecord.output_tokens : 0;
     const cache_creation_input_tokens =
       typeof usageRecord.cache_creation_input_tokens === "number"
         ? usageRecord.cache_creation_input_tokens
@@ -165,11 +236,16 @@ export function extractMainAssistantContextUsageFromTranscriptLine(
         ? usageRecord.cache_read_input_tokens
         : 0;
 
-    const used = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
+    const used =
+      input_tokens +
+      output_tokens +
+      cache_creation_input_tokens +
+      cache_read_input_tokens;
     if (used <= 0) return null;
 
     return {
       input_tokens,
+      output_tokens,
       cache_creation_input_tokens,
       cache_read_input_tokens,
     };

@@ -54,6 +54,7 @@ export interface NormalizedUsage {
   outputTokens: number;
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
+  usageKind?: "assistant_turn" | "aggregate";
 }
 
 interface ProviderEventBase {

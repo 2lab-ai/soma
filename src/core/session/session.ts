@@ -16,7 +16,6 @@ import {
 import {
   beginInterruptTransition,
   clearStopRequestedTransition,
-
   consumeInterruptFlagTransition,
   createInitialSessionRuntimeState,
   endInterruptTransition,
@@ -56,6 +55,7 @@ import type { ChatCaptureService } from "../../services/chat-capture-service";
 import {
   captureUsageSnapshot,
   findLatestMainAssistantContextUsageFromTranscript,
+  getContextWindowUsedTokens,
   getThinkingLevel,
 } from "./session-helpers";
 import {
@@ -91,11 +91,10 @@ export class ClaudeSession {
   lastUsage: TokenUsage | null = null;
   lastMessage: string | null = null;
 
-  // Context window from Claude Code (claude-dashboard style)
-  // WARNING: This is set from BOTH lastUsage (single API call) AND context events (actual window).
-  // For accurate context %, prefer actualContextUsed/actualContextMax below.
+  // Latest current-context snapshot. Prefer assistant-turn usage when available.
   contextWindowUsage: {
     input_tokens: number;
+    output_tokens?: number;
     cache_creation_input_tokens: number;
     cache_read_input_tokens: number;
   } | null = null;
@@ -104,9 +103,7 @@ export class ClaudeSession {
   // Ref: https://platform.claude.com/docs/en/build-with-claude/context-windows
   contextWindowSize = 0;
 
-  // === AUTHORITATIVE context window state (from SDK context events ONLY) ===
-  // These are set ONLY from event.type === "context" (actual window occupancy).
-  // Never set from lastUsage (single API call tokens).
+  // === Authoritative current context state when runtime could derive it ===
   // null = not yet received from SDK → UI shows "---" instead of stale values.
   actualContextUsed: number | null = null;
   actualContextMax: number | null = null;
@@ -270,14 +267,7 @@ export class ClaudeSession {
 
   private getContextTokensFromSnapshot(): number | null {
     if (!this.contextWindowUsage) return null;
-    const {
-      input_tokens = 0,
-      cache_creation_input_tokens = 0,
-      cache_read_input_tokens = 0,
-    } = this.contextWindowUsage;
-    // Per Anthropic API docs: these 3 fields are mutually exclusive (no overlap).
-    // total = all tokens that occupy the context window.
-    const total = input_tokens + cache_creation_input_tokens + cache_read_input_tokens;
+    const total = getContextWindowUsedTokens(this.contextWindowUsage);
     return total > 0 ? total : null;
   }
 
@@ -289,12 +279,10 @@ export class ClaudeSession {
    * Ref: https://platform.claude.com/docs/en/build-with-claude/context-windows
    */
   private getContextTokensFromCumulatives(): number {
-    // Use last single query's input_tokens as approximation (NOT cumulative total)
+    // Use last single query's full context occupancy as approximation (NOT cumulative totals)
     if (this.lastUsage) {
-      const lastInput = (this.lastUsage.input_tokens || 0) +
-        (this.lastUsage.cache_creation_input_tokens || 0) +
-        (this.lastUsage.cache_read_input_tokens || 0);
-      if (lastInput > 0) return lastInput;
+      const lastContext = getContextWindowUsedTokens(this.lastUsage);
+      if (lastContext > 0) return lastContext;
     }
     // Absolute last resort: return 0 rather than cumulative garbage
     return 0;
@@ -602,7 +590,9 @@ export class ClaudeSession {
       console.warn(
         `[QUERY] Re-entrant sendMessageStreaming blocked (queryState=${this.queryState}, sessionId=${this.sessionId?.slice(0, 8) || "null"})`
       );
-      throw new Error("sendMessageStreaming is already running. Concurrent calls are not supported.");
+      throw new Error(
+        "sendMessageStreaming is already running. Concurrent calls are not supported."
+      );
     }
 
     if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);
@@ -701,7 +691,9 @@ export class ClaudeSession {
       const claudeMdPath = `${resolvedCwd}/CLAUDE.md`;
       if (existsSync(claudeMdPath)) {
         claudeMdContent = readFileSync(claudeMdPath, "utf-8");
-        console.log(`[SESSION] Loaded CLAUDE.md from ${claudeMdPath} (${claudeMdContent.length} chars)`);
+        console.log(
+          `[SESSION] Loaded CLAUDE.md from ${claudeMdPath} (${claudeMdContent.length} chars)`
+        );
       } else {
         console.warn(`[SESSION] No CLAUDE.md found at ${claudeMdPath}`);
       }
@@ -756,7 +748,9 @@ export class ClaudeSession {
     let queryCompleted = false;
     let runtimeResult: Awaited<ReturnType<typeof executeQueryRuntime>> | null = null;
 
-    const effectiveContextMax = this.actualContextMax ?? (this.contextWindowSize > 0 ? this.contextWindowSize : null);
+    const effectiveContextMax =
+      this.actualContextMax ??
+      (this.contextWindowSize > 0 ? this.contextWindowSize : null);
     const contextUsagePercentBefore = effectiveContextMax
       ? (this.currentContextTokens / effectiveContextMax) * 100
       : undefined;
@@ -833,7 +827,10 @@ export class ClaudeSession {
       if (typeof runtimeResult.actualContextUsed === "number") {
         this.actualContextUsed = runtimeResult.actualContextUsed;
       }
-      if (typeof runtimeResult.actualContextMax === "number" && runtimeResult.actualContextMax > 0) {
+      if (
+        typeof runtimeResult.actualContextMax === "number" &&
+        runtimeResult.actualContextMax > 0
+      ) {
         this.actualContextMax = runtimeResult.actualContextMax;
       }
       if (runtimeResult.lastUsage) {
@@ -841,12 +838,11 @@ export class ClaudeSession {
         this.accumulateUsage(this.lastUsage);
       }
 
-      const effectiveMax = this.actualContextMax ?? (this.contextWindowSize > 0 ? this.contextWindowSize : 0);
+      const effectiveMax =
+        this.actualContextMax ??
+        (this.contextWindowSize > 0 ? this.contextWindowSize : 0);
       if (effectiveMax > 0) {
-        const pct = (
-          (this.currentContextTokens / effectiveMax) *
-          100
-        ).toFixed(1);
+        const pct = ((this.currentContextTokens / effectiveMax) * 100).toFixed(1);
         const source = this.actualContextUsed !== null ? "context-event" : "fallback";
         console.log(
           `Context: ${this.currentContextTokens}/${effectiveMax} (${pct}%) [${source}]`
@@ -883,7 +879,9 @@ export class ClaudeSession {
 
       usageAfter = await captureUsageSnapshot();
 
-      const effectiveContextMaxForPercent = this.actualContextMax ?? (this.contextWindowSize > 0 ? this.contextWindowSize : null);
+      const effectiveContextMaxForPercent =
+        this.actualContextMax ??
+        (this.contextWindowSize > 0 ? this.contextWindowSize : null);
       const contextUsagePercent = effectiveContextMaxForPercent
         ? (this.currentContextTokens / effectiveContextMaxForPercent) * 100
         : undefined;
@@ -1062,11 +1060,14 @@ export class ClaudeSession {
     const ctxSize = this.actualContextMax ?? this.contextWindowSize;
     const ctxTokens = this.currentContextTokens;
     const source = this.actualContextUsed !== null ? "ctx-event" : "fallback";
-    const ctxPctStr = ctxSize > 0 ? `(${((ctxTokens / ctxSize) * 100).toFixed(1)}% [${source}])` : "(window size unknown)";
+    const ctxPctStr =
+      ctxSize > 0
+        ? `(${((ctxTokens / ctxSize) * 100).toFixed(1)}% [${source}])`
+        : "(window size unknown)";
     console.log(
       `Usage: in=${u.input_tokens} out=${u.output_tokens} cache_read=${u.cache_read_input_tokens || 0} cache_create=${u.cache_creation_input_tokens || 0} ` +
-      `context_window=${ctxTokens}/${ctxSize} ${ctxPctStr} ` +
-      `cumulative_total=${this.totalInputTokens}`
+        `context_window=${ctxTokens}/${ctxSize} ${ctxPctStr} ` +
+        `cumulative_total=${this.totalInputTokens}`
     );
 
     // Skip threshold checks if context window size not yet received from SDK
