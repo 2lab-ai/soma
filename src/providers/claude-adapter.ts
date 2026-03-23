@@ -8,6 +8,7 @@ import type {
   ProviderResumeResult,
 } from "./types.models";
 import { normalizeProviderError } from "./error-normalizer";
+import { resolveContextWindowSize } from "../core/session/session-helpers";
 
 type ClaudeQueryFactory = (payload: {
   prompt: string;
@@ -113,6 +114,14 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
         prompt: input.prompt,
         options: toClaudeOptions(input, active.abortController),
       });
+      let sdkBetas: string[] = [];
+      let sawAssistantTurnUsage = false;
+      let latestAssistantTurnUsage: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadInputTokens?: number;
+        cacheCreationInputTokens?: number;
+      } | null = null;
 
       for await (const event of queryInstance) {
         const timestamp = Date.now();
@@ -126,6 +135,16 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
             providerSessionId: event.session_id,
             resumed: Boolean(input.resumeSessionId),
           });
+        }
+
+        if (event.type === "system") {
+          const systemEvent = event as { subtype?: string; betas?: unknown };
+          if (systemEvent.subtype === "init" && Array.isArray(systemEvent.betas)) {
+            sdkBetas = systemEvent.betas.filter(
+              (beta): beta is string => typeof beta === "string"
+            );
+          }
+          continue;
         }
 
         if (event.type === "stream_event") {
@@ -152,14 +171,50 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
                 queryId: handle.queryId,
                 timestamp,
                 type: "usage",
-                usage: normalizedUsage,
+                usage: {
+                  ...normalizedUsage,
+                  usageKind: "assistant_turn",
+                },
               });
+              sawAssistantTurnUsage = true;
+              latestAssistantTurnUsage = normalizedUsage;
             }
           }
           continue;
         }
 
         if (event.type === "assistant") {
+          const assistantUsage = event.message?.usage;
+          if (
+            !sawAssistantTurnUsage &&
+            assistantUsage &&
+            typeof assistantUsage === "object"
+          ) {
+            const usageRecord = assistantUsage as Record<string, unknown>;
+            const normalizedUsage = {
+              inputTokens: safeNumber(usageRecord.input_tokens),
+              outputTokens: safeNumber(usageRecord.output_tokens),
+              cacheReadInputTokens: safeNumber(usageRecord.cache_read_input_tokens),
+              cacheCreationInputTokens: safeNumber(
+                usageRecord.cache_creation_input_tokens
+              ),
+            };
+            if (hasUsageData(normalizedUsage)) {
+              await onEvent({
+                providerId: this.providerId,
+                queryId: handle.queryId,
+                timestamp,
+                type: "usage",
+                usage: {
+                  ...normalizedUsage,
+                  usageKind: "assistant_turn",
+                },
+              });
+              sawAssistantTurnUsage = true;
+              latestAssistantTurnUsage = normalizedUsage;
+            }
+          }
+
           for (const block of event.message.content) {
             if (block.type === "tool_use") {
               await onEvent({
@@ -215,18 +270,32 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
                 queryId: handle.queryId,
                 timestamp: Date.now(),
                 type: "usage",
-                usage: normalizedUsage,
+                usage: {
+                  ...normalizedUsage,
+                  usageKind: "aggregate",
+                },
               });
             }
 
-            if (contextWindow > 0) {
+            const resolvedContextWindow = resolveContextWindowSize({
+              sdkWindow: contextWindow,
+              model: input.modelId,
+              betas: sdkBetas,
+            });
+
+            if (resolvedContextWindow && hasUsageData(normalizedUsage)) {
+              const currentUsage = latestAssistantTurnUsage ?? normalizedUsage;
               await onEvent({
                 providerId: this.providerId,
                 queryId: handle.queryId,
                 timestamp: Date.now(),
                 type: "context",
-                usedTokens: totalInput + totalCacheRead + totalCacheCreate,
-                maxTokens: contextWindow,
+                usedTokens:
+                  safeNumber(currentUsage.inputTokens) +
+                  safeNumber(currentUsage.outputTokens) +
+                  safeNumber(currentUsage.cacheReadInputTokens) +
+                  safeNumber(currentUsage.cacheCreationInputTokens),
+                maxTokens: resolvedContextWindow,
               });
             }
           }

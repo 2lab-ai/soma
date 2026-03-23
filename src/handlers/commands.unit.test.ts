@@ -2,7 +2,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import type { Context } from "grammy";
 import { ALLOWED_USERS } from "../config";
 import { handleNew, handleResume } from "./commands";
+import { handleContext } from "./commands/usage-commands";
 import { formatDuration, formatTimeRemaining } from "./commands/formatters";
+import { ClaudeSession } from "../core/session/session";
 import { sessionManager } from "../core/session/session-manager";
 import type { SteeringMessage } from "../types/session";
 
@@ -190,5 +192,33 @@ describe("command handlers unit", () => {
     expect(hasSessionCalled).toBe(false);
     expect(replies.length).toBe(1);
     expect(replies[0]?.text).toContain("Session already active");
+  });
+
+  test("BUG soma-wzyw: /context includes output tokens in the displayed occupancy", async () => {
+    const { ctx, replies } = createCommandContext({ chatId: 5005, threadId: 3 });
+    const session = new ClaudeSession("test-context-command");
+
+    session.actualContextMax = 1_000_000;
+    session.contextWindowSize = 200_000;
+    session.contextWindowUsage = {
+      input_tokens: 2000,
+      output_tokens: 400,
+      cache_creation_input_tokens: 100,
+      cache_read_input_tokens: 300,
+    } as never;
+    session.lastUsage = {
+      input_tokens: 4300,
+      output_tokens: 900,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+
+    sessionManager.getSession = (() => session) as typeof sessionManager.getSession;
+
+    await handleContext(ctx);
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.text).toContain("2,800 / 1,000,000");
+    expect(replies[0]?.text).toContain("0.3%");
   });
 });

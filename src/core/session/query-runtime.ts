@@ -9,8 +9,12 @@ import type { Provider } from "../../types/provider";
 import type { TokenUsage } from "../../types/session";
 import type { SessionIdentity } from "../routing/session-key";
 import {
+  getContextWindowUsedTokens,
+  hasContextWindowUsageData,
   isClaudeCodeContextWindow,
   mergeLatestUsage,
+  resolveContextWindowSize,
+  toContextWindowUsage,
   type ContextWindowUsage,
 } from "./session-helpers";
 
@@ -181,12 +185,21 @@ export interface QueryRuntimeExecutionResult {
 }
 
 function hasContextWindowUsage(usage: ContextWindowUsage): boolean {
-  return (
-    usage.input_tokens +
-      usage.cache_creation_input_tokens +
-      usage.cache_read_input_tokens >
-    0
-  );
+  return hasContextWindowUsageData(usage);
+}
+
+function toTokenUsageFromProviderUsage(usage: {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+}): TokenUsage {
+  return {
+    input_tokens: usage.inputTokens,
+    output_tokens: usage.outputTokens,
+    cache_read_input_tokens: usage.cacheReadInputTokens || 0,
+    cache_creation_input_tokens: usage.cacheCreationInputTokens || 0,
+  };
 }
 
 async function validateToolInput(
@@ -247,6 +260,7 @@ async function executeProviderRuntime(
   let currentSegmentText = "";
   let lastTextUpdate = 0;
   let queryCompleted = false;
+  let lastAssistantTurnUsage: TokenUsage | null = null;
   let lastUsage: TokenUsage | null = null;
   let contextWindowUsage: ContextWindowUsage | null = null;
   let contextWindowSize: number | null = null;
@@ -364,39 +378,31 @@ async function executeProviderRuntime(
     }
 
     if (event.type === "usage") {
-      lastUsage = {
-        input_tokens: event.usage.inputTokens,
-        output_tokens: event.usage.outputTokens,
-        cache_read_input_tokens: event.usage.cacheReadInputTokens || 0,
-        cache_creation_input_tokens: event.usage.cacheCreationInputTokens || 0,
-      };
-      if (
-        !contextWindowUsage &&
-        lastUsage.input_tokens +
-          (lastUsage.cache_read_input_tokens || 0) +
-          (lastUsage.cache_creation_input_tokens || 0) >
-          0
-      ) {
-        contextWindowUsage = {
-          input_tokens: lastUsage.input_tokens,
-          cache_creation_input_tokens: lastUsage.cache_creation_input_tokens || 0,
-          cache_read_input_tokens: lastUsage.cache_read_input_tokens || 0,
-        };
+      const normalizedUsage = toTokenUsageFromProviderUsage(event.usage);
+      if (event.usage.usageKind === "assistant_turn") {
+        lastAssistantTurnUsage = normalizedUsage;
+        contextWindowUsage = toContextWindowUsage(normalizedUsage);
+        if (actualContextUsed === null) {
+          actualContextUsed = getContextWindowUsedTokens(normalizedUsage);
+        }
+      } else {
+        lastUsage = normalizedUsage;
+        if (!contextWindowUsage && hasContextWindowUsageData(normalizedUsage)) {
+          contextWindowUsage = toContextWindowUsage(normalizedUsage);
+        }
       }
       return;
     }
 
     if (event.type === "context") {
-      // AUTHORITATIVE: This is the actual context window occupancy from the SDK.
-      // Set both legacy vars (for backward compat) AND new authoritative vars.
-      contextWindowUsage = {
-        input_tokens: event.usedTokens,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-      };
       contextWindowSize = event.maxTokens;
       actualContextUsed = event.usedTokens;
       actualContextMax = event.maxTokens;
+      if (!contextWindowUsage && event.usedTokens > 0) {
+        contextWindowUsage = toContextWindowUsage({
+          input_tokens: event.usedTokens,
+        });
+      }
       return;
     }
 
@@ -430,8 +436,24 @@ async function executeProviderRuntime(
       input.queryStartedMs
     );
     if (refreshedUsage) {
+      lastAssistantTurnUsage = mergeLatestUsage(null, refreshedUsage);
       contextWindowUsage = refreshedUsage;
     }
+  }
+
+  if (!contextWindowUsage) {
+    if (lastAssistantTurnUsage && hasContextWindowUsageData(lastAssistantTurnUsage)) {
+      contextWindowUsage = toContextWindowUsage(lastAssistantTurnUsage);
+    } else if (lastUsage && hasContextWindowUsageData(lastUsage)) {
+      contextWindowUsage = toContextWindowUsage(lastUsage);
+    }
+  }
+
+  if (actualContextUsed === null && contextWindowUsage) {
+    actualContextUsed = getContextWindowUsedTokens(contextWindowUsage);
+  }
+  if (actualContextMax === null && contextWindowSize) {
+    actualContextMax = contextWindowSize;
   }
 
   closeCurrentTool();
@@ -472,6 +494,8 @@ export async function executeQueryRuntime(
   let currentSegmentText = "";
   let lastTextUpdate = 0;
   let queryCompleted = false;
+  let sdkBetas: string[] = [];
+  let lastAssistantTurnUsage: TokenUsage | null = null;
   let lastCallUsage: TokenUsage | null = null;
   let lastUsage: TokenUsage | null = null;
   let contextWindowUsage: ContextWindowUsage | null = null;
@@ -522,7 +546,13 @@ export async function executeQueryRuntime(
         subtype?: string;
         compact_metadata?: { trigger: string; pre_tokens: number };
         status?: string | null;
+        betas?: unknown;
       };
+      if (sysEvent.subtype === "init" && Array.isArray(sysEvent.betas)) {
+        sdkBetas = sysEvent.betas.filter(
+          (beta): beta is string => typeof beta === "string"
+        );
+      }
       if (sysEvent.subtype === "compact_boundary") {
         const trigger = sysEvent.compact_metadata?.trigger ?? "unknown";
         const preTokens = sysEvent.compact_metadata?.pre_tokens ?? 0;
@@ -550,6 +580,14 @@ export async function executeQueryRuntime(
     }
 
     if (event.type === "assistant") {
+      const assistantUsage = event.message?.usage;
+      if (assistantUsage && typeof assistantUsage === "object") {
+        lastAssistantTurnUsage = mergeLatestUsage(
+          lastAssistantTurnUsage,
+          assistantUsage as Partial<TokenUsage>
+        );
+      }
+
       for (const block of event.message.content) {
         if (block.type === "thinking" && block.thinking) {
           console.log(`THINKING BLOCK: ${block.thinking.slice(0, 100)}...`);
@@ -605,66 +643,38 @@ export async function executeQueryRuntime(
 
       const contextWindowFromClaudeCode = (() => {
         const cw = (event as unknown as { context_window?: unknown }).context_window;
-        if (!isClaudeCodeContextWindow(cw) || !cw.current_usage) return null;
+        if (!isClaudeCodeContextWindow(cw)) return null;
 
         const cu = cw.current_usage;
-        const usage = {
-          input_tokens: typeof cu.input_tokens === "number" ? cu.input_tokens : 0,
-          cache_creation_input_tokens:
-            typeof cu.cache_creation_input_tokens === "number"
-              ? cu.cache_creation_input_tokens
-              : 0,
-          cache_read_input_tokens:
-            typeof cu.cache_read_input_tokens === "number"
-              ? cu.cache_read_input_tokens
-              : 0,
-        };
+        const usage =
+          cu && typeof cu === "object"
+            ? toContextWindowUsage({
+                input_tokens: typeof cu.input_tokens === "number" ? cu.input_tokens : 0,
+                output_tokens:
+                  typeof cu.output_tokens === "number" ? cu.output_tokens : 0,
+                cache_creation_input_tokens:
+                  typeof cu.cache_creation_input_tokens === "number"
+                    ? cu.cache_creation_input_tokens
+                    : 0,
+                cache_read_input_tokens:
+                  typeof cu.cache_read_input_tokens === "number"
+                    ? cu.cache_read_input_tokens
+                    : 0,
+              })
+            : null;
 
-        return hasContextWindowUsage(usage)
-          ? { usage, size: cw.context_window_size || null }
-          : null;
+        return {
+          usage: usage && hasContextWindowUsage(usage) ? usage : null,
+          size:
+            typeof cw.context_window_size === "number" ? cw.context_window_size : null,
+        };
       })();
-
-      if (contextWindowFromClaudeCode) {
-        contextWindowUsage = contextWindowFromClaudeCode.usage;
-        if (
-          typeof contextWindowFromClaudeCode.size === "number" &&
-          contextWindowFromClaudeCode.size > 0
-        ) {
-          contextWindowSize = contextWindowFromClaudeCode.size;
-          // ClaudeCode context is authoritative — set actual values
-          const usedTokens = contextWindowFromClaudeCode.usage.input_tokens +
-            contextWindowFromClaudeCode.usage.cache_creation_input_tokens +
-            contextWindowFromClaudeCode.usage.cache_read_input_tokens;
-          actualContextUsed = usedTokens;
-          actualContextMax = contextWindowFromClaudeCode.size;
-        }
-      } else if (lastCallUsage) {
-        const usage = {
-          input_tokens: lastCallUsage.input_tokens || 0,
-          cache_creation_input_tokens: lastCallUsage.cache_creation_input_tokens || 0,
-          cache_read_input_tokens: lastCallUsage.cache_read_input_tokens || 0,
-        };
-        if (hasContextWindowUsage(usage)) {
-          contextWindowUsage = usage;
-        }
-      } else if ("usage" in event && event.usage) {
-        const u = event.usage as unknown as TokenUsage;
-        const usage = {
-          input_tokens: u.input_tokens || 0,
-          cache_creation_input_tokens: u.cache_creation_input_tokens || 0,
-          cache_read_input_tokens: u.cache_read_input_tokens || 0,
-        };
-        if (hasContextWindowUsage(usage)) {
-          contextWindowUsage = usage;
-        }
-      }
 
       const refreshedUsage = await input.onRefreshContextWindowUsageFromTranscript(
         input.queryStartedMs
       );
       if (refreshedUsage) {
-        contextWindowUsage = refreshedUsage;
+        lastAssistantTurnUsage = mergeLatestUsage(null, refreshedUsage);
       }
 
       if ("modelUsage" in event && event.modelUsage) {
@@ -696,30 +706,50 @@ export async function executeQueryRuntime(
           totalCacheCreate += mu.cacheCreationInputTokens || 0;
         }
 
-        if (detectedContextWindow > 0) {
-          contextWindowSize = detectedContextWindow;
-          // modelUsage contextWindow is authoritative if no context event yet
-          if (actualContextMax === null) {
-            actualContextMax = detectedContextWindow;
-          }
-        }
-
         lastUsage = {
           input_tokens: totalIn,
           output_tokens: totalOut,
           cache_read_input_tokens: totalCacheRead,
           cache_creation_input_tokens: totalCacheCreate,
         };
-
-        if (!contextWindowUsage && totalIn + totalCacheRead + totalCacheCreate > 0) {
-          contextWindowUsage = {
-            input_tokens: totalIn,
-            cache_creation_input_tokens: totalCacheCreate,
-            cache_read_input_tokens: totalCacheRead,
-          };
-        }
+        contextWindowSize = resolveContextWindowSize({
+          sdkWindow: contextWindowFromClaudeCode?.size ?? detectedContextWindow,
+          model: input.options.model,
+          betas: sdkBetas,
+        });
       } else if ("usage" in event && event.usage) {
-        lastUsage = event.usage as TokenUsage;
+        lastUsage = mergeLatestUsage(
+          null,
+          (event.usage as unknown as Partial<TokenUsage>) ?? {}
+        );
+        contextWindowSize = resolveContextWindowSize({
+          sdkWindow: contextWindowFromClaudeCode?.size,
+          model: input.options.model,
+          betas: sdkBetas,
+        });
+      } else {
+        contextWindowSize = resolveContextWindowSize({
+          sdkWindow: contextWindowFromClaudeCode?.size,
+          model: input.options.model,
+          betas: sdkBetas,
+        });
+      }
+
+      const assistantSnapshot =
+        refreshedUsage ?? lastAssistantTurnUsage ?? lastCallUsage;
+      if (assistantSnapshot && hasContextWindowUsageData(assistantSnapshot)) {
+        contextWindowUsage = toContextWindowUsage(assistantSnapshot);
+      } else if (lastUsage && hasContextWindowUsageData(lastUsage)) {
+        contextWindowUsage = toContextWindowUsage(lastUsage);
+      } else if (contextWindowFromClaudeCode?.usage) {
+        contextWindowUsage = contextWindowFromClaudeCode.usage;
+      }
+
+      if (contextWindowUsage) {
+        actualContextUsed = getContextWindowUsedTokens(contextWindowUsage);
+      }
+      if (contextWindowSize) {
+        actualContextMax = contextWindowSize;
       }
     }
   }

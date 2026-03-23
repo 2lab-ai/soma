@@ -1233,6 +1233,18 @@ describe("ClaudeSession - actualContextUsed/Max (soma-u63c)", () => {
     expect(session.currentContextTokens).toBe(65000);
   });
 
+  test("BUG soma-wzyw: currentContextTokens includes output tokens from snapshot", () => {
+    session.contextWindowUsage = {
+      input_tokens: 2000,
+      output_tokens: 400,
+      cache_creation_input_tokens: 100,
+      cache_read_input_tokens: 300,
+    } as typeof session.contextWindowUsage;
+    session.actualContextUsed = null;
+
+    expect(session.currentContextTokens).toBe(2800);
+  });
+
   test("restoreFromData resets actualContextUsed/Max to null", () => {
     session.actualContextUsed = 100000;
     session.actualContextMax = 1000000;

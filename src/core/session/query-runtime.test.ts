@@ -160,6 +160,82 @@ describe("query-runtime execution", () => {
     expect(result.queryCompleted).toBe(true);
   });
 
+  test("BUG soma-wzyw: direct runtime prefers assistant-turn usage and lookup max for context state", async () => {
+    const queryGeneration = 1;
+
+    const events: SDKMessage[] = [
+      {
+        type: "system",
+        subtype: "init",
+        betas: ["context-1m-2025-08-07"],
+        session_id: "session-1",
+      } as unknown as SDKMessage,
+      {
+        type: "assistant",
+        session_id: "session-1",
+        message: {
+          usage: {
+            input_tokens: 2000,
+            output_tokens: 400,
+            cache_read_input_tokens: 300,
+            cache_creation_input_tokens: 100,
+          },
+          content: [
+            {
+              type: "text",
+              text: "assistant turn with usage payload",
+            },
+          ],
+        },
+      } as unknown as SDKMessage,
+      {
+        type: "result",
+        modelUsage: {
+          claude: {
+            inputTokens: 4300,
+            outputTokens: 900,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            contextWindow: 200000,
+          },
+        },
+      } as unknown as SDKMessage,
+    ];
+
+    const result = await executeQueryRuntime({
+      prompt: "hello",
+      options: {
+        model: "claude-opus-4-6",
+        cwd: "/tmp",
+        abortController: new AbortController(),
+      },
+      statusCallback: async () => {},
+      queryGeneration,
+      getCurrentGeneration: () => queryGeneration,
+      shouldStop: () => false,
+      onSessionId: () => {},
+      onToolDisplay: () => {},
+      onRefreshContextWindowUsageFromTranscript: async () => null,
+      queryStartedMs: Date.now(),
+      queryFactory: () => toAsyncGenerator(events),
+    });
+
+    expect(result.contextWindowUsage).toEqual({
+      input_tokens: 2000,
+      output_tokens: 400,
+      cache_read_input_tokens: 300,
+      cache_creation_input_tokens: 100,
+    });
+    expect(result.lastUsage).toEqual({
+      input_tokens: 4300,
+      output_tokens: 900,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    });
+    expect(result.contextWindowSize).toBe(1_000_000);
+    expect(result.actualContextMax).toBe(1_000_000);
+  });
+
   test("drops session id when generation changed mid-query", async () => {
     let observedSessionId: string | null = null;
     const queryGeneration = 1;
@@ -299,6 +375,129 @@ describe("query-runtime execution", () => {
       "fallback text from provider orchestrator runtime"
     );
     expect(result.queryCompleted).toBe(true);
+  });
+
+  test("BUG soma-wzyw: provider runtime keeps assistant-turn context and aggregate billing separate", async () => {
+    const orchestrator = {
+      executeProviderQuery: async (params: {
+        primaryProviderId: string;
+        fallbackProviderId?: string;
+        input: { prompt: string; queryId: string };
+        onEvent: (event: {
+          providerId: string;
+          queryId: string;
+          timestamp: number;
+          type: string;
+          providerSessionId?: string;
+          resumed?: boolean;
+          delta?: string;
+          reason?: "completed" | "aborted" | "failed";
+          usage?: {
+            inputTokens: number;
+            outputTokens: number;
+            cacheReadInputTokens?: number;
+            cacheCreationInputTokens?: number;
+            usageKind?: "assistant_turn" | "aggregate";
+          };
+          usedTokens?: number;
+          maxTokens?: number;
+        }) => Promise<void>;
+      }) => {
+        await params.onEvent({
+          providerId: "anthropic",
+          queryId: params.input.queryId,
+          timestamp: Date.now(),
+          type: "session",
+          providerSessionId: "provider-session",
+          resumed: false,
+        });
+        await params.onEvent({
+          providerId: "anthropic",
+          queryId: params.input.queryId,
+          timestamp: Date.now(),
+          type: "usage",
+          usage: {
+            inputTokens: 2000,
+            outputTokens: 400,
+            cacheReadInputTokens: 300,
+            cacheCreationInputTokens: 100,
+            usageKind: "assistant_turn",
+          },
+        });
+        await params.onEvent({
+          providerId: "anthropic",
+          queryId: params.input.queryId,
+          timestamp: Date.now(),
+          type: "usage",
+          usage: {
+            inputTokens: 4300,
+            outputTokens: 900,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            usageKind: "aggregate",
+          },
+        });
+        await params.onEvent({
+          providerId: "anthropic",
+          queryId: params.input.queryId,
+          timestamp: Date.now(),
+          type: "context",
+          usedTokens: 2800,
+          maxTokens: 1_000_000,
+        });
+        await params.onEvent({
+          providerId: "anthropic",
+          queryId: params.input.queryId,
+          timestamp: Date.now(),
+          type: "done",
+          reason: "completed",
+        });
+
+        return { providerId: "anthropic", attempts: 1 };
+      },
+    } as const;
+
+    const result = await executeQueryRuntime({
+      prompt: "hello from anthropic provider runtime",
+      options: {
+        model: "claude-opus-4-6",
+        cwd: "/tmp",
+        abortController: new AbortController(),
+      },
+      statusCallback: async () => {},
+      queryGeneration: 1,
+      getCurrentGeneration: () => 1,
+      shouldStop: () => false,
+      onSessionId: () => {},
+      onToolDisplay: () => {},
+      onRefreshContextWindowUsageFromTranscript: async () => null,
+      queryStartedMs: Date.now(),
+      providerExecution: {
+        orchestrator:
+          orchestrator as unknown as import("../../providers/orchestrator").ProviderOrchestrator,
+        identity: createSessionIdentity({
+          tenantId: "default",
+          channelId: "chat-1",
+          threadId: "main",
+        }),
+        primaryProviderId: "anthropic",
+      },
+    });
+
+    expect(result.contextWindowUsage).toEqual({
+      input_tokens: 2000,
+      output_tokens: 400,
+      cache_read_input_tokens: 300,
+      cache_creation_input_tokens: 100,
+    });
+    expect(result.lastUsage).toEqual({
+      input_tokens: 4300,
+      output_tokens: 900,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    });
+    expect(result.actualContextUsed).toBe(2800);
+    expect(result.actualContextMax).toBe(1_000_000);
   });
 });
 
