@@ -139,6 +139,31 @@ export function registerBotHandlers(bot: Bot<Context>): void {
   bot.on("callback_query:data", handleCallback);
 
   bot.catch((err) => {
-    console.error("Bot error:", err);
+    const ts = new Date().toISOString();
+    const errorObj = err.error ?? err;
+    const errorStr = errorObj instanceof Error
+      ? `${errorObj.name}: ${errorObj.message}`
+      : String(errorObj);
+
+    console.error(`[${ts}] [BOT-CATCH] Unhandled bot error:`, errorObj);
+
+    // Best-effort: send error to user via Telegram
+    const chatId = err.ctx?.chat?.id;
+    if (chatId) {
+      const truncated = errorStr.slice(0, 800);
+      err.ctx.reply(
+        `⚠️ **Bot Error (unhandled)**\n\n` +
+        `\`\`\`\n${truncated}\n\`\`\`\n\n` +
+        `이 에러가 반복되면 /new 로 세션을 초기화하세요.`,
+        { parse_mode: "Markdown" }
+      ).catch((replyErr) => {
+        // Markdown failed, try plain text
+        err.ctx.reply(
+          `⚠️ Bot Error (unhandled)\n\n${truncated}\n\n이 에러가 반복되면 /new 로 세션을 초기화하세요.`
+        ).catch(() => {
+          console.error(`[BOT-CATCH] Failed to notify user ${chatId}:`, replyErr);
+        });
+      });
+    }
   });
 }

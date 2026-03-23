@@ -271,8 +271,12 @@ export async function bootstrapApplication(
     }
   }
 
+  // Track whether a restart/crash marker was processed
+  let restartMarkerProcessed = false;
+
   // Inject restart context so Claude knows not to re-execute previous commands
   if (fsOps.existsSync(RESTART_MARKER_FILE)) {
+    restartMarkerProcessed = true;
     try {
       const marker = JSON.parse(fsOps.readFileSync(RESTART_MARKER_FILE, "utf-8"));
       const userId = ALLOWED_USERS[0];
@@ -347,6 +351,8 @@ export async function bootstrapApplication(
         } else {
           // No verification task — determine restart reason from crash marker
           let restartReason = "make up / systemctl restart";
+          let restartType: "deploy" | "sigint" | "crash" = "deploy";
+          let restartEmoji = "🔄";
           let crashError: string | null = null;
 
           if (fsOps.existsSync(CRASH_MARKER_FILE)) {
@@ -354,15 +360,23 @@ export async function bootstrapApplication(
               const crashData = JSON.parse(fsOps.readFileSync(CRASH_MARKER_FILE, "utf-8"));
               const reason = crashData.reason as string;
               if (reason === "uncaughtException") {
-                restartReason = "💥 uncaughtException (프로세스 크래시)";
+                restartReason = "uncaughtException (프로세스 크래시)";
+                restartType = "crash";
+                restartEmoji = "💥";
                 crashError = crashData.error || null;
               } else if (reason === "unhandledRejection") {
-                restartReason = "💥 unhandledRejection (프로세스 크래시)";
+                restartReason = "unhandledRejection (프로세스 크래시)";
+                restartType = "crash";
+                restartEmoji = "💥";
                 crashError = crashData.error || null;
               } else if (reason === "sigint") {
                 restartReason = "Ctrl+C (SIGINT)";
+                restartType = "sigint";
+                restartEmoji = "⏹️";
               } else if (reason === "sigterm") {
-                restartReason = "make up / systemctl restart (SIGTERM)";
+                restartReason = "배포/재시작 (SIGTERM)";
+                restartType = "deploy";
+                restartEmoji = "▶️";
               }
               fsOps.unlinkSync(CRASH_MARKER_FILE);
             } catch {
@@ -372,7 +386,7 @@ export async function bootstrapApplication(
 
           let contextMsg =
             `[SYSTEM] 서비스가 방금 재시작되었습니다.\n` +
-            `재시작 원인: ${restartReason}\n` +
+            `재시작 원인: ${restartEmoji} ${restartReason}\n` +
             `이전 세션의 명령(make up, restart 등)은 이미 완료되었습니다. 절대 재실행하지 마세요.\n` +
             `이전 종료 시각: ${marker.timestamp || "unknown"}`;
 
@@ -381,6 +395,21 @@ export async function bootstrapApplication(
           }
 
           session.nextQueryContext = contextMsg;
+
+          // Send Telegram notification to user about restart type
+          try {
+            let telegramMsg = `${restartEmoji} **서비스 재시작**\n\n`;
+            telegramMsg += `유형: ${restartReason}\n`;
+            telegramMsg += `시각: ${marker.timestamp || "unknown"}`;
+
+            if (restartType === "crash" && crashError) {
+              telegramMsg += `\n\n\`\`\`\n${crashError.slice(0, 500)}\n\`\`\``;
+            }
+
+            await bot.api.sendMessage(userId, telegramMsg, { parse_mode: "Markdown" });
+          } catch (notifyErr) {
+            console.error("[STARTUP] Failed to send restart notification:", notifyErr);
+          }
         }
         console.log("[STARTUP] Restart marker processed");
       }
@@ -395,7 +424,8 @@ export async function bootstrapApplication(
 
   // Handle crash marker WITHOUT restart marker — OS killed process (OOM, SIGKILL, etc.)
   // No SIGTERM was caught, so no restart marker exists, but crash marker might.
-  if (fsOps.existsSync(CRASH_MARKER_FILE)) {
+  if (!restartMarkerProcessed && fsOps.existsSync(CRASH_MARKER_FILE)) {
+    restartMarkerProcessed = true;
     try {
       const crashData = JSON.parse(fsOps.readFileSync(CRASH_MARKER_FILE, "utf-8"));
       const reason = crashData.reason as string;
@@ -415,12 +445,54 @@ export async function bootstrapApplication(
           `종료 시각: ${crashData.timestamp || "unknown"}` +
           errorStr +
           `\n\n이전 세션의 명령은 이미 완료되었습니다. 절대 재실행하지 마세요.`;
+
+        // Send Telegram notification — OS-level crash (no SIGTERM caught)
+        try {
+          let telegramMsg = `🔥 **비정상 종료 후 재시작**\n\n`;
+          telegramMsg += `원인: ${reasonLabel}\n`;
+          telegramMsg += `시각: ${crashData.timestamp || "unknown"}`;
+          if (crashData.error) {
+            telegramMsg += `\n\n\`\`\`\n${String(crashData.error).slice(0, 500)}\n\`\`\``;
+          }
+          await bot.api.sendMessage(userId, telegramMsg, { parse_mode: "Markdown" });
+        } catch {
+          // best effort
+        }
       }
 
       fsOps.unlinkSync(CRASH_MARKER_FILE);
       console.log(`[STARTUP] Crash marker processed: reason=${reason}`);
     } catch {
       try { fsOps.unlinkSync(CRASH_MARKER_FILE); } catch {}
+    }
+  }
+
+  // Handle startup WITHOUT any markers — OS reboot, OOM kill, SIGKILL, power loss
+  if (!restartMarkerProcessed) {
+    // Check if there was a previous session (if session data exists but no markers = unexpected restart)
+    const userId = ALLOWED_USERS[0];
+    if (userId) {
+      const session = manager.getSession(userId);
+      if (session.totalQueries > 0) {
+        // Had previous session but no markers = OS-level kill (OOM, SIGKILL, reboot)
+        session.nextQueryContext =
+          `[SYSTEM] 서비스가 재시작되었습니다.\n` +
+          `재시작 원인: 🖥️ OS 재시작 또는 프로세스 강제 종료 (SIGKILL/OOM)\n` +
+          `마커 파일 없음 — SIGTERM이 캐치되지 않았으므로 OS 레벨 종료로 추정됩니다.\n` +
+          `이전 세션의 명령은 이미 완료되었습니다. 절대 재실행하지 마세요.`;
+
+        try {
+          await bot.api.sendMessage(
+            userId,
+            `🖥️ **OS 재시작/강제 종료 후 복구**\n\n` +
+            `SIGTERM 마커가 없어 OS 레벨 종료로 추정됩니다.\n` +
+            `(OOM kill, SIGKILL, 서버 재부팅 등)`,
+            { parse_mode: "Markdown" }
+          );
+        } catch {
+          // best effort
+        }
+      }
     }
   }
 
