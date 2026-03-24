@@ -1,4 +1,13 @@
-import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  jest,
+  mock,
+  test,
+} from "bun:test";
 import type { Context } from "grammy";
 import { ALLOWED_USERS } from "../config";
 import { sessionManager } from "../core/session/session-manager";
@@ -90,6 +99,7 @@ afterAll(() => {
 });
 
 afterEach(() => {
+  jest.useRealTimers();
   (sessionManager as unknown as { getSession: typeof originalGetSession }).getSession =
     originalGetSession;
   (rateLimiter as unknown as { check: typeof originalRateLimitCheck }).check =
@@ -188,5 +198,62 @@ describe("handleText refactor regression", () => {
 
     expect(getSessionSpy).toHaveBeenCalledTimes(0);
     expect(state.replies.some((text) => text.includes("Rate limited"))).toBe(true);
+  });
+
+  test("BUG soma-qivc: flushBatch re-checks processing and steers instead of re-entering query", async () => {
+    jest.useFakeTimers();
+    setBotUsername("soma_bot");
+
+    let isProcessing = false;
+    const sendMessageStreaming = mock(async () => {
+      throw new Error(
+        "sendMessageStreaming is already running. Concurrent calls are not supported."
+      );
+    });
+    const addSteering = mock(() => false);
+    const startProcessing = mock(() => () => {});
+
+    const fakeSession = {
+      pendingDirectInput: null,
+      parseTextChoiceState: null,
+      isRunning: false,
+      queryState: "idle",
+      get isProcessing() {
+        return isProcessing;
+      },
+      get currentTool() {
+        return null;
+      },
+      addSteering,
+      getSteeringCount: mock(() => 1),
+      hasSteeringMessages: mock(() => false),
+      hasPendingRecovery: mock(() => false),
+      startInterrupt: mock(() => true),
+      markInterrupt: mock(() => {}),
+      stop: mock(async () => false),
+      clearStopRequested: mock(() => {}),
+      endInterrupt: mock(() => {}),
+      extractSteeringMessages: mock(() => []),
+      startProcessing,
+      sendMessageStreaming,
+    } as unknown as ReturnType<typeof sessionManager.getSession>;
+
+    (sessionManager as unknown as { getSession: () => typeof fakeSession }).getSession =
+      () => fakeSession;
+
+    const { ctx, state } = createMockContext("process this after photos");
+    await handleText(ctx);
+
+    isProcessing = true;
+    jest.advanceTimersByTime(500);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(addSteering).toHaveBeenCalled();
+    expect(startProcessing).not.toHaveBeenCalled();
+    expect(sendMessageStreaming).not.toHaveBeenCalled();
+    expect(
+      state.replies.some((text) => text.includes("Error processing message"))
+    ).toBe(false);
   });
 });

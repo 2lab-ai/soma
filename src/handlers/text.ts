@@ -57,15 +57,33 @@ async function flushBatch(key: string): Promise<void> {
 
   if (messages.length === 0) return;
 
-  const combined: string = messages.length === 1
-    ? messages[0]!
-    : messages.map((m, i) => `[${i + 1}] ${m}`).join("\n");
+  const combined: string =
+    messages.length === 1
+      ? messages[0]!
+      : messages.map((m, i) => `[${i + 1}] ${m}`).join("\n");
 
   console.log(
     `[BATCH] Flushing ${messages.length} message(s) for ${key}: "${combined.slice(0, 100)}..."`
   );
 
   try {
+    const steeringHandled = await handleSteeringGate({
+      ctx: params.ctx,
+      session: params.session,
+      message: combined,
+      wasInterrupt: false,
+      chatId: params.chatId,
+      userId: params.userId,
+      username: params.username,
+      deliverInboundReaction: params.deliverInboundReaction,
+    });
+    if (steeringHandled) {
+      console.log(
+        `[BATCH] Session busy at flush for ${key}; redirected ${messages.length} message(s) to steering`
+      );
+      return;
+    }
+
     await resolvePendingRecoveryContext({
       ctx: params.ctx,
       session: params.session,
@@ -77,9 +95,8 @@ async function flushBatch(key: string): Promise<void> {
       message: combined,
     });
   } catch (error) {
-    const errorStr = error instanceof Error
-      ? `${error.name}: ${error.message}`
-      : String(error);
+    const errorStr =
+      error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     console.error(`[BATCH] Unhandled error during flush for ${key}:`, error);
 
     // Notify user
@@ -89,9 +106,9 @@ async function flushBatch(key: string): Promise<void> {
         { parse_mode: "Markdown" }
       );
     } catch {
-      await params.ctx.reply(
-        `❌ Error processing message\n\n${errorStr.slice(0, 600)}`
-      ).catch(() => {});
+      await params.ctx
+        .reply(`❌ Error processing message\n\n${errorStr.slice(0, 600)}`)
+        .catch(() => {});
     }
   }
 }

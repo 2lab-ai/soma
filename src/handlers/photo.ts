@@ -69,58 +69,66 @@ async function processPhotos(
   // Get session for this chat/thread
   const session = sessionManager.getSession(chatId, threadId);
 
-  // Mark processing started
-  const stopProcessing = session.startProcessing();
+  await session.runSerializedQuery(async () => {
+    // Mark processing started
+    const stopProcessing = session.startProcessing();
 
-  // Update reaction to show processing
-  try {
-    await ctx.react(Reactions.PROCESSING);
-  } catch {
-    // Ignore reaction errors
-  }
-
-  // Build prompt
-  let prompt: string;
-  if (photoPaths.length === 1) {
-    prompt = caption
-      ? `[Photo: ${photoPaths[0]}]\n\n${caption}`
-      : `Please analyze this image: ${photoPaths[0]}`;
-  } else {
-    const pathsList = photoPaths.map((p, i) => `${i + 1}. ${p}`).join("\n");
-    prompt = caption
-      ? `[Photos:\n${pathsList}]\n\n${caption}`
-      : `Please analyze these ${photoPaths.length} images:\n${pathsList}`;
-  }
-
-  // Start typing
-  const typing = startTypingIndicator(ctx);
-
-  // Create streaming state
-  const state = new StreamingState();
-  const statusCallback = await createStatusCallback(ctx, state, session);
-
-  try {
-    const response = await session.sendMessageStreaming(
-      addTimestamp(prompt),
-      statusCallback,
-      chatId
-    );
-
-    await auditLog(userId, username, "PHOTO", prompt, response);
-
-    // Update reaction to show complete
+    // Update reaction to show processing
     try {
-      await ctx.react(Reactions.COMPLETE);
+      await ctx.react(Reactions.PROCESSING);
     } catch {
       // Ignore reaction errors
     }
-  } catch (error) {
-    await handleProcessingError(ctx, error, state.toolMessages, chatId, threadId);
-  } finally {
-    state.cleanup();
-    stopProcessing();
-    typing.stop();
-  }
+
+    // Build prompt
+    let prompt: string;
+    if (photoPaths.length === 1) {
+      prompt = caption
+        ? `[Photo: ${photoPaths[0]}]
+
+${caption}`
+        : `Please analyze this image: ${photoPaths[0]}`;
+    } else {
+      const pathsList = photoPaths.map((p, i) => `${i + 1}. ${p}`).join("\n");
+      prompt = caption
+        ? `[Photos:
+${pathsList}]
+
+${caption}`
+        : `Please analyze these ${photoPaths.length} images:
+${pathsList}`;
+    }
+
+    // Start typing
+    const typing = startTypingIndicator(ctx);
+
+    // Create streaming state
+    const state = new StreamingState();
+    const statusCallback = await createStatusCallback(ctx, state, session);
+
+    try {
+      const response = await session.sendMessageStreaming(
+        addTimestamp(prompt),
+        statusCallback,
+        chatId
+      );
+
+      await auditLog(userId, username, "PHOTO", prompt, response);
+
+      // Update reaction to show complete
+      try {
+        await ctx.react(Reactions.COMPLETE);
+      } catch {
+        // Ignore reaction errors
+      }
+    } catch (error) {
+      await handleProcessingError(ctx, error, state.toolMessages, chatId, threadId);
+    } finally {
+      state.cleanup();
+      stopProcessing();
+      typing.stop();
+    }
+  });
 }
 
 /**
