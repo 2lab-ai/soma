@@ -174,6 +174,7 @@ export class ClaudeSession {
   private readonly preToolUseHook = this.queryRuntimeHooks.preToolUseHook;
   private readonly postToolUseHook = this.queryRuntimeHooks.postToolUseHook;
   private providerOrchestrator: ProviderOrchestrator | null;
+  private serializedQueryQueue: Promise<void> = Promise.resolve();
 
   private getRuntimeState(): SessionRuntimeState {
     return {
@@ -535,6 +536,15 @@ export class ClaudeSession {
         );
       }
     };
+  }
+
+  runSerializedQuery<T>(task: () => Promise<T> | T): Promise<T> {
+    const run = this.serializedQueryQueue.then(() => task());
+    this.serializedQueryQueue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
   }
 
   getPendingSteering(): string | null {

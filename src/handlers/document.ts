@@ -1,7 +1,7 @@
 /**
  * Document handler for Claude Telegram Bot.
  *
- * Supports PDFs and text files with media group buffering.
+ * Supports PDFs, image files, and text files with media group buffering.
  * PDF extraction uses pdftotext CLI (install via: brew install poppler)
  */
 
@@ -43,6 +43,28 @@ const TEXT_EXTENSIONS = [
   ".ini",
   ".toml",
 ];
+
+const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".svg"];
+const IMAGE_MIME_TYPES = [
+  "image/png",
+  "image/jpg",
+  "image/jpeg",
+  "image/webp",
+  "image/svg+xml",
+];
+
+export function isImageDocumentType(fileName: string, mimeType?: string): boolean {
+  const extension = "." + (fileName.split(".").pop() || "").toLowerCase();
+  if (IMAGE_EXTENSIONS.includes(extension)) {
+    return true;
+  }
+
+  return mimeType ? IMAGE_MIME_TYPES.includes(mimeType.toLowerCase()) : false;
+}
+
+function isImagePath(filePath: string): boolean {
+  return isImageDocumentType(filePath);
+}
 
 // Supported archive extensions
 const ARCHIVE_EXTENSIONS = [".zip", ".tar", ".tar.gz", ".tgz"];
@@ -112,6 +134,134 @@ async function extractText(filePath: string, mimeType?: string): Promise<string>
   }
 
   throw new Error(`Unsupported file type: ${extension || mimeType}`);
+}
+
+function buildImagePrompt(imagePaths: string[], caption?: string): string {
+  if (imagePaths.length === 1) {
+    return caption
+      ? `[Image Document: ${imagePaths[0]}]\n\n${caption}`
+      : `Please analyze this image: ${imagePaths[0]}`;
+  }
+
+  const imageList = imagePaths.map((path, index) => `${index + 1}. ${path}`).join("\n");
+  return caption
+    ? `[Image Documents:\n${imageList}]\n\n${caption}`
+    : `Please analyze these ${imagePaths.length} images:\n${imageList}`;
+}
+
+async function processImageDocuments(
+  ctx: Context,
+  imagePaths: string[],
+  caption: string | undefined,
+  userId: number,
+  username: string,
+  chatId: number,
+  threadId?: number
+): Promise<void> {
+  const session = sessionManager.getSession(chatId, threadId);
+
+  await session.runSerializedQuery(async () => {
+    const stopProcessing = session.startProcessing();
+
+    try {
+      await ctx.react(Reactions.PROCESSING);
+    } catch {
+      // Ignore reaction errors
+    }
+
+    const prompt = buildImagePrompt(imagePaths, caption);
+    const typing = startTypingIndicator(ctx);
+    const state = new StreamingState();
+    const statusCallback = await createStatusCallback(ctx, state, session);
+
+    try {
+      const response = await session.sendMessageStreaming(
+        addTimestamp(prompt),
+        statusCallback,
+        chatId
+      );
+
+      await auditLog(userId, username, "DOCUMENT_IMAGE", prompt, response);
+
+      try {
+        await ctx.react(Reactions.COMPLETE);
+      } catch {
+        // Ignore reaction errors
+      }
+    } catch (error) {
+      await handleProcessingError(ctx, error, state.toolMessages, chatId, threadId);
+    } finally {
+      state.cleanup();
+      stopProcessing();
+      typing.stop();
+    }
+  });
+}
+
+async function processMixedDocumentInputs(
+  ctx: Context,
+  imagePaths: string[],
+  documents: Array<{ path: string; name: string; content: string }>,
+  caption: string | undefined,
+  userId: number,
+  username: string,
+  chatId: number,
+  threadId?: number
+): Promise<void> {
+  const session = sessionManager.getSession(chatId, threadId);
+
+  await session.runSerializedQuery(async () => {
+    const stopProcessing = session.startProcessing();
+
+    try {
+      await ctx.react(Reactions.PROCESSING);
+    } catch {
+      // Ignore reaction errors
+    }
+
+    const imageSection =
+      imagePaths.length === 1
+        ? `Image:\n${imagePaths[0]}`
+        : `Images:\n${imagePaths
+            .map((path, index) => `${index + 1}. ${path}`)
+            .join("\n")}`;
+    const documentSection =
+      documents.length === 1
+        ? `Document: ${documents[0]!.name}\n\nContent:\n${documents[0]!.content}`
+        : `${documents.length} Documents:\n\n${documents
+            .map((doc, index) => `--- Document ${index + 1}: ${doc.name} ---\n${doc.content}`)
+            .join("\n\n")}`;
+    const promptBody = [imageSection, documentSection].join("\n\n");
+    const prompt = caption
+      ? `Please analyze these files:\n\n${promptBody}\n\n---\n\n${caption}`
+      : `Please analyze these files:\n\n${promptBody}`;
+
+    const typing = startTypingIndicator(ctx);
+    const state = new StreamingState();
+    const statusCallback = await createStatusCallback(ctx, state, session);
+
+    try {
+      const response = await session.sendMessageStreaming(
+        addTimestamp(prompt),
+        statusCallback,
+        chatId
+      );
+
+      await auditLog(userId, username, "DOCUMENT_MIXED", prompt, response);
+
+      try {
+        await ctx.react(Reactions.COMPLETE);
+      } catch {
+        // Ignore reaction errors
+      }
+    } catch (error) {
+      await handleProcessingError(ctx, error, state.toolMessages, chatId, threadId);
+    } finally {
+      state.cleanup();
+      stopProcessing();
+      typing.stop();
+    }
+  });
 }
 
 /**
@@ -219,96 +369,120 @@ async function processArchive(
   threadId?: number
 ): Promise<void> {
   const session = sessionManager.getSession(chatId, threadId);
-  const stopProcessing = session.startProcessing();
 
-  // Update reaction to show processing
-  try {
-    await ctx.react(Reactions.PROCESSING);
-  } catch {
-    // Ignore reaction errors
-  }
+  await session.runSerializedQuery(async () => {
+    const stopProcessing = session.startProcessing();
 
-  const typing = startTypingIndicator(ctx);
-  const state = new StreamingState();
-
-  // Show extraction progress
-  const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
-    parse_mode: "HTML",
-  });
-
-  try {
-    // Extract archive
-    console.log(`Extracting archive: ${fileName}`);
-    const extractDir = await extractArchive(archivePath, fileName);
-    const { tree, contents } = await extractArchiveContent(extractDir);
-    console.log(`Extracted: ${tree.length} files, ${contents.length} readable`);
-
-    // Update status
-    await ctx.api.editMessageText(
-      statusMsg.chat.id,
-      statusMsg.message_id,
-      `📦 Extracted <b>${fileName}</b>: ${tree.length} files, ${contents.length} readable`,
-      { parse_mode: "HTML" }
-    );
-
-    // Build prompt
-    const treeStr = tree.length > 0 ? tree.join("\n") : "(empty)";
-    const contentsStr =
-      contents.length > 0
-        ? contents.map((c) => `--- ${c.name} ---\n${c.content}`).join("\n\n")
-        : "(no readable text files)";
-
-    const prompt = caption
-      ? `Archive: ${fileName}\n\nFile tree (${tree.length} files):\n${treeStr}\n\nExtracted contents:\n${contentsStr}\n\n---\n\n${caption}`
-      : `Please analyze this archive (${fileName}):\n\nFile tree (${tree.length} files):\n${treeStr}\n\nExtracted contents:\n${contentsStr}`;
-
-    // Create streaming callback
-    const statusCallback = await createStatusCallback(ctx, state, session);
-
-    const response = await session.sendMessageStreaming(
-      addTimestamp(prompt),
-      statusCallback,
-      chatId
-    );
-
-    await auditLog(
-      userId,
-      username,
-      "ARCHIVE",
-      `[${fileName}] ${caption || ""}`,
-      response
-    );
-
-    // Update reaction to show complete
+    // Update reaction to show processing
     try {
-      await ctx.react(Reactions.COMPLETE);
+      await ctx.react(Reactions.PROCESSING);
     } catch {
       // Ignore reaction errors
     }
 
-    // Cleanup
-    await Bun.$`rm -rf ${extractDir}`.quiet();
+    const typing = startTypingIndicator(ctx);
+    const state = new StreamingState();
 
-    // Delete status message
+    // Show extraction progress
+    const statusMsg = await ctx.reply(`📦 Extracting <b>${fileName}</b>...`, {
+      parse_mode: "HTML",
+    });
+
     try {
-      await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
-    } catch {
-      // Ignore deletion errors
+      // Extract archive
+      console.log(`Extracting archive: ${fileName}`);
+      const extractDir = await extractArchive(archivePath, fileName);
+      const { tree, contents } = await extractArchiveContent(extractDir);
+      console.log(`Extracted: ${tree.length} files, ${contents.length} readable`);
+
+      // Update status
+      await ctx.api.editMessageText(
+        statusMsg.chat.id,
+        statusMsg.message_id,
+        `📦 Extracted <b>${fileName}</b>: ${tree.length} files, ${contents.length} readable`,
+        { parse_mode: "HTML" }
+      );
+
+      // Build prompt
+      const treeStr = tree.length > 0 ? tree.join("\n") : "(empty)";
+      const contentsStr =
+        contents.length > 0
+          ? contents
+              .map(
+                (c) => `--- ${c.name} ---
+${c.content}`
+              )
+              .join("\n\n")
+          : "(no readable text files)";
+
+      const prompt = caption
+        ? `Archive: ${fileName}
+
+File tree (${tree.length} files):
+${treeStr}
+
+Extracted contents:
+${contentsStr}
+
+---
+
+${caption}`
+        : `Please analyze this archive (${fileName}):
+
+File tree (${tree.length} files):
+${treeStr}
+
+Extracted contents:
+${contentsStr}`;
+
+      // Create streaming callback
+      const statusCallback = await createStatusCallback(ctx, state, session);
+
+      const response = await session.sendMessageStreaming(
+        addTimestamp(prompt),
+        statusCallback,
+        chatId
+      );
+
+      await auditLog(
+        userId,
+        username,
+        "ARCHIVE",
+        `[${fileName}] ${caption || ""}`,
+        response
+      );
+
+      // Update reaction to show complete
+      try {
+        await ctx.react(Reactions.COMPLETE);
+      } catch {
+        // Ignore reaction errors
+      }
+
+      // Cleanup
+      await Bun.$`rm -rf ${extractDir}`.quiet();
+
+      // Delete status message
+      try {
+        await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
+      } catch {
+        // Ignore deletion errors
+      }
+    } catch (error) {
+      console.error("Archive processing error:", error);
+      // Delete status message on error
+      try {
+        await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
+      } catch {
+        // Ignore
+      }
+      await ctx.reply(`❌ Failed to process archive: ${String(error).slice(0, 100)}`);
+    } finally {
+      state.cleanup();
+      stopProcessing();
+      typing.stop();
     }
-  } catch (error) {
-    console.error("Archive processing error:", error);
-    // Delete status message on error
-    try {
-      await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
-    } catch {
-      // Ignore
-    }
-    await ctx.reply(`❌ Failed to process archive: ${String(error).slice(0, 100)}`);
-  } finally {
-    state.cleanup();
-    stopProcessing();
-    typing.stop();
-  }
+  });
 }
 
 /**
@@ -326,67 +500,89 @@ async function processDocuments(
   // Get session for this chat/thread
   const session = sessionManager.getSession(chatId, threadId);
 
-  // Mark processing started
-  const stopProcessing = session.startProcessing();
+  await session.runSerializedQuery(async () => {
+    // Mark processing started
+    const stopProcessing = session.startProcessing();
 
-  // Update reaction to show processing
-  try {
-    await ctx.react(Reactions.PROCESSING);
-  } catch {
-    // Ignore reaction errors
-  }
-
-  // Build prompt
-  let prompt: string;
-  if (documents.length === 1) {
-    const doc = documents[0]!;
-    prompt = caption
-      ? `Document: ${doc.name}\n\nContent:\n${doc.content}\n\n---\n\n${caption}`
-      : `Please analyze this document (${doc.name}):\n\n${doc.content}`;
-  } else {
-    const docList = documents
-      .map((d, i) => `--- Document ${i + 1}: ${d.name} ---\n${d.content}`)
-      .join("\n\n");
-    prompt = caption
-      ? `${documents.length} Documents:\n\n${docList}\n\n---\n\n${caption}`
-      : `Please analyze these ${documents.length} documents:\n\n${docList}`;
-  }
-
-  // Start typing
-  const typing = startTypingIndicator(ctx);
-
-  // Create streaming state
-  const state = new StreamingState();
-  const statusCallback = await createStatusCallback(ctx, state);
-
-  try {
-    const response = await session.sendMessageStreaming(
-      addTimestamp(prompt),
-      statusCallback,
-      chatId
-    );
-
-    await auditLog(
-      userId,
-      username,
-      "DOCUMENT",
-      `[${documents.length} docs] ${caption || ""}`,
-      response
-    );
-
-    // Update reaction to show complete
+    // Update reaction to show processing
     try {
-      await ctx.react(Reactions.COMPLETE);
+      await ctx.react(Reactions.PROCESSING);
     } catch {
       // Ignore reaction errors
     }
-  } catch (error) {
-    await handleProcessingError(ctx, error, state.toolMessages, chatId, threadId);
-  } finally {
-    state.cleanup();
-    stopProcessing();
-    typing.stop();
-  }
+
+    // Build prompt
+    let prompt: string;
+    if (documents.length === 1) {
+      const doc = documents[0]!;
+      prompt = caption
+        ? `Document: ${doc.name}
+
+Content:
+${doc.content}
+
+---
+
+${caption}`
+        : `Please analyze this document (${doc.name}):
+
+${doc.content}`;
+    } else {
+      const docList = documents
+        .map(
+          (d, i) => `--- Document ${i + 1}: ${d.name} ---
+${d.content}`
+        )
+        .join("\n\n");
+      prompt = caption
+        ? `${documents.length} Documents:
+
+${docList}
+
+---
+
+${caption}`
+        : `Please analyze these ${documents.length} documents:
+
+${docList}`;
+    }
+
+    // Start typing
+    const typing = startTypingIndicator(ctx);
+
+    // Create streaming state
+    const state = new StreamingState();
+    const statusCallback = await createStatusCallback(ctx, state);
+
+    try {
+      const response = await session.sendMessageStreaming(
+        addTimestamp(prompt),
+        statusCallback,
+        chatId
+      );
+
+      await auditLog(
+        userId,
+        username,
+        "DOCUMENT",
+        `[${documents.length} docs] ${caption || ""}`,
+        response
+      );
+
+      // Update reaction to show complete
+      try {
+        await ctx.react(Reactions.COMPLETE);
+      } catch {
+        // Ignore reaction errors
+      }
+    } catch (error) {
+      await handleProcessingError(ctx, error, state.toolMessages, chatId, threadId);
+    } finally {
+      state.cleanup();
+      stopProcessing();
+      typing.stop();
+    }
+  });
 }
 
 /**
@@ -401,17 +597,45 @@ async function processDocumentPaths(
   chatId: number,
   threadId?: number
 ): Promise<void> {
-  // Extract text from all documents
+  const imagePaths = paths.filter((path) => isImagePath(path));
+  const textPaths = paths.filter((path) => isImagePath(path) === false);
   const documents: Array<{ path: string; name: string; content: string }> = [];
 
-  for (const path of paths) {
+  for (const path of textPaths) {
     try {
       const name = path.split("/").pop() || "document";
       const content = await extractText(path);
       documents.push({ path, name, content });
     } catch (error) {
-      console.error(`Failed to extract ${path}:`, error);
+      console.error("Failed to extract " + path + ":", error);
     }
+  }
+
+  if (imagePaths.length > 0 && documents.length > 0) {
+    await processMixedDocumentInputs(
+      ctx,
+      imagePaths,
+      documents,
+      caption,
+      userId,
+      username,
+      chatId,
+      threadId
+    );
+    return;
+  }
+
+  if (imagePaths.length > 0) {
+    await processImageDocuments(
+      ctx,
+      imagePaths,
+      caption,
+      userId,
+      username,
+      chatId,
+      threadId
+    );
+    return;
   }
 
   if (documents.length === 0) {
@@ -435,11 +659,10 @@ export async function handleDocument(ctx: Context): Promise<void> {
   const mediaGroupId = ctx.message?.media_group_id;
   const caption = ctx.message?.caption;
 
-  if (!userId || !chatId || !doc) {
+  if (userId == null || chatId == null || doc == null) {
     return;
   }
 
-  // 1. Authorization check (per-chat)
   if (!isAuthorizedForChat(userId, chatId, chatType)) {
     if (chatType === "private") {
       await ctx.reply("Unauthorized. Contact the bot owner for access.");
@@ -447,7 +670,6 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  // 1.1. Check if bot should respond (for groups - check caption for @mention)
   const isReplyToBot = Boolean(
     ctx.message?.reply_to_message?.from?.is_bot &&
     ctx.message?.reply_to_message?.from?.username === botUsername
@@ -456,38 +678,39 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  // 1.5. React to user message to show it's received
   try {
     await ctx.react(Reactions.READ);
   } catch (error) {
     console.debug("Failed to add reaction to user message:", error);
   }
 
-  // 2. Check file size
   if (doc.file_size && doc.file_size > MAX_FILE_SIZE) {
     await ctx.reply("❌ File too large. Maximum size is 10MB.");
     return;
   }
 
-  // 3. Check file type
   const fileName = doc.file_name || "";
   const extension = "." + (fileName.split(".").pop() || "").toLowerCase();
   const isPdf = doc.mime_type === "application/pdf" || extension === ".pdf";
   const isText =
     TEXT_EXTENSIONS.includes(extension) || doc.mime_type?.startsWith("text/");
+  const isImage = isImageDocumentType(fileName, doc.mime_type);
   const isArchiveFile = isArchive(fileName);
 
-  if (!isPdf && !isText && !isArchiveFile) {
+  if ((isPdf || isText || isImage || isArchiveFile) === false) {
     await ctx.reply(
-      `❌ Unsupported file type: ${extension || doc.mime_type}\n\n` +
-        `Supported: PDF, archives (${ARCHIVE_EXTENSIONS.join(
-          ", "
-        )}), ${TEXT_EXTENSIONS.join(", ")}`
+      "❌ Unsupported file type: " +
+        (extension || doc.mime_type) +
+        "\n\nSupported: PDF, images (" +
+        IMAGE_EXTENSIONS.join(", ") +
+        "), archives (" +
+        ARCHIVE_EXTENSIONS.join(", ") +
+        "), " +
+        TEXT_EXTENSIONS.join(", ")
     );
     return;
   }
 
-  // 4. Download document
   let docPath: string;
   try {
     docPath = await downloadDocument(ctx);
@@ -497,15 +720,13 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  // 5. Archive files - process separately (no media group support)
   if (isArchiveFile) {
-    console.log(`Received archive: ${fileName} from @${username}`);
+    console.log("Received archive: " + fileName + " from @" + username);
     const [allowed, retryAfter] = rateLimiter.check(userId);
-    if (!allowed) {
-      await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
-        `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
-      );
+    if (allowed === false) {
+      const waitSeconds = retryAfter ?? 0;
+      await auditLogRateLimit(userId, username, waitSeconds);
+      await ctx.reply("⏳ Rate limited. Please wait " + waitSeconds.toFixed(1) + " seconds.");
       return;
     }
 
@@ -522,20 +743,30 @@ export async function handleDocument(ctx: Context): Promise<void> {
     return;
   }
 
-  // 6. Single document - process immediately
   if (!mediaGroupId) {
-    console.log(`Received document: ${fileName} from @${username}`);
-    // Rate limit
+    console.log("Received document: " + fileName + " from @" + username);
     const [allowed, retryAfter] = rateLimiter.check(userId);
-    if (!allowed) {
-      await auditLogRateLimit(userId, username, retryAfter!);
-      await ctx.reply(
-        `⏳ Rate limited. Please wait ${retryAfter!.toFixed(1)} seconds.`
-      );
+    if (allowed === false) {
+      const waitSeconds = retryAfter ?? 0;
+      await auditLogRateLimit(userId, username, waitSeconds);
+      await ctx.reply("⏳ Rate limited. Please wait " + waitSeconds.toFixed(1) + " seconds.");
       return;
     }
 
     try {
+      if (isImage) {
+        await processImageDocuments(
+          ctx,
+          [docPath],
+          caption,
+          userId,
+          username,
+          chatId,
+          threadId
+        );
+        return;
+      }
+
       const content = await extractText(docPath, doc.mime_type);
       await processDocuments(
         ctx,
@@ -548,12 +779,11 @@ export async function handleDocument(ctx: Context): Promise<void> {
       );
     } catch (error) {
       console.error("Failed to extract document:", error);
-      await ctx.reply(`❌ Failed to process document: ${String(error).slice(0, 100)}`);
+      await ctx.reply("❌ Failed to process document: " + String(error).slice(0, 100));
     }
     return;
   }
 
-  // 7. Media group - buffer with timeout
   await documentBuffer.addToGroup(
     mediaGroupId,
     docPath,

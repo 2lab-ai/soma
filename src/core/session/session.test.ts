@@ -48,4 +48,46 @@ describe("sendMessageStreaming re-entrancy guard (soma-fkx2)", () => {
       (session as any)._queryState = "idle";
     }
   });
+
+  test("BUG soma-qivc: runSerializedQuery serializes concurrent tasks", async () => {
+    const session = new ClaudeSession("test:serialized:queries");
+    const runSerializedQuery = (session as any).runSerializedQuery;
+
+    expect(typeof runSerializedQuery).toBe("function");
+    if (typeof runSerializedQuery !== "function") {
+      return;
+    }
+
+    const events: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+
+    const makeTask = (label: string, delayMs: number) =>
+      runSerializedQuery.call(session, async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        events.push(`${label}:start`);
+        await Bun.sleep(delayMs);
+        events.push(`${label}:end`);
+        active -= 1;
+        return label;
+      });
+
+    const results = await Promise.all([
+      makeTask("first", 20),
+      makeTask("second", 1),
+      makeTask("third", 1),
+    ]);
+
+    expect(results).toEqual(["first", "second", "third"]);
+    expect(maxActive).toBe(1);
+    expect(events).toEqual([
+      "first:start",
+      "first:end",
+      "second:start",
+      "second:end",
+      "third:start",
+      "third:end",
+    ]);
+  });
 });
