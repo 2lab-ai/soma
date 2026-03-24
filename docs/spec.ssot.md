@@ -1,29 +1,23 @@
 # Documentation SSOT Policy
 
-Updated: 2026-02-10
+Updated: 2026-03-25
 
 ## 1. Purpose
 
-이 문서는 SOMA 문서의 Single Source of Truth(SSOT) 체계를 정의한다.  
+이 문서는 SOMA 문서의 Single Source of Truth(SSOT) 체계를 정의한다.
 기능/구조 변경 시 어떤 문서를 우선 갱신해야 하는지 기준을 고정한다.
 
 ## 2. Canonical Documents
 
 ### Primary Canonical Set
 
-1. System spec (high-level):
-   - `/Users/icedac/2lab.ai/soma/docs/spec.md`
-2. Technical spec (detailed):
-   - `/Users/icedac/2lab.ai/soma/docs/specs.md`
-3. Architecture diagrams (source-accurate):
-   - `/Users/icedac/2lab.ai/soma/docs/architecture/current-source-architecture.md`
+1. System spec (high-level): `docs/spec.md`
+2. Technical spec (detailed): `docs/specs.md`
+3. Architecture diagrams (source-accurate): `docs/architecture/current-source-architecture.md`
 
 ### Support Canonical Set
 
-1. Plans status pointer:
-   - `/Users/icedac/2lab.ai/soma/docs/plans/README.md`
-2. Refactor archive index:
-   - `/Users/icedac/2lab.ai/soma/docs/archive/refactor-reset-2026-02-09/README.md`
+1. Refactor archive index: `docs/archive/refactor-reset-2026-02-09/README.md`
 
 ## 3. Precedence Rules
 
@@ -58,6 +52,10 @@ docs/
 ├── architecture/
 │   ├── current-source-architecture.md
 │   └── refactor-executive-summary.md
+├── debugging/
+│   └── <incident-id>/trace.md
+├── fix-reentry-guard-v2/
+├── fix-stuck-reentry-guard/
 ├── guides/
 │   └── personal-assistant-guide.md
 ├── operations/
@@ -66,12 +64,8 @@ docs/
 ├── reference/
 │   ├── adr-v3-legacy.md
 │   └── openclaw-compatibility-track.md
-├── plans/
-│   └── README.md
 ├── archive/
-│   └── refactor-reset-2026-02-09/
-├── tasks/save/
-│   └── INDEX.md
+│   └── refactor-*/
 ├── spec.md
 ├── specs.md
 └── spec.ssot.md

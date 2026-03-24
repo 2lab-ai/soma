@@ -36,7 +36,7 @@ SOMA is a Telegram-first AI agent runtime that:
 | `summary` | Sonnet 4.5 | `minimal` |
 | `cron` | Haiku 4.5 | `none` |
 
-Source: `/Users/icedac/2lab.ai/soma/src/config/model.ts`
+Source: `src/config/model.ts`
 
 ## 3. High-Level Architecture
 
@@ -85,22 +85,22 @@ sequenceDiagram
 
 ## 5. Boundary Contracts
 
-- Channel boundary contract: `/Users/icedac/2lab.ai/soma/src/channels/plugins/types.core.ts`
-- Session identity contract: `/Users/icedac/2lab.ai/soma/src/core/routing/session-key.ts`
-- Provider boundary contract: `/Users/icedac/2lab.ai/soma/src/providers/types.models.ts`
-- Scheduler runtime boundary: `/Users/icedac/2lab.ai/soma/src/scheduler/runtime-boundary.ts`
+- Channel boundary contract: `src/channels/plugins/types.core.ts`
+- Session identity contract: `src/core/routing/session-key.ts`
+- Provider boundary contract: `src/providers/types.models.ts`
+- Scheduler runtime boundary: `src/scheduler/runtime-boundary.ts`
 
 ## 6. Security and Safety Controls
 
-- User/group allowlist + mention policy: `/Users/icedac/2lab.ai/soma/src/security.ts`
-- Rate limiting (token bucket): `/Users/icedac/2lab.ai/soma/src/security.ts`
-- Path allowlist enforcement and command safety checks: `/Users/icedac/2lab.ai/soma/src/security.ts`
+- User/group allowlist + mention policy: `src/security.ts`
+- Rate limiting (token bucket): `src/security.ts`
+- Path allowlist enforcement and command safety checks: `src/security.ts`
 - Provider/tool/runtime guardrails are enforced in query runtime hooks.
 
 ## 7. Canonical Deep-Dive Docs
 
-- Technical deep spec: `/Users/icedac/2lab.ai/soma/docs/specs.md`
-- Architecture diagrams: `/Users/icedac/2lab.ai/soma/docs/architecture/current-source-architecture.md`
-- Refactor executive summary: `/Users/icedac/2lab.ai/soma/docs/architecture/refactor-executive-summary.md`
-- Documentation SSOT policy: `/Users/icedac/2lab.ai/soma/docs/spec.ssot.md`
-- Operations runbook: `/Users/icedac/2lab.ai/soma/docs/operations/service-runbook.md`
+- Technical deep spec: `docs/specs.md`
+- Architecture diagrams: `docs/architecture/current-source-architecture.md`
+- Refactor executive summary: `docs/architecture/refactor-executive-summary.md`
+- Documentation SSOT policy: `docs/spec.ssot.md`
+- Operations runbook: `docs/operations/service-runbook.md`

@@ -199,8 +199,8 @@ flowchart LR
 ## 10) Related Docs
 
 - Refactor executive summary (AS-IS vs TO-BE):
-  - `/Users/icedac/2lab.ai/soma/docs/architecture/refactor-executive-summary.md`
+  - `docs/architecture/refactor-executive-summary.md`
 - High-level system spec:
-  - `/Users/icedac/2lab.ai/soma/docs/spec.md`
+  - `docs/spec.md`
 - Detailed technical spec:
-  - `/Users/icedac/2lab.ai/soma/docs/specs.md`
+  - `docs/specs.md`

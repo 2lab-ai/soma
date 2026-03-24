@@ -67,7 +67,7 @@ flowchart TB
 
 ## Canonical References
 
-- `/Users/icedac/2lab.ai/soma/docs/spec.md`
-- `/Users/icedac/2lab.ai/soma/docs/specs.md`
-- `/Users/icedac/2lab.ai/soma/docs/architecture/current-source-architecture.md`
-- `/Users/icedac/2lab.ai/soma/docs/spec.ssot.md`
+- `docs/spec.md`
+- `docs/specs.md`
+- `docs/architecture/current-source-architecture.md`
+- `docs/spec.ssot.md`

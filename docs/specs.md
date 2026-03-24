@@ -187,7 +187,7 @@ bun test src/e2e --coverage --coverage-reporter=text --coverage-reporter=lcov \
 
 Operational details:
 
-- `/Users/icedac/2lab.ai/soma/docs/operations/service-runbook.md`
+- `docs/operations/service-runbook.md`
 
 ## 9. Current Deferred/Optional Tracks
 

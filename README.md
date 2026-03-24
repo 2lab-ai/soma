@@ -33,7 +33,7 @@ To achieve this, I set up a folder with a CLAUDE.md that teaches Claude about me
 ## Quick Start
 
 ```bash
-git clone https://github.com/linuz90/soma
+git clone https://github.com/2lab-ai/soma
 cd soma
 
 cp .env.example .env

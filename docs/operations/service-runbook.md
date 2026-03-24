@@ -6,7 +6,7 @@ Scope: Current `main` branch behavior (`Makefile`, `bun test`, scheduler/runtime
 ## 1) Preconditions
 
 - Run from repository root:
-  - `/Users/icedac/2lab.ai/soma`
+  - Repository root (clone of `https://github.com/2lab-ai/soma`)
 - Required env for tests:
   - `TELEGRAM_BOT_TOKEN`
   - `TELEGRAM_ALLOWED_USERS`
@@ -95,7 +95,7 @@ make errors
   - `~/.config/systemd/user/<SERVICE_NAME>.service`
 - `make up` auto-rebuilds/reloads the service file.
 - Historical incident details are documented in:
-  - `/Users/icedac/2lab.ai/soma/docs/operations/wsl-systemd-service-guide.md`
+  - `docs/operations/wsl-systemd-service-guide.md`
 
 ## 6) Fast Troubleshooting
 
@@ -117,5 +117,5 @@ make errors
 
 ## 7) Related Docs
 
-- `/Users/icedac/2lab.ai/soma/docs/specs.md`
-- `/Users/icedac/2lab.ai/soma/docs/architecture/current-source-architecture.md`
+- `docs/specs.md`
+- `docs/architecture/current-source-architecture.md`

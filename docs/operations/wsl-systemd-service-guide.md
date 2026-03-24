@@ -1,7 +1,7 @@
 # WSL Systemd User Service Guide
 
 > Legacy incident-focused WSL guide.  
-> Current canonical runbook: `/Users/icedac/2lab.ai/soma/docs/operations/service-runbook.md`  
+> Current canonical runbook: `docs/operations/service-runbook.md`  
 > Scope here is mainly WSL troubleshooting history and recovery patterns.
 
 ## Issue Report: 2026-02-02 무한 재시작 루프
