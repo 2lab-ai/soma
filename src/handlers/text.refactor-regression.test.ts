@@ -149,7 +149,7 @@ describe("handleText refactor regression", () => {
     const fakeSession = {
       pendingDirectInput: null,
       parseTextChoiceState: null,
-      isProcessing: false,
+      isProcessing: true,
       isRunning: true,
       isInterrupting: false,
       startInterrupt: mock(() => true),

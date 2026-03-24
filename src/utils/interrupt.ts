@@ -13,6 +13,7 @@ export function addTimestamp(message: string): string {
 }
 
 interface InterruptableSession {
+  isProcessing: boolean;
   isRunning: boolean;
   isInterrupting: boolean;
   stop: () => Promise<"stopped" | "pending" | false>;
@@ -37,7 +38,7 @@ export async function checkInterrupt(
     return strippedText;
   }
 
-  if (session.isRunning) {
+  if (session.isProcessing) {
     if (!session.startInterrupt()) {
       console.log("! prefix - interrupt already in progress, waiting...");
       const start = Date.now();

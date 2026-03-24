@@ -163,13 +163,13 @@ export function incrementGenerationTransition(
 }
 
 export function isQueryRunning(state: SessionRuntimeState): boolean {
-  return state.queryState !== "idle";
+  return (
+    state.queryState === "running" ||
+    state.queryState === "aborting" ||
+    state.queryState === "completing"
+  );
 }
 
 export function isQueryProcessing(state: SessionRuntimeState): boolean {
-  return (
-    state.queryState === "preparing" ||
-    state.queryState === "running" ||
-    state.queryState === "completing"
-  );
+  return state.queryState !== "idle";
 }
