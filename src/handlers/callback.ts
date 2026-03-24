@@ -83,7 +83,7 @@ async function sendMessageToClaude(
   chatId: number,
   auditAction: string
 ): Promise<void> {
-  if (session.isRunning) {
+  if (session.isProcessing) {
     console.log("Interrupting current query for button response");
     await session.stop();
     await new Promise((resolve) => setTimeout(resolve, 100));

@@ -76,7 +76,7 @@ export async function handleStop(ctx: Context): Promise<void> {
   }
 
   const session = sessionManager.getSession(chatId!, threadId);
-  if (session.isRunning) {
+  if (session.isProcessing) {
     const result = await session.stop();
     if (result) {
       await Bun.sleep(100);
@@ -120,11 +120,12 @@ export async function handleStatus(ctx: Context): Promise<void> {
   }
 
   // Query status
-  if (session.isRunning) {
+  if (session.isProcessing) {
     const elapsed = session.queryStarted
       ? Math.floor((Date.now() - session.queryStarted.getTime()) / 1000)
       : 0;
-    lines.push(`🔄 Query: Running (${elapsed}s)`);
+    const phase = session.isRunning ? "Running" : "Preparing";
+    lines.push(`🔄 Query: ${phase} (${elapsed}s)`);
     if (session.currentTool) {
       lines.push(`   └─ ${session.currentTool}`);
     }
@@ -223,7 +224,7 @@ export async function handleRetry(ctx: Context): Promise<void> {
   }
 
   // Check if something is already running
-  if (session.isRunning) {
+  if (session.isProcessing) {
     await ctx.reply("⏳ A query is already running. Use /stop first.");
     return;
   }

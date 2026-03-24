@@ -37,6 +37,14 @@ describe("session state-machine transitions", () => {
     expect(isQueryRunning(state)).toBe(false);
   });
 
+  test("BUG soma-ps2x: preparing is processing but not yet running", () => {
+    const state = startProcessingTransition(createInitialSessionRuntimeState());
+
+    expect(state.queryState).toBe("preparing");
+    expect(isQueryProcessing(state)).toBe(true);
+    expect(isQueryRunning(state)).toBe(false);
+  });
+
   test("marks stop request when stopping running and preparing queries", () => {
     let state = createInitialSessionRuntimeState();
     state = startQueryTransition(startProcessingTransition(state));
