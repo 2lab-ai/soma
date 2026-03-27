@@ -23,4 +23,5 @@ export { handleVoice } from "./voice";
 export { handlePhoto } from "./photo";
 export { handleDocument } from "./document";
 export { handleCallback } from "./callback";
+export { handleGroupMembership } from "./group-membership";
 export { StreamingState, createStatusCallback } from "./streaming";

@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import { type ChatType, shouldRespond } from "../../security";
+import { type ChatType, shouldRespondInChat } from "../../security";
 import { auditLogRateLimit } from "../../utils/audit";
 import { sendSystemMessage } from "../../utils/system-message";
 import {
@@ -31,7 +31,8 @@ export async function runInboundGuard(
     ctx.message?.reply_to_message?.from?.is_bot &&
     ctx.message?.reply_to_message?.from?.username === botUsername
   );
-  if (!shouldRespond(chatType, message, botUsername, isReplyToBot)) {
+  const chatId = ctx.chat?.id;
+  if (!chatId || !shouldRespondInChat(chatId, chatType, message, botUsername, isReplyToBot)) {
     return null;
   }
 

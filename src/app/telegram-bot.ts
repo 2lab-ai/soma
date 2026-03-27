@@ -23,6 +23,7 @@ import {
   handlePhoto,
   handleDocument,
   handleCallback,
+  handleGroupMembership,
 } from "../handlers";
 import { sessionManager } from "../core/session/session-manager";
 
@@ -132,6 +133,10 @@ export async function registerBotCommands(bot: Bot<Context>): Promise<void> {
 }
 
 export function registerBotHandlers(bot: Bot<Context>): void {
+  // Group membership detection — must be registered before message handlers
+  // Trace: docs/telegram-group-session/trace.md, Scenarios 1-3
+  bot.on("my_chat_member", handleGroupMembership);
+
   bot.on("message:text", handleText);
   bot.on("message:voice", handleVoice);
   bot.on("message:photo", handlePhoto);
