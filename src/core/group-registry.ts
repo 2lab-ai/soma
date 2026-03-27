@@ -37,9 +37,16 @@ export class GroupRegistry {
     }
     this.registeredGroups.add(chatId);
     const persisted = this.saveToDisk();
+    if (!persisted) {
+      // Roll back: memory must match disk to prevent ghost entries on restart
+      this.registeredGroups.delete(chatId);
+      console.error(
+        `[GroupRegistry] ROLLED BACK register of group ${chatId} — disk write failed`
+      );
+      return false;
+    }
     console.log(
-      `[GroupRegistry] Registered group ${chatId} (total: ${this.registeredGroups.size})` +
-        (persisted ? "" : " [WARNING: NOT PERSISTED TO DISK]")
+      `[GroupRegistry] Registered group ${chatId} (total: ${this.registeredGroups.size})`
     );
     return true;
   }
@@ -54,9 +61,16 @@ export class GroupRegistry {
     }
     this.registeredGroups.delete(chatId);
     const persisted = this.saveToDisk();
+    if (!persisted) {
+      // Roll back: re-add to memory so state matches stale disk file
+      this.registeredGroups.add(chatId);
+      console.error(
+        `[GroupRegistry] ROLLED BACK unregister of group ${chatId} — disk write failed`
+      );
+      return false;
+    }
     console.log(
-      `[GroupRegistry] Unregistered group ${chatId} (total: ${this.registeredGroups.size})` +
-        (persisted ? "" : " [WARNING: NOT PERSISTED TO DISK]")
+      `[GroupRegistry] Unregistered group ${chatId} (total: ${this.registeredGroups.size})`
     );
     return true;
   }

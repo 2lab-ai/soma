@@ -25,6 +25,7 @@ function cleanupTestFile(): void {
  */
 function shouldRespondInChat(
   registry: GroupRegistry,
+  staticGroups: number[],
   chatId: number,
   chatType: string | undefined,
   messageText: string | undefined,
@@ -33,6 +34,12 @@ function shouldRespondInChat(
 ): boolean {
   if (chatType === "private") return true;
   if (chatType === "group" || chatType === "supergroup") {
+    // Static groups always use legacy mention-based behavior
+    if (staticGroups.includes(chatId)) {
+      if (messageText && messageText.includes(`@${botUsername}`)) return true;
+      if (isReplyToBot) return true;
+      return false;
+    }
     if (registry.isRegistered(chatId)) return true;
     // Fall back to legacy: mention or reply
     if (messageText && messageText.includes(`@${botUsername}`)) return true;
@@ -131,45 +138,53 @@ describe("Security — Group Registry Integration", () => {
       registry.register(-1001234567890);
 
       expect(
-        shouldRespondInChat(registry, -1001234567890, "supergroup", "hello world", "testbot", false)
+        shouldRespondInChat(registry, STATIC_GROUPS, -1001234567890, "supergroup", "hello world", "testbot", false)
       ).toBe(true);
     });
 
     test("Trace S4: unregistered group with mention responds (fallback)", () => {
       expect(
-        shouldRespondInChat(registry, -9999, "supergroup", "hello @testbot world", "testbot", false)
+        shouldRespondInChat(registry, STATIC_GROUPS, -9999, "supergroup", "hello @testbot world", "testbot", false)
       ).toBe(true);
     });
 
     test("Trace S4: unregistered group with reply to bot responds (fallback)", () => {
       expect(
-        shouldRespondInChat(registry, -9999, "supergroup", "hello", "testbot", true)
+        shouldRespondInChat(registry, STATIC_GROUPS, -9999, "supergroup", "hello", "testbot", true)
       ).toBe(true);
     });
 
     test("Trace S4: unregistered group without mention does NOT respond", () => {
       expect(
-        shouldRespondInChat(registry, -9999, "supergroup", "hello world", "testbot", false)
+        shouldRespondInChat(registry, STATIC_GROUPS, -9999, "supergroup", "hello world", "testbot", false)
       ).toBe(false);
     });
 
     test("Trace S6: static group without mention does NOT respond (legacy behavior)", () => {
-      // Static groups are NOT in GroupRegistry → legacy mention-based logic
+      // Static groups use legacy mention-based logic, even if dynamically registered
       expect(
-        shouldRespondInChat(registry, -1005555555555, "supergroup", "hello", "testbot", false)
+        shouldRespondInChat(registry, STATIC_GROUPS, -1005555555555, "supergroup", "hello", "testbot", false)
+      ).toBe(false);
+    });
+
+    test("Trace S6: static group with dynamic entry still uses legacy behavior", () => {
+      // Even if a static group has a stale dynamic registry entry, static takes precedence
+      registry.register(-1005555555555);
+      expect(
+        shouldRespondInChat(registry, STATIC_GROUPS, -1005555555555, "supergroup", "hello", "testbot", false)
       ).toBe(false);
     });
 
     test("private chat always responds", () => {
       expect(
-        shouldRespondInChat(registry, 12345, "private", "hello", "testbot", false)
+        shouldRespondInChat(registry, STATIC_GROUPS, 12345, "private", "hello", "testbot", false)
       ).toBe(true);
     });
 
     test("channel never responds", () => {
       registry.register(-100);
       expect(
-        shouldRespondInChat(registry, -100, "channel", "hello", "testbot", false)
+        shouldRespondInChat(registry, STATIC_GROUPS, -100, "channel", "hello", "testbot", false)
       ).toBe(false);
     });
   });
