@@ -8,9 +8,10 @@
  * Trace: docs/telegram-group-session/trace.md, Scenarios 1-6
  */
 
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "fs";
 
 const DEFAULT_PERSISTENCE_PATH = "/tmp/soma-groups.json";
+const WRITE_TMP_SUFFIX = ".tmp";
 
 interface PersistedGroupData {
   groups: number[];
@@ -35,9 +36,10 @@ export class GroupRegistry {
       return false;
     }
     this.registeredGroups.add(chatId);
-    this.saveToDisk();
+    const persisted = this.saveToDisk();
     console.log(
-      `[GroupRegistry] Registered group ${chatId} (total: ${this.registeredGroups.size})`
+      `[GroupRegistry] Registered group ${chatId} (total: ${this.registeredGroups.size})` +
+        (persisted ? "" : " [WARNING: NOT PERSISTED TO DISK]")
     );
     return true;
   }
@@ -51,9 +53,10 @@ export class GroupRegistry {
       return false;
     }
     this.registeredGroups.delete(chatId);
-    this.saveToDisk();
+    const persisted = this.saveToDisk();
     console.log(
-      `[GroupRegistry] Unregistered group ${chatId} (total: ${this.registeredGroups.size})`
+      `[GroupRegistry] Unregistered group ${chatId} (total: ${this.registeredGroups.size})` +
+        (persisted ? "" : " [WARNING: NOT PERSISTED TO DISK]")
     );
     return true;
   }
@@ -92,14 +95,21 @@ export class GroupRegistry {
         return;
       }
 
+      let skipped = 0;
       for (const groupId of data.groups) {
-        if (typeof groupId === "number") {
+        if (typeof groupId === "number" && Number.isFinite(groupId)) {
           this.registeredGroups.add(groupId);
+        } else {
+          skipped++;
+          console.warn(
+            `[GroupRegistry] Skipping invalid group entry: ${JSON.stringify(groupId)}`
+          );
         }
       }
 
       console.log(
-        `[GroupRegistry] Loaded ${this.registeredGroups.size} groups from disk`
+        `[GroupRegistry] Loaded ${this.registeredGroups.size} groups from disk` +
+          (skipped > 0 ? ` (${skipped} invalid entries skipped)` : "")
       );
     } catch (error) {
       console.error("[GroupRegistry] Failed to load from disk:", error);
@@ -111,16 +121,22 @@ export class GroupRegistry {
    * Save current groups to disk.
    * Trace S5, Section 3b: Set → Array → JSON → writeFileSync.
    */
-  private saveToDisk(): void {
+  private saveToDisk(): boolean {
     try {
       const data: PersistedGroupData = {
         groups: Array.from(this.registeredGroups),
         updatedAt: new Date().toISOString(),
       };
-      writeFileSync(this.persistencePath, JSON.stringify(data, null, 2));
+      const tmpPath = this.persistencePath + WRITE_TMP_SUFFIX;
+      writeFileSync(tmpPath, JSON.stringify(data, null, 2));
+      renameSync(tmpPath, this.persistencePath);
+      return true;
     } catch (error) {
-      console.error("[GroupRegistry] Failed to save to disk:", error);
-      // Non-critical — in-memory state preserved
+      console.error(
+        `[GroupRegistry] CRITICAL: Failed to persist ${this.registeredGroups.size} groups to ${this.persistencePath}:`,
+        error
+      );
+      return false;
     }
   }
 }
