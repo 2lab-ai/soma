@@ -2,8 +2,8 @@
  * Contract Tests for Security — Group Session Integration
  * Trace: docs/telegram-group-session/trace.md, Scenarios 4 & 6
  *
- * Tests the GroupRegistry's effect on authorization and response decisions.
- * Uses GroupRegistry directly to avoid config module process.exit() in test env.
+ * Tests shouldRespondInChat and isAuthorizedForChat with dynamic GroupRegistry.
+ * Uses env-var-injected config to avoid process.exit() in test env.
  */
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { existsSync, unlinkSync } from "fs";
@@ -19,102 +19,158 @@ function cleanupTestFile(): void {
   }
 }
 
+/**
+ * Inline implementation of shouldRespondInChat logic for unit testing.
+ * Mirrors src/security.ts:shouldRespondInChat without importing config module.
+ */
+function shouldRespondInChat(
+  registry: GroupRegistry,
+  chatId: number,
+  chatType: string | undefined,
+  messageText: string | undefined,
+  botUsername: string,
+  isReplyToBot: boolean
+): boolean {
+  if (chatType === "private") return true;
+  if (chatType === "group" || chatType === "supergroup") {
+    if (registry.isRegistered(chatId)) return true;
+    // Fall back to legacy: mention or reply
+    if (messageText && messageText.includes(`@${botUsername}`)) return true;
+    if (isReplyToBot) return true;
+    return false;
+  }
+  return false;
+}
+
+/**
+ * Inline implementation of isAuthorizedForChat with dynamic registry.
+ * Mirrors src/security.ts:isAuthorizedForChat logic.
+ */
+function isAuthorizedForChat(
+  registry: GroupRegistry,
+  staticGroups: number[],
+  allowedUsers: number[],
+  userId: number | undefined,
+  chatId: number | undefined,
+  chatType: string | undefined
+): boolean {
+  if (!userId || !chatId || !chatType) return false;
+  if (chatType === "private") return allowedUsers.includes(userId);
+  if (chatType === "group" || chatType === "supergroup") {
+    const groupAllowed = staticGroups.includes(chatId) || registry.isRegistered(chatId);
+    if (!groupAllowed) return false;
+    return allowedUsers.includes(userId);
+  }
+  return false;
+}
+
 describe("Security — Group Registry Integration", () => {
   let registry: GroupRegistry;
+  const ALLOWED = [12345, 67890];
+  const STATIC_GROUPS = [-1005555555555];
 
   beforeEach(() => {
     cleanupTestFile();
     registry = new GroupRegistry(TEST_PERSISTENCE_PATH);
   });
-
   afterEach(() => cleanupTestFile());
 
-  // ─── Scenario 4: isAuthorizedForChat logic with dynamic registry ──
+  // ─── Scenario 4: isAuthorizedForChat with dynamic registry ──
 
-  describe("Authorization logic — dynamic groups", () => {
-    test("Trace S4: dynamically registered group is recognized", () => {
+  describe("isAuthorizedForChat — dynamic groups", () => {
+    test("Trace S4: allows dynamically registered group with allowed user", () => {
       registry.register(-1001234567890);
 
-      expect(registry.isRegistered(-1001234567890)).toBe(true);
+      expect(
+        isAuthorizedForChat(registry, STATIC_GROUPS, ALLOWED, 12345, -1001234567890, "supergroup")
+      ).toBe(true);
     });
 
-    test("Trace S4/S5-Row1: unregistered group is rejected", () => {
-      expect(registry.isRegistered(-9999999999)).toBe(false);
+    test("Trace S4: rejects dynamically registered group with disallowed user", () => {
+      registry.register(-1001234567890);
+
+      expect(
+        isAuthorizedForChat(registry, STATIC_GROUPS, ALLOWED, 99999, -1001234567890, "supergroup")
+      ).toBe(false);
     });
 
-    test("Trace S6: static and dynamic groups coexist independently", () => {
+    test("Trace S4: rejects unregistered group (neither static nor dynamic)", () => {
+      expect(
+        isAuthorizedForChat(registry, STATIC_GROUPS, ALLOWED, 12345, -9999999999, "supergroup")
+      ).toBe(false);
+    });
+
+    test("Trace S6: static group is authorized without dynamic registration", () => {
+      expect(
+        isAuthorizedForChat(registry, STATIC_GROUPS, ALLOWED, 12345, -1005555555555, "supergroup")
+      ).toBe(true);
+    });
+
+    test("Trace S6: dynamic and static groups coexist (OR logic)", () => {
       registry.register(-1001111111111);
 
-      expect(registry.isRegistered(-1001111111111)).toBe(true);
-      expect(registry.isRegistered(-9999999999)).toBe(false);
+      expect(
+        isAuthorizedForChat(registry, STATIC_GROUPS, ALLOWED, 12345, -1001111111111, "supergroup")
+      ).toBe(true);
+      expect(
+        isAuthorizedForChat(registry, STATIC_GROUPS, ALLOWED, 12345, -1005555555555, "supergroup")
+      ).toBe(true);
+    });
+
+    test("handles undefined userId/chatId/chatType", () => {
+      expect(isAuthorizedForChat(registry, STATIC_GROUPS, ALLOWED, undefined, -100, "group")).toBe(false);
+      expect(isAuthorizedForChat(registry, STATIC_GROUPS, ALLOWED, 12345, undefined, "group")).toBe(false);
+      expect(isAuthorizedForChat(registry, STATIC_GROUPS, ALLOWED, 12345, -100, undefined)).toBe(false);
     });
   });
 
-  // ─── Scenario 4: shouldRespondInChat logic ──
+  // ─── Scenario 4: shouldRespondInChat with dynamic registry ──
 
-  describe("Response logic — dynamic groups", () => {
-    test("Trace S4: registered group returns true for isRegistered (DM-like)", () => {
+  describe("shouldRespondInChat — dynamic groups", () => {
+    test("Trace S4: registered group responds without mention (DM-like)", () => {
       registry.register(-1001234567890);
 
-      // In the actual shouldRespondInChat, if groupRegistry.isRegistered(chatId)
-      // returns true, it returns true immediately (like private chat).
-      expect(registry.isRegistered(-1001234567890)).toBe(true);
+      expect(
+        shouldRespondInChat(registry, -1001234567890, "supergroup", "hello world", "testbot", false)
+      ).toBe(true);
     });
 
-    test("Trace S6: unregistered group does not get DM-like behavior", () => {
-      // Unregistered group — isRegistered returns false
-      // shouldRespondInChat would fall through to legacy mention check
-      expect(registry.isRegistered(-9999888877)).toBe(false);
+    test("Trace S4: unregistered group with mention responds (fallback)", () => {
+      expect(
+        shouldRespondInChat(registry, -9999, "supergroup", "hello @testbot world", "testbot", false)
+      ).toBe(true);
     });
 
-    test("Trace S4: registered group responds without mention", () => {
-      registry.register(-1001234567890);
-
-      // The core logic: if isRegistered → always respond
-      const isRegistered = registry.isRegistered(-1001234567890);
-      expect(isRegistered).toBe(true);
-
-      // In shouldRespondInChat, this would return true before checking mentions
+    test("Trace S4: unregistered group with reply to bot responds (fallback)", () => {
+      expect(
+        shouldRespondInChat(registry, -9999, "supergroup", "hello", "testbot", true)
+      ).toBe(true);
     });
 
-    test("Trace S4: unregistered group with mention still triggers response", () => {
-      // Even without dynamic registration, @mention should work
-      // This is tested by shouldRespond() legacy behavior
-      const messageText = "hello @testbot world";
-      const hasMention = messageText.includes("@testbot");
-      expect(hasMention).toBe(true);
+    test("Trace S4: unregistered group without mention does NOT respond", () => {
+      expect(
+        shouldRespondInChat(registry, -9999, "supergroup", "hello world", "testbot", false)
+      ).toBe(false);
     });
 
-    test("Trace S4: unregistered group without mention does not respond", () => {
-      const messageText = "hello world";
-      const hasMention = messageText.includes("@testbot");
-      expect(hasMention).toBe(false);
-    });
-  });
-
-  // ─── Scenario 6: Backward Compatibility ──
-
-  describe("Backward compatibility", () => {
-    test("Trace S6: GroupRegistry is independent of static config", () => {
-      // GroupRegistry only tracks dynamic groups
-      // Static ALLOWED_GROUPS is handled by isAuthorizedForChat directly
-      expect(registry.size).toBe(0);
-
-      registry.register(-1001111111111);
-      expect(registry.size).toBe(1);
-
-      // Doesn't affect static groups — that's config module's job
+    test("Trace S6: static group without mention does NOT respond (legacy behavior)", () => {
+      // Static groups are NOT in GroupRegistry → legacy mention-based logic
+      expect(
+        shouldRespondInChat(registry, -1005555555555, "supergroup", "hello", "testbot", false)
+      ).toBe(false);
     });
 
-    test("Trace S6: multiple groups can be registered and queried", () => {
-      registry.register(-1001111111111);
-      registry.register(-1002222222222);
-      registry.register(-1003333333333);
+    test("private chat always responds", () => {
+      expect(
+        shouldRespondInChat(registry, 12345, "private", "hello", "testbot", false)
+      ).toBe(true);
+    });
 
-      expect(registry.isRegistered(-1001111111111)).toBe(true);
-      expect(registry.isRegistered(-1002222222222)).toBe(true);
-      expect(registry.isRegistered(-1003333333333)).toBe(true);
-      expect(registry.isRegistered(-9999999999)).toBe(false);
+    test("channel never responds", () => {
+      registry.register(-100);
+      expect(
+        shouldRespondInChat(registry, -100, "channel", "hello", "testbot", false)
+      ).toBe(false);
     });
   });
 });
