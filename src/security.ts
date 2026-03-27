@@ -18,6 +18,7 @@ import {
   RESPOND_WITHOUT_MENTION,
   TEMP_PATHS,
 } from "./config";
+import { groupRegistry } from "./core/group-registry";
 
 // ============== Rate Limiter ==============
 
@@ -159,8 +160,11 @@ export type ChatType = "private" | "group" | "supergroup" | "channel";
  *
  * Rules:
  * - Private chat: user must be in ALLOWED_USERS
- * - Group/Supergroup: group must be in ALLOWED_GROUPS AND user must be in ALLOWED_USERS
+ * - Group/Supergroup: group must be in ALLOWED_GROUPS (static) OR GroupRegistry (dynamic),
+ *   AND user must be in ALLOWED_USERS
  * - Channel: not supported
+ *
+ * Trace: docs/telegram-group-session/trace.md, Scenario 4, Section 3a
  */
 export function isAuthorizedForChat(
   userId: number | undefined,
@@ -174,9 +178,11 @@ export function isAuthorizedForChat(
     return ALLOWED_USERS.includes(userId);
   }
 
-  // Group/Supergroup: group must be allowed AND user must be allowed
+  // Group/Supergroup: group must be allowed (static OR dynamic) AND user must be allowed
   if (chatType === "group" || chatType === "supergroup") {
-    if (!ALLOWED_GROUPS.includes(chatId)) return false;
+    const groupAllowed =
+      ALLOWED_GROUPS.includes(chatId) || groupRegistry.isRegistered(chatId);
+    if (!groupAllowed) return false;
     return ALLOWED_USERS.includes(userId);
   }
 
@@ -221,6 +227,46 @@ export function shouldRespond(
 
     // Otherwise, check if RESPOND_WITHOUT_MENTION is enabled
     return RESPOND_WITHOUT_MENTION;
+  }
+
+  // Channels: never respond
+  return false;
+}
+
+/**
+ * Check if the bot should respond in a specific chat, with dynamic group awareness.
+ *
+ * For dynamically registered groups (via GroupRegistry), always respond — like DM.
+ * For static ALLOWED_GROUPS, use legacy behavior (mention/reply required).
+ *
+ * Trace: docs/telegram-group-session/trace.md, Scenario 4, Section 3a
+ *
+ * @param chatId - The chat ID
+ * @param chatType - The type of chat
+ * @param messageText - The message text
+ * @param botUsername - The bot's username (without @)
+ * @param isReplyToBot - Whether the message is a reply to bot's message
+ */
+export function shouldRespondInChat(
+  chatId: number,
+  chatType: ChatType | undefined,
+  messageText: string | undefined,
+  botUsername: string,
+  isReplyToBot: boolean
+): boolean {
+  // Always respond in private chats
+  if (chatType === "private") {
+    return true;
+  }
+
+  // Groups/Supergroups: dynamically registered groups respond like DM
+  if (chatType === "group" || chatType === "supergroup") {
+    if (groupRegistry.isRegistered(chatId)) {
+      return true;
+    }
+
+    // Fall back to legacy behavior for static groups
+    return shouldRespond(chatType, messageText, botUsername, isReplyToBot);
   }
 
   // Channels: never respond

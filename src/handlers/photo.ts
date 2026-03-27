@@ -11,7 +11,7 @@ import {
   type ChatType,
   isAuthorizedForChat,
   rateLimiter,
-  shouldRespond,
+  shouldRespondInChat,
 } from "../security";
 import { auditLog, auditLogRateLimit } from "../utils/audit";
 import { addTimestamp } from "../utils/interrupt";
@@ -160,7 +160,7 @@ export async function handlePhoto(ctx: Context): Promise<void> {
     ctx.message?.reply_to_message?.from?.is_bot &&
     ctx.message?.reply_to_message?.from?.username === botUsername
   );
-  if (!shouldRespond(chatType, caption, botUsername, isReplyToBot)) {
+  if (!shouldRespondInChat(chatId, chatType, caption, botUsername, isReplyToBot)) {
     return;
   }
 
