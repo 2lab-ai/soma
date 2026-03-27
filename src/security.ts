@@ -261,11 +261,17 @@ export function shouldRespondInChat(
 
   // Groups/Supergroups: dynamically registered groups respond like DM
   if (chatType === "group" || chatType === "supergroup") {
+    // Static groups always use legacy mention-based behavior, even if
+    // a stale dynamic entry exists (backward compatibility guarantee).
+    if (ALLOWED_GROUPS.includes(chatId)) {
+      return shouldRespond(chatType, messageText, botUsername, isReplyToBot);
+    }
+
     if (groupRegistry.isRegistered(chatId)) {
       return true;
     }
 
-    // Fall back to legacy behavior for static groups
+    // Unregistered group: fall back to legacy behavior
     return shouldRespond(chatType, messageText, botUsername, isReplyToBot);
   }
 
