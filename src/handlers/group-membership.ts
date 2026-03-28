@@ -121,8 +121,8 @@ async function handleBotJoinedGroup(
     return;
   }
 
-  // Store pending confirmation
-  pendingGroupStore.add({
+  // Store pending confirmation (rollback-safe)
+  const stored = pendingGroupStore.add({
     chatId,
     chatTitle,
     adderId,
@@ -130,6 +130,11 @@ async function handleBotJoinedGroup(
     dmMessageId,
     createdAt: Date.now(),
   });
+  if (!stored) {
+    console.error(
+      `[GroupMembership] Failed to persist pending confirmation for group ${chatId}`
+    );
+  }
 
   console.log(
     `[GroupMembership] Pending confirmation sent for group ${chatId} to owner ${ownerId}`
