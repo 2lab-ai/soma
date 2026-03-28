@@ -159,7 +159,7 @@ describe("ClaudeProviderAdapter", () => {
     });
   });
 
-  test("S3: error result variant emits done:failed with errorMessage", async () => {
+  test("S3: error result variant emits done:failed with errorMessage and throws", async () => {
     const mockEvents: SDKMessage[] = [
       {
         type: "result",
@@ -181,15 +181,25 @@ describe("ClaudeProviderAdapter", () => {
     const events: ProviderEvent[] = [];
 
     const handle = await adapter.startQuery(createInput("q-err"));
-    await adapter.streamEvents(handle, (event) => {
-      events.push(event);
-    });
 
-    const doneEvent = events.find((event) => event.type === "done");
-    expect(doneEvent).toBeDefined();
-    expect(doneEvent!.reason).toBe("failed");
-    expect((doneEvent as any).errorMessage).toContain("billing_error");
-    expect((doneEvent as any).errorMessage).toContain("quota_exceeded");
+    // Error result must throw so callers can handle it
+    try {
+      await adapter.streamEvents(handle, (event) => {
+        events.push(event);
+      });
+      throw new Error("Expected adapter to throw on error result");
+    } catch (error) {
+      expect(error instanceof NormalizedProviderError).toBe(true);
+      const normalized = error as NormalizedProviderError;
+      expect(normalized.message).toContain("billing_error");
+    }
+
+    // done:failed event should be emitted exactly once (no duplicate)
+    const doneEvents = events.filter((event) => event.type === "done");
+    expect(doneEvents.length).toBe(1);
+    expect(doneEvents[0]!.reason).toBe("failed");
+    expect((doneEvents[0] as any).errorMessage).toContain("billing_error");
+    expect((doneEvents[0] as any).errorMessage).toContain("quota_exceeded");
   });
 
   test("S3: success result variant emits done:completed", async () => {

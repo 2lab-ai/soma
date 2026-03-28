@@ -7,7 +7,7 @@ import type {
   ProviderResumeInput,
   ProviderResumeResult,
 } from "./types.models";
-import { normalizeProviderError } from "./error-normalizer";
+import { NormalizedProviderError, normalizeProviderError } from "./error-normalizer";
 import { resolveContextWindowSize } from "../core/session/session-helpers";
 
 type ClaudeQueryFactory = (payload: {
@@ -108,6 +108,7 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
     }
 
     const input = active.input;
+    let doneEmitted = false;
 
     try {
       const queryInstance = this.queryFactory({
@@ -246,7 +247,16 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
           const resultSubtype = (event as unknown as { subtype?: string }).subtype;
           const resultErrors = (event as unknown as { errors?: string[] }).errors;
           const resultIsError = (event as unknown as { is_error?: boolean }).is_error;
-          const isErrorResult = resultSubtype !== undefined && resultSubtype !== "success";
+          // Allowlist of known SDK error subtypes — safer than denylist as
+          // future benign subtypes won't be misclassified as failures.
+          const SDK_ERROR_SUBTYPES = new Set([
+            "error_during_execution",
+            "error_max_turns",
+            "error_tool_execution",
+          ]);
+          const isErrorResult = resultSubtype !== undefined && (
+            SDK_ERROR_SUBTYPES.has(resultSubtype) || resultIsError === true
+          );
 
           if (isErrorResult) {
             console.error(`[SDK-RESULT-ERROR] provider=${this.providerId}, subtype=${resultSubtype}, is_error=${resultIsError}, errors=${JSON.stringify(resultErrors ?? [])}`);
@@ -320,9 +330,30 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
               ? { errorMessage: resultErrors.join("; ") }
               : {}),
           });
+          doneEmitted = true;
+
+          // Throw on error results so callers (query-flow.ts) can handle
+          // through normal error pipeline (rate-limit, retry, etc.)
+          if (isErrorResult) {
+            const errorMsg = resultErrors?.length
+              ? resultErrors.join("; ")
+              : `SDK result error: ${resultSubtype}`;
+            throw normalizeProviderError(
+              this.providerId,
+              new Error(errorMsg)
+            );
+          }
         }
       }
     } catch (error) {
+      // If done:failed was already emitted from error result path, skip duplicate
+      if (doneEmitted) {
+        const normalizedError = error instanceof NormalizedProviderError
+          ? error
+          : normalizeProviderError(this.providerId, error);
+        throw normalizedError;
+      }
+
       const normalizedError = normalizeProviderError(this.providerId, error);
 
       if (normalizedError.code === "RATE_LIMIT") {

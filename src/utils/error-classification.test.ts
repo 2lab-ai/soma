@@ -249,11 +249,18 @@ describe("extractErrorDetails — SDK/Provider fields (S1 contract test)", () =>
     expect(details.sdkErrors).toEqual(["rate limit exceeded", "billing error"]);
   });
 
-  test("ignores non-string entries in errors array", () => {
+  test("converts non-string entries in errors array", () => {
     const err = new Error("mixed errors") as Error & { errors: unknown[] };
-    err.errors = ["valid error", 123, null, "another error"];
+    err.errors = ["valid error", 123, null, "another error", { message: "structured error" }];
     const details = extractErrorDetails(err);
-    expect(details.sdkErrors).toEqual(["valid error", "another error"]);
+    expect(details.sdkErrors).toEqual(["valid error", "123", "another error", "structured error"]);
+  });
+
+  test("skips Node.js system error codes (ENOENT, EACCES)", () => {
+    const err = new Error("no such file") as Error & { code: string };
+    err.code = "ENOENT";
+    const details = extractErrorDetails(err);
+    expect(details.errorCode).toBeUndefined();
   });
 
   test("does not extract SDK fields from plain Error", () => {

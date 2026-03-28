@@ -210,7 +210,12 @@ export function extractErrorDetails(error: unknown): ErrorDetails {
     details.statusCode = anyError.status;
   }
   if (typeof anyError.code === "string") {
-    details.errorCode = anyError.code;
+    // Skip Node.js system error codes (ENOENT, EACCES, etc.) — those are
+    // handled by hint logic below. Only capture SDK/Provider error codes.
+    const code = anyError.code;
+    if (typeof code === "string" && !/^E[A-Z]{2,}/.test(code)) {
+      details.errorCode = code;
+    }
   }
   if (typeof anyError.providerId === "string") {
     details.providerId = anyError.providerId;
@@ -222,7 +227,16 @@ export function extractErrorDetails(error: unknown): ErrorDetails {
     details.requestId = anyError.request_id;
   }
   if (Array.isArray(anyError.errors)) {
-    details.sdkErrors = anyError.errors.filter((e): e is string => typeof e === "string");
+    details.sdkErrors = anyError.errors
+      .map((e: unknown) => {
+        if (typeof e === "string") return e;
+        if (e && typeof e === "object" && "message" in e && typeof (e as { message: unknown }).message === "string") {
+          return (e as { message: string }).message;
+        }
+        if (e !== null && e !== undefined) return String(e);
+        return null;
+      })
+      .filter((e): e is string => e !== null);
   }
 
   // Extract exit code from message
@@ -286,7 +300,14 @@ export function formatErrorForLog(error: unknown): string {
     lines.push(`Stderr: ${details.stderr}`);
   }
   if (details.cause) {
-    lines.push(`Cause: ${JSON.stringify(details.cause)}`);
+    try {
+      const causeStr = details.cause instanceof Error
+        ? `${details.cause.name}: ${details.cause.message}`
+        : JSON.stringify(details.cause);
+      lines.push(`Cause: ${causeStr}`);
+    } catch {
+      lines.push(`Cause: [unserializable: ${typeof details.cause}]`);
+    }
   }
   if (details.stack) {
     lines.push(`Stack:\n${details.stack}`);
@@ -316,9 +337,7 @@ export function formatErrorForUser(error: unknown): string {
   if (details.retryable !== undefined) {
     userMessage += ` | Retryable: ${details.retryable}`;
   }
-  if (details.requestId) {
-    userMessage += `\nRequest ID: ${details.requestId}`;
-  }
+  // requestId is internal diagnostic — only in formatErrorForLog, not user-facing
   if (details.sdkErrors?.length) {
     userMessage += `\n\nSDK errors:\n${details.sdkErrors.map((e) => `  - ${e}`).join("\n")}`;
   }
