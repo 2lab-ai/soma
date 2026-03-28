@@ -63,6 +63,22 @@ export class SteeringManager {
     return formatted;
   }
 
+  /**
+   * Consume steering buffer, returning both formatted text AND original messageIds.
+   * Used by auto-continue loop to update emoji reactions on consumed messages.
+   */
+  consumeSteeringWithIds(): { formatted: string; messageIds: number[] } | null {
+    if (!this.steeringBuffer.length) {
+      return null;
+    }
+    const messageIds = this.steeringBuffer
+      .map((m) => m.messageId)
+      .filter((id): id is number => id !== undefined);
+    const formatted = formatSteeringMessages(this.steeringBuffer);
+    this.steeringBuffer = [];
+    return { formatted, messageIds };
+  }
+
   peekSteering(): string | null {
     if (!this.steeringBuffer.length) return null;
     return formatSteeringMessages(this.steeringBuffer);

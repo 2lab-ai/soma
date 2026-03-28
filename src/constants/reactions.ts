@@ -4,15 +4,17 @@
  * IMPORTANT: Telegram only supports a limited set of emojis for reactions.
  * See: https://core.telegram.org/api/reactions
  *
- * State transitions:
- * - User message: READ → PROCESSING → COMPLETE (or error state)
- * - Steering: READ → STEERING_BUFFERED → STEERING_DELIVERED → COMPLETE
+ * Unified State Machine (single emoji per message, each transition replaces previous):
+ * - Normal:    READ(👀) → PROCESSING(🔥) → COMPLETE(👍)
+ * - Steering:  READ(👀) → BUFFERED(👌)   → DELIVERED(🙏) → COMPLETE(👍)
+ * - Interrupt:              → INTERRUPTED(👎)
+ * - Error:                  → ERROR_MODEL(💩) or ERROR_SOMA(😱)
  */
 
 export const Reactions = {
   // User message states
   READ: "👀", // soma received the message
-  PROCESSING: "🤔", // model is processing (thinking)
+  PROCESSING: "🔥", // model is processing (streaming response)
   COMPLETE: "👍", // successfully processed
 
   // Steering states
@@ -24,10 +26,6 @@ export const Reactions = {
   ERROR_SOMA: "😱", // soma/bot exception
   ERROR_MODEL: "💩", // model/Claude exception
   CANCELLED: "😢", // cancelled from queue (buffer overflow)
-
-  // Legacy (to be removed)
-  EVICTED: "🤔", // steering buffer overflow (deprecated → use CANCELLED)
-  FAIL: "👎", // generic failure (deprecated → use specific errors)
 } as const;
 
 export type ReactionType = keyof typeof Reactions;

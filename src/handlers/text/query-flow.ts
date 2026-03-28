@@ -34,10 +34,18 @@ export interface QueryFlowParams {
   deliverInboundReaction: (reaction: string) => Promise<void>;
 }
 
+// Marker returned by interrupt-flow when steering messages remain in buffer.
+// When detected, skip the initial Claude query and go straight to auto-continue.
+const INTERRUPT_STEERING_MARKER = "[시스템: 인터럽트 후 대기 메시지 처리]";
+
 export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
   const { ctx, session, message, chatId, userId, username, deliverInboundReaction } =
     params;
-  session.lastMessage = message;
+  // Don't pollute lastMessage with synthetic interrupt marker (breaks /retry)
+  const isInterruptDrain = message === INTERRUPT_STEERING_MARKER;
+  if (!isInterruptDrain) {
+    session.lastMessage = message;
+  }
   const messageWithTimestamp = addTimestamp(message);
   const stopProcessing = session.startProcessing();
 
@@ -51,19 +59,26 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
   const MAX_RETRIES = 1;
 
   try {
+    // When interrupt drains steering, skip initial query — go straight to auto-continue loop
+    if (isInterruptDrain) {
+      console.log("[QUERY-FLOW] Interrupt drain mode: skipping initial query, entering auto-continue");
+    }
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const response = await session.sendMessageStreaming(
-          messageWithTimestamp,
-          statusCallback,
-          chatId
-        );
+        if (!isInterruptDrain) {
+          const response = await session.sendMessageStreaming(
+            messageWithTimestamp,
+            statusCallback,
+            chatId
+          );
 
-        await auditLog(userId, username, "TEXT", message, response);
+          await auditLog(userId, username, "TEXT", message, response);
 
-        try {
-          await deliverInboundReaction(Reactions.COMPLETE);
-        } catch {}
+          try {
+            await deliverInboundReaction(Reactions.COMPLETE);
+          } catch {}
+        } // end if (!isInterruptDrain)
 
         const MAX_AUTO_CONTINUE_ROUNDS = 5;
         let autoContinueRound = 0;
@@ -118,16 +133,29 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             `[AUTO-CONTINUE] Round ${autoContinueRound}: Processing ${steeringCount} pending message(s)`
           );
 
-          const steeringContent = session.consumeSteering();
+          const steeringResult = session.consumeSteeringWithIds();
           console.log(
-            `[AUTO-CONTINUE] Round ${autoContinueRound}: Consumed: "${steeringContent?.slice(0, 100)}..."`
+            `[AUTO-CONTINUE] Round ${autoContinueRound}: Consumed: "${steeringResult?.formatted.slice(0, 100)}..."`
           );
 
-          if (!steeringContent) {
+          if (!steeringResult) {
             console.warn(
-              "[AUTO-CONTINUE] consumeSteering returned null/empty despite hasSteering=true"
+              "[AUTO-CONTINUE] consumeSteeringWithIds returned null despite hasSteering=true"
             );
             break;
+          }
+
+          const { formatted: steeringContent, messageIds: steeringMsgIds } = steeringResult;
+
+          // Mark consumed steering messages as DELIVERED (👌 → 🙏)
+          for (const msgId of steeringMsgIds) {
+            try {
+              await ctx.api.setMessageReaction(chatId, msgId, [
+                { type: "emoji", emoji: Reactions.STEERING_DELIVERED },
+              ]);
+            } catch {
+              // Rate limited or not allowed — non-critical
+            }
           }
 
           try {
@@ -161,6 +189,16 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             console.log(
               `[AUTO-CONTINUE] Round ${autoContinueRound}: Follow-up complete, response length: ${followUpResponse.length}`
             );
+
+            // Mark consumed steering messages as COMPLETE (🙏 → 👍)
+            for (const msgId of steeringMsgIds) {
+              try {
+                await ctx.api.setMessageReaction(chatId, msgId, [
+                  { type: "emoji", emoji: Reactions.COMPLETE },
+                ]);
+              } catch {}
+            }
+
             await auditLog(
               userId,
               username,
@@ -174,6 +212,16 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
               `[AUTO-CONTINUE] Round ${autoContinueRound}: Follow-up FAILED:`,
               followUpError
             );
+
+            // Mark consumed steering messages as ERROR (🙏 → 💩)
+            for (const msgId of steeringMsgIds) {
+              try {
+                await ctx.api.setMessageReaction(chatId, msgId, [
+                  { type: "emoji", emoji: Reactions.ERROR_MODEL },
+                ]);
+              } catch {}
+            }
+
             await sendSystemMessage(
               ctx,
               "⚠️ 대기 중인 메시지 처리 실패. 다시 보내주세요."
@@ -413,11 +461,24 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
         if (session.hasSteeringMessages()) {
           const lostCount = session.getSteeringCount();
-          session.consumeSteering();
-          console.warn(`[STEERING] Cleared ${lostCount} message(s) due to error`);
-          await ctx.reply(
-            `⚠️ 에러로 인해 대기 중이던 ${lostCount}개 메시지가 처리되지 않았습니다. 다시 보내주세요.`
-          );
+          const preserved = session.consumeSteering();
+          if (preserved) {
+            // Preserve steering messages as context for next query instead of discarding
+            const existing = session.nextQueryContext || "";
+            session.nextQueryContext = existing
+              ? `${existing}\n[ERROR RECOVERY - ${lostCount} message(s)]\n${preserved}\n[END RECOVERY]`
+              : `[ERROR RECOVERY - ${lostCount} message(s)]\n${preserved}\n[END RECOVERY]`;
+            console.warn(
+              `[STEERING] Preserved ${lostCount} message(s) as nextQueryContext due to error`
+            );
+          }
+          try {
+            await ctx.reply(
+              `⚠️ 에러 발생. 대기 중이던 ${lostCount}개 메시지가 다음 요청에 자동 포함됩니다.`
+            );
+          } catch (notifyError) {
+            console.error("[STEERING] Failed to notify user of error recovery:", notifyError);
+          }
         }
 
         if (!(await handleAbortError(ctx, error, session))) {
