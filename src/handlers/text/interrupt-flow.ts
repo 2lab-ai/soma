@@ -36,27 +36,33 @@ export async function runInterruptRoute(
     return { handled: true, message: nextMessage, wasInterrupt };
   }
 
-  const lostMessages = session.extractSteeringMessages();
-  if (lostMessages.length > 0) {
-    const sessionKey = sessionManager.deriveKey(chatId, threadId);
-    session.setPendingRecovery(lostMessages, chatId);
+  // Check if there are queued steering messages
+  const pendingCount = session.getSteeringCount();
 
-    const keyboard = TelegramChoiceBuilder.buildLostMessageKeyboard(sessionKey);
-    const messageText = TelegramChoiceBuilder.buildLostMessageText(lostMessages, true);
-
-    try {
-      const sentMsg = await ctx.reply(messageText, {
-        reply_markup: keyboard,
-        parse_mode: "Markdown",
-      });
-      session.setPendingRecovery(lostMessages, chatId, sentMsg.message_id);
-    } catch (replyError) {
-      console.error("[INTERRUPT] Failed to send lost message UI:", replyError);
+  if (pendingCount > 0) {
+    // Messages stay in steering buffer — auto-continue loop will process them.
+    // Do NOT extract/remove them (old behavior silently lost messages on timeout).
+    console.log(
+      `[INTERRUPT] Stopped processing. ${pendingCount} steering message(s) remain in buffer for auto-processing.`
+    );
+    // sendSystemMessage swallows errors and returns null on failure,
+    // so we check return value instead of relying on try-catch.
+    const notifyResult = await sendSystemMessage(
+      ctx,
+      `🛑 중단됨. 대기 메시지 ${pendingCount}개 자동 처리 중...`
+    );
+    if (!notifyResult) {
       try {
-        await sendSystemMessage(ctx, "🛑 Stopped (had undelivered messages)");
+        await deliverInboundReaction(Reactions.INTERRUPTED);
       } catch {}
     }
-    return { handled: true, message: nextMessage, wasInterrupt };
+    // Return handled=false so text.ts continues to runQueryFlow → auto-continue drains buffer.
+    // Provide a synthetic message so sendMessageStreaming doesn't receive empty string.
+    return {
+      handled: false,
+      message: "[시스템: 인터럽트 후 대기 메시지 처리]",
+      wasInterrupt,
+    };
   }
 
   try {
