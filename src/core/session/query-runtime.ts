@@ -46,11 +46,22 @@ export function createQueryRuntimeHooks(
     _context: unknown
   ): Promise<Record<string, unknown>> => {
     const toolName = (input as { tool_name?: string }).tool_name || "unknown";
+    const toolInput =
+      (input as { tool_input?: Record<string, unknown> }).tool_input ?? {};
     console.log(`[HOOK] PreToolUse fired for: ${toolName}`);
 
     if (deps.getStopRequested()) {
       console.log(`[HOOK] Abort requested - blocking tool: ${toolName}`);
       throw new Error("Abort requested by user");
+    }
+
+    // Validate tool input and block gracefully instead of throwing fatal errors.
+    // The SDK feeds { decision: 'block', reason } back to the model as a tool
+    // error result, allowing the model to adapt and continue autonomously.
+    const validation = checkToolInputSafety(toolName, toolInput);
+    if (!validation.allowed) {
+      console.warn(`[HOOK] Blocking tool ${toolName}: ${validation.reason}`);
+      return { decision: "block", reason: validation.reason };
     }
 
     return {};
@@ -202,18 +213,24 @@ function toTokenUsageFromProviderUsage(usage: {
   };
 }
 
-async function validateToolInput(
+type ToolInputValidation =
+  | { allowed: true }
+  | { allowed: false; reason: string };
+
+/**
+ * Pure, non-throwing validation of tool input.
+ * Returns a validation result instead of throwing so callers can decide
+ * whether to block gracefully (via SDK hook) or log and continue.
+ */
+export function checkToolInputSafety(
   toolName: string,
-  toolInput: Record<string, unknown>,
-  statusCallback: StatusCallback
-): Promise<void> {
+  toolInput: Record<string, unknown>
+): ToolInputValidation {
   if (toolName === "Bash") {
     const command = String(toolInput.command || "");
     const [isSafe, reason] = checkCommandSafety(command);
     if (!isSafe) {
-      console.warn(`BLOCKED: ${reason}`);
-      await statusCallback("tool", `BLOCKED: ${reason}`);
-      throw new Error(`Unsafe command blocked: ${reason}`);
+      return { allowed: false, reason: `Unsafe command blocked: ${reason}` };
     }
   }
 
@@ -226,11 +243,34 @@ async function validateToolInput(
           filePath.includes("/.claude/"));
 
       if (!isTmpRead && !isPathAllowed(filePath)) {
-        console.warn(`BLOCKED: File access outside allowed paths: ${filePath}`);
-        await statusCallback("tool", `Access denied: ${filePath}`);
-        throw new Error(`File access blocked: ${filePath}`);
+        return {
+          allowed: false,
+          reason: `File access blocked: ${filePath} — path is outside allowed directories. Try an alternative approach or ask the user to share the file content directly.`,
+        };
       }
     }
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * @deprecated Use checkToolInputSafety + PreToolUse hook instead.
+ * Kept for backward compatibility with provider event path where hooks
+ * may not fire. Logs warnings but does NOT throw — the model should
+ * handle blocked tools gracefully.
+ */
+async function validateToolInput(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  statusCallback: StatusCallback
+): Promise<void> {
+  const result = checkToolInputSafety(toolName, toolInput);
+  if (!result.allowed) {
+    console.warn(`[VALIDATE] ${result.reason}`);
+    await statusCallback("tool", result.reason);
+    // Intentionally NOT throwing — the PreToolUse hook handles blocking
+    // gracefully via { decision: 'block' }. This path is a fallback log only.
   }
 }
 
