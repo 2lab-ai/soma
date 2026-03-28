@@ -710,15 +710,26 @@ async function handleGroupConfirmCallback(
     return;
   }
 
+  // Validate: stale button guard — reject if DM message doesn't match current pending
+  const callbackMessageId = ctx.callbackQuery?.message?.message_id;
+  if (callbackMessageId && pending.dmMessageId && callbackMessageId !== pending.dmMessageId) {
+    await ctx.answerCallbackQuery({ text: "이 요청은 더 이상 유효하지 않습니다" });
+    try {
+      await ctx.editMessageText("⏰ 이 요청은 새로운 요청으로 대체되었습니다.");
+    } catch {}
+    return;
+  }
+
   if (action === "accept") {
     // Trace S2: accept → register with ownerId → welcome message
-    pendingGroupStore.remove(chatId);
+    // Register FIRST — only remove pending on success (so retry is possible)
     const registered = groupRegistry.register(chatId, pending.ownerId);
 
     if (!registered) {
       await ctx.answerCallbackQuery({ text: "등록 실패. 다시 시도해주세요" });
       return;
     }
+    pendingGroupStore.remove(chatId);
 
     try {
       await ctx.editMessageText(
