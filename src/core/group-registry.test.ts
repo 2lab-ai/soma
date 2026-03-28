@@ -48,7 +48,9 @@ describe("GroupRegistry", () => {
 
       expect(existsSync(TEST_PERSISTENCE_PATH)).toBe(true);
       const data = JSON.parse(readFileSync(TEST_PERSISTENCE_PATH, "utf-8"));
-      expect(data.groups).toContain(-1001234567890);
+      // New format: groups is array of { chatId, ownerId, activatedAt }
+      const chatIds = data.groups.map((g: any) => typeof g === "number" ? g : g.chatId);
+      expect(chatIds).toContain(-1001234567890);
       expect(data.updatedAt).toBeDefined();
     });
 
@@ -80,7 +82,8 @@ describe("GroupRegistry", () => {
       expect(registry.isRegistered(-1001234567890)).toBe(false);
 
       const data = JSON.parse(readFileSync(TEST_PERSISTENCE_PATH, "utf-8"));
-      expect(data.groups).not.toContain(-1001234567890);
+      const chatIds = data.groups.map((g: any) => typeof g === "number" ? g : g.chatId);
+      expect(chatIds).not.toContain(-1001234567890);
     });
 
     test("Trace S3/S5: unregister of non-registered group is no-op", () => {
@@ -138,8 +141,9 @@ describe("GroupRegistry", () => {
       expect(data).toHaveProperty("updatedAt");
       expect(Array.isArray(data.groups)).toBe(true);
       expect(data.groups.length).toBe(2);
-      expect(data.groups).toContain(-1001234567890);
-      expect(data.groups).toContain(-1009876543210);
+      const chatIds = data.groups.map((g: any) => typeof g === "number" ? g : g.chatId);
+      expect(chatIds).toContain(-1001234567890);
+      expect(chatIds).toContain(-1009876543210);
     });
 
     test("Trace S5: register then restart preserves state (round-trip)", () => {

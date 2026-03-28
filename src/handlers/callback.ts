@@ -3,6 +3,8 @@ import { InlineKeyboard } from "grammy";
 import { sessionManager } from "../core/session/session-manager";
 import type { ClaudeSession } from "../core/session/session";
 import { type ChatType, isAuthorizedForChat } from "../security";
+import { pendingGroupStore } from "../core/pending-group-store";
+import { groupRegistry } from "../core/group-registry";
 import { auditLog } from "../utils/audit";
 import { startTypingIndicator } from "../utils/typing";
 import { StreamingState, createStatusCallback, cleanupToolMessages } from "./streaming";
@@ -486,6 +488,11 @@ export async function handleCallback(ctx: Context): Promise<void> {
     return;
   }
 
+  if (callbackData.startsWith("grp:")) {
+    await handleGroupConfirmCallback(ctx, callbackData, userId);
+    return;
+  }
+
   if (callbackData.startsWith("lost:")) {
     await handleLostMessageCallback(
       ctx,
@@ -660,4 +667,102 @@ async function handleLostMessageCallback(
     default:
       await ctx.answerCallbackQuery({ text: "Unknown action" });
   }
+}
+
+/**
+ * Handle group activation confirmation callbacks.
+ * Format: grp:{chatId}:{action} where action = "accept" | "reject"
+ *
+ * Trace: docs/group-owner-confirm/trace.md, Scenarios 2-3
+ */
+async function handleGroupConfirmCallback(
+  ctx: Context,
+  callbackData: string,
+  userId: number
+): Promise<void> {
+  const parts = callbackData.split(":");
+  if (parts.length !== 3) {
+    await ctx.answerCallbackQuery({ text: "Invalid callback format" });
+    return;
+  }
+
+  const chatId = Number(parts[1]);
+  const action = parts[2];
+
+  if (!Number.isFinite(chatId)) {
+    await ctx.answerCallbackQuery({ text: "Invalid group ID" });
+    return;
+  }
+
+  // Get pending confirmation
+  const pending = pendingGroupStore.get(chatId);
+  if (!pending) {
+    await ctx.answerCallbackQuery({ text: "요청이 만료되었습니다" });
+    try {
+      await ctx.editMessageText("⏰ 이 요청은 만료되었습니다.");
+    } catch {}
+    return;
+  }
+
+  // Validate: only the owner can confirm
+  if (userId !== pending.ownerId) {
+    await ctx.answerCallbackQuery({ text: "권한이 없습니다" });
+    return;
+  }
+
+  if (action === "accept") {
+    // Trace S2: accept → register with ownerId → welcome message
+    pendingGroupStore.remove(chatId);
+    const registered = groupRegistry.register(chatId, pending.ownerId);
+
+    if (!registered) {
+      await ctx.answerCallbackQuery({ text: "등록 실패. 다시 시도해주세요" });
+      return;
+    }
+
+    try {
+      await ctx.editMessageText(
+        `✅ 그룹 <b>${escapeHtml(pending.chatTitle)}</b> 활성화됨\n이제 이 그룹에서 메시지에 응답합니다.`,
+        { parse_mode: "HTML" }
+      );
+    } catch {}
+
+    // Send welcome message to the group
+    try {
+      await ctx.api.sendMessage(
+        chatId,
+        "안녕하세요! 이 그룹에서 도움이 필요하시면 말씀해 주세요. 🤖"
+      );
+    } catch (error) {
+      console.error(
+        `[GroupConfirm] Failed to send welcome to group ${chatId}:`,
+        error
+      );
+    }
+
+    await ctx.answerCallbackQuery({ text: "그룹 활성화됨" });
+    console.log(`[GroupConfirm] Owner ${userId} accepted group ${chatId}`);
+  } else if (action === "reject") {
+    // Trace S3: reject → remove pending, no registration
+    pendingGroupStore.remove(chatId);
+
+    try {
+      await ctx.editMessageText(
+        `❌ 그룹 <b>${escapeHtml(pending.chatTitle)}</b> 거부됨\n봇은 그룹에 남아있지만 응답하지 않습니다.`,
+        { parse_mode: "HTML" }
+      );
+    } catch {}
+
+    await ctx.answerCallbackQuery({ text: "그룹 거부됨" });
+    console.log(`[GroupConfirm] Owner ${userId} rejected group ${chatId}`);
+  } else {
+    await ctx.answerCallbackQuery({ text: "Unknown action" });
+  }
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
