@@ -319,15 +319,19 @@
 
 ## Implementation Status
 
-| Scenario | Trace | Tests (RED) | Status |
-|----------|-------|-------------|--------|
-| 1. Bot Added: DM Confirmation | done | RED | Ready |
-| 2. Owner Accepts Group | done | RED | Ready |
-| 3. Owner Rejects Group | done | RED | Ready |
-| 4. Group Message: Owner-Only | done | RED | Ready |
-| 5. Pending Expiry | done | RED | Ready |
-| 6. GroupRegistry Migration | done | RED | Ready |
+| Scenario | Trace | Tests | Status |
+|----------|-------|-------|--------|
+| 1. Bot Added: DM Confirmation | done | GREEN (8 tests) | ✅ Implemented |
+| 2. Owner Accepts Group | done | GREEN (8 tests) | ✅ Implemented |
+| 3. Owner Rejects Group | done | GREEN (8 tests) | ✅ Implemented |
+| 4. Group Message: Owner-Only | done | GREEN (6 tests) | ✅ Implemented |
+| 5. Pending Expiry | done | GREEN (6 tests) | ✅ Implemented |
+| 6. GroupRegistry Migration | done | GREEN (7 tests) | ✅ Implemented |
 
-## Next Step
+> **Verification**: 38 pass, 0 fail, 78 expect() — 2026-03-28
+> **PRs**: #3 (feat), #4 (hotfix from Codex review) — both merged to main
+> **Hotfix P1**: Migration ownerId=0 → ALLOWED_USERS[0] (prevents bricked groups)
+> **Hotfix P2**: Register-before-remove ordering (retryable on failure)
+> **Hotfix P2**: Stale button guard via dmMessageId validation
 
 → Proceed with implementation + Trace Verify via `stv:work docs/group-owner-confirm/trace.md`
