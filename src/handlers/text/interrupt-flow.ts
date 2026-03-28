@@ -55,8 +55,13 @@ export async function runInterruptRoute(
         await deliverInboundReaction(Reactions.INTERRUPTED);
       } catch {}
     }
-    // Return handled=false so text.ts continues to runQueryFlow → auto-continue drains buffer
-    return { handled: false, message: "", wasInterrupt };
+    // Return handled=false so text.ts continues to runQueryFlow → auto-continue drains buffer.
+    // Provide a synthetic message so sendMessageStreaming doesn't receive empty string.
+    return {
+      handled: false,
+      message: "[시스템: 인터럽트 후 대기 메시지 처리]",
+      wasInterrupt,
+    };
   }
 
   try {
