@@ -40,12 +40,23 @@ export class PendingGroupStore {
    * Add a pending confirmation. Overwrites existing pending for same chatId.
    * Trace S1, Section 3c.
    */
-  add(confirmation: PendingConfirmation): void {
+  add(confirmation: PendingConfirmation): boolean {
+    const previous = this.pendingGroups.get(confirmation.chatId);
     this.pendingGroups.set(confirmation.chatId, confirmation);
-    this.saveToDisk();
+    const persisted = this.saveToDisk();
+    if (!persisted) {
+      // Rollback: restore previous state
+      if (previous) {
+        this.pendingGroups.set(confirmation.chatId, previous);
+      } else {
+        this.pendingGroups.delete(confirmation.chatId);
+      }
+      return false;
+    }
     console.log(
       `[PendingGroupStore] Added pending for group ${confirmation.chatId} (owner: ${confirmation.ownerId})`
     );
+    return true;
   }
 
   /**
@@ -59,7 +70,11 @@ export class PendingGroupStore {
 
     if (this.isExpired(pending)) {
       this.pendingGroups.delete(chatId);
-      this.saveToDisk();
+      const persisted = this.saveToDisk();
+      if (!persisted) {
+        // Rollback: keep expired entry in memory (will retry on next access)
+        this.pendingGroups.set(chatId, pending);
+      }
       console.log(
         `[PendingGroupStore] Expired pending for group ${chatId} (age: ${Math.round((Date.now() - pending.createdAt) / 3600000)}h)`
       );
@@ -74,9 +89,15 @@ export class PendingGroupStore {
    * Trace S2/S3, Section 4.
    */
   remove(chatId: number): boolean {
-    if (!this.pendingGroups.has(chatId)) return false;
+    const previous = this.pendingGroups.get(chatId);
+    if (!previous) return false;
     this.pendingGroups.delete(chatId);
-    this.saveToDisk();
+    const persisted = this.saveToDisk();
+    if (!persisted) {
+      // Rollback: restore deleted entry
+      this.pendingGroups.set(chatId, previous);
+      return false;
+    }
     console.log(`[PendingGroupStore] Removed pending for group ${chatId}`);
     return true;
   }
@@ -115,7 +136,7 @@ export class PendingGroupStore {
     }
   }
 
-  private saveToDisk(): void {
+  private saveToDisk(): boolean {
     try {
       const data: PersistedPendingData = {
         pending: Array.from(this.pendingGroups.values()),
@@ -124,8 +145,10 @@ export class PendingGroupStore {
       const tmpPath = this.persistencePath + WRITE_TMP_SUFFIX;
       writeFileSync(tmpPath, JSON.stringify(data, null, 2));
       renameSync(tmpPath, this.persistencePath);
+      return true;
     } catch (error) {
       console.error("[PendingGroupStore] Failed to save to disk:", error);
+      return false;
     }
   }
 }
