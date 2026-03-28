@@ -3,8 +3,9 @@
  * Trace: docs/group-owner-confirm/trace.md, Scenario 6
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, unlinkSync, writeFileSync, readFileSync } from "fs";
 import { GroupRegistry } from "./group-registry";
+import { ALLOWED_USERS } from "../config";
 
 const TEST_PERSISTENCE_PATH = "/tmp/soma-groups-owner-test.json";
 
@@ -68,10 +69,16 @@ describe("GroupRegistry — Owner Support (Scenario 6)", () => {
     const registry = createRegistry();
     expect(registry.isRegistered(-1001234567890)).toBe(true);
     expect(registry.isRegistered(-1009876543210)).toBe(true);
-    // Migrated groups get a default ownerId (first ALLOWED_USER or 0)
-    // The exact default depends on implementation — just verify it's a number
-    const owner = registry.getOwner(-1001234567890);
-    expect(typeof owner).toBe("number");
+    // Migrated groups get ownerId = ALLOWED_USERS[0] (not 0)
+    const expectedOwner = ALLOWED_USERS[0] ?? 0;
+    expect(registry.getOwner(-1001234567890)).toBe(expectedOwner);
+    expect(registry.getOwner(-1009876543210)).toBe(expectedOwner);
+    // Verify disk was rewritten in new GroupEntry[] format
+    const raw = JSON.parse(readFileSync(TEST_PERSISTENCE_PATH, "utf-8"));
+    expect(Array.isArray(raw.groups)).toBe(true);
+    expect(raw.groups[0]).toHaveProperty("chatId");
+    expect(raw.groups[0]).toHaveProperty("ownerId", expectedOwner);
+    expect(raw.groups[0]).toHaveProperty("activatedAt", "migrated");
   });
 
   // Trace S6, Section 3b: loads new GroupEntry[] format
