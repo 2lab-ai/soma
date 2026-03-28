@@ -223,10 +223,8 @@ export const DELETE_THINKING_MESSAGES = parseEnvBool(
 export const DELETE_TOOL_MESSAGES = parseEnvBool("DEFAULT_DELETE_TOOL_MESSAGES", true);
 export const PROGRESS_SPINNER_ENABLED = parseEnvBool("PROGRESS_SPINNER_ENABLED", false);
 export const SHOW_ELAPSED_TIME = parseEnvBool("SHOW_ELAPSED_TIME", true);
-export const PROGRESS_REACTION_ENABLED = parseEnvBool(
-  "PROGRESS_REACTION_ENABLED",
-  true
-);
+// PROGRESS_REACTION_ENABLED removed — emoji reactions unified in reactions.ts
+// All reaction state transitions handled by query-flow.ts via deliverInboundReaction()
 
 export const MEDIA_GROUP_TIMEOUT = 1000;
 export const TELEGRAM_MESSAGE_LIMIT = 4096;

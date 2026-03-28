@@ -444,6 +444,21 @@ export class ClaudeSession {
     return formatted;
   }
 
+  /**
+   * Consume steering buffer, returning formatted text + original message IDs.
+   * Used by auto-continue loop to update emoji reactions (STEERING_DELIVERED → COMPLETE).
+   */
+  consumeSteeringWithIds(): { formatted: string; messageIds: number[] } | null {
+    const count = this.steering.getSteeringCount();
+    if (!count) return null;
+    const result = this.steering.consumeSteeringWithIds();
+    if (!result) return null;
+    console.log(
+      `[STEERING DEBUG] Consumed ${count} message(s) with ${result.messageIds.length} messageId(s)`
+    );
+    return result;
+  }
+
   hasSteeringMessages(): boolean {
     return this.steering.hasSteeringMessages();
   }

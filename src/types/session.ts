@@ -49,7 +49,7 @@ export interface PendingRecovery {
   messageId?: number; // Telegram message ID with buttons
 }
 
-export const PENDING_RECOVERY_TIMEOUT_MS = 60_000; // 60 seconds
+export const PENDING_RECOVERY_TIMEOUT_MS = 600_000; // 10 minutes (was 60s — too short, caused silent message loss)
 
 // Factory function for creating validated SteeringMessage instances
 export function createSteeringMessage(

@@ -15,7 +15,6 @@ import {
   DELETE_TOOL_MESSAGES,
   PROGRESS_SPINNER_ENABLED,
   SHOW_ELAPSED_TIME,
-  PROGRESS_REACTION_ENABLED,
   SHOW_CURRENT_PROVIDER_USAGE,
   SHOW_ANTHROPIC_USAGE,
   SHOW_CODEX_USAGE,
@@ -297,9 +296,8 @@ export async function createStatusCallback(
   if (!state.startTime) {
     state.startTime = new Date();
 
-    if (PROGRESS_REACTION_ENABLED) {
-      await setReaction(ctx, "🔥");
-    }
+    // Emoji reactions now handled exclusively by query-flow.ts via Reactions constants
+    // (Previously set 🔥 here, but that conflicted with reactions.ts PROCESSING emoji)
 
     if (PROGRESS_SPINNER_ENABLED) {
       await recreateProgressMessage();
@@ -592,9 +590,8 @@ export async function createStatusCallback(
           for (const msg of state.toolMessages) await deleteMessage(ctx, msg);
         }
 
-        if (PROGRESS_REACTION_ENABLED) {
-          await setReaction(ctx, "🎉");
-        }
+        // Completion emoji (👍) now handled by query-flow.ts via Reactions.COMPLETE
+        // (Previously set 🎉 here, but that raced with reactions.ts COMPLETE emoji)
 
         if (state.hasUserChoice && session) {
           const chatId = ctx.chat?.id;
