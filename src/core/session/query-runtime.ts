@@ -225,11 +225,54 @@ type ToolInputValidation =
  * Returns a validation result instead of throwing so callers can decide
  * whether to block gracefully (via SDK hook) or log and continue.
  */
-// Regex to extract file paths from common file-reading Bash commands.
-// Matches: cat, head, tail, less, more, cp, mv, tee, wc, sort, sed, awk
-// followed by optional flags (-n, -5, etc.) and then a path starting with /
-const BASH_FILE_READ_RE =
-  /\b(?:cat|head|tail|less|more|cp|mv|tee|wc|sort|sed|awk)\b(?:\s+-\S+)*\s+(\/[^\s|;&>]+)/gi;
+// Commands whose file-path arguments must be validated.
+const BASH_FILE_COMMANDS = new Set([
+  "cat", "head", "tail", "less", "more", "cp", "mv",
+  "tee", "wc", "sort", "sed", "awk",
+]);
+
+// Matches an absolute path token (starts with /)
+const ABS_PATH_TOKEN_RE = /^\//;
+
+/**
+ * Extract all absolute-path arguments from a Bash command that uses
+ * known file-reading/writing commands. Handles multi-token flags like
+ * `-n 5` and quoted/brace arguments like `'{print $1}'`.
+ *
+ * Returns an array of extracted absolute paths.
+ */
+export function extractBashFilePaths(command: string): string[] {
+  const paths: string[] = [];
+  // Tokenize by splitting on whitespace, respecting pipes/semicolons as boundaries
+  const segments = command.split(/[|;&]+/);
+
+  for (const segment of segments) {
+    const tokens = segment.trim().split(/\s+/);
+    if (tokens.length === 0) continue;
+
+    // Find the command name (skip env vars like VAR=val)
+    let cmdIdx = 0;
+    while (cmdIdx < tokens.length && tokens[cmdIdx]!.includes("=")) cmdIdx++;
+    if (cmdIdx >= tokens.length) continue;
+
+    const cmd = tokens[cmdIdx]!.toLowerCase();
+    if (!BASH_FILE_COMMANDS.has(cmd)) continue;
+
+    // Collect all absolute-path tokens after the command
+    for (let i = cmdIdx + 1; i < tokens.length; i++) {
+      const token = tokens[i]!;
+      // Skip flags (start with -)
+      if (token.startsWith("-")) continue;
+      // Skip quoted/brace non-path arguments (awk patterns, sed expressions)
+      if (/^['"{]/.test(token)) continue;
+      // Capture absolute paths
+      if (ABS_PATH_TOKEN_RE.test(token)) {
+        paths.push(token);
+      }
+    }
+  }
+  return paths;
+}
 
 export function checkToolInputSafety(
   toolName: string,
@@ -242,11 +285,9 @@ export function checkToolInputSafety(
       return { allowed: false, reason: `Unsafe command blocked: ${reason}` };
     }
 
-    // Check file paths embedded in common file-reading commands
-    let match: RegExpExecArray | null;
-    BASH_FILE_READ_RE.lastIndex = 0;
-    while ((match = BASH_FILE_READ_RE.exec(command)) !== null) {
-      const extractedPath = match[1]!;
+    // Validate ALL absolute paths found in file-accessing commands
+    const filePaths = extractBashFilePaths(command);
+    for (const extractedPath of filePaths) {
       const resolvedPath = resolve(extractedPath);
       if (!isPathAllowed(resolvedPath)) {
         return {
