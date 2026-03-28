@@ -181,6 +181,13 @@ export interface ErrorDetails {
   stderr?: string;
   exitCode?: number;
   hint?: string;
+  // SDK/Provider error fields
+  statusCode?: number;
+  errorCode?: string;
+  providerId?: string;
+  retryable?: boolean;
+  requestId?: string;
+  sdkErrors?: string[];
 }
 
 export function extractErrorDetails(error: unknown): ErrorDetails {
@@ -194,6 +201,29 @@ export function extractErrorDetails(error: unknown): ErrorDetails {
     stack: error.stack,
     cause: (error as Error & { cause?: unknown }).cause,
   };
+
+  // Extract SDK/Provider error fields (NormalizedProviderError and similar)
+  const anyError = error as unknown as Record<string, unknown>;
+  if (typeof anyError.statusCode === "number") {
+    details.statusCode = anyError.statusCode;
+  } else if (typeof anyError.status === "number") {
+    details.statusCode = anyError.status;
+  }
+  if (typeof anyError.code === "string") {
+    details.errorCode = anyError.code;
+  }
+  if (typeof anyError.providerId === "string") {
+    details.providerId = anyError.providerId;
+  }
+  if (typeof anyError.retryable === "boolean") {
+    details.retryable = anyError.retryable;
+  }
+  if (typeof anyError.request_id === "string") {
+    details.requestId = anyError.request_id;
+  }
+  if (Array.isArray(anyError.errors)) {
+    details.sdkErrors = anyError.errors.filter((e): e is string => typeof e === "string");
+  }
 
   // Extract exit code from message
   const exitMatch = error.message.match(/exited with code (\d+)/);
@@ -231,6 +261,24 @@ export function formatErrorForLog(error: unknown): string {
   const details = extractErrorDetails(error);
   const lines = [`[ERROR] ${details.name}: ${details.message}`];
 
+  if (details.statusCode !== undefined) {
+    lines.push(`HTTP status: ${details.statusCode}`);
+  }
+  if (details.errorCode) {
+    lines.push(`Error code: ${details.errorCode}`);
+  }
+  if (details.providerId) {
+    lines.push(`Provider: ${details.providerId}`);
+  }
+  if (details.retryable !== undefined) {
+    lines.push(`Retryable: ${details.retryable}`);
+  }
+  if (details.requestId) {
+    lines.push(`Request ID: ${details.requestId}`);
+  }
+  if (details.sdkErrors?.length) {
+    lines.push(`SDK errors: ${details.sdkErrors.join("; ")}`);
+  }
   if (details.exitCode !== undefined) {
     lines.push(`Exit code: ${details.exitCode}`);
   }
@@ -251,13 +299,32 @@ export function formatErrorForUser(error: unknown): string {
   const details = extractErrorDetails(error);
 
   let userMessage = `❌ ${details.name}`;
+  if (details.statusCode !== undefined) {
+    userMessage += ` [HTTP ${details.statusCode}]`;
+  }
   if (details.exitCode !== undefined) {
     userMessage += ` (code ${details.exitCode})`;
   }
-  userMessage += `\n${details.message.slice(0, 800)}`;
+  if (details.errorCode) {
+    userMessage += ` [${details.errorCode}]`;
+  }
+  userMessage += `\n${details.message.slice(0, 2000)}`;
+
+  if (details.providerId) {
+    userMessage += `\n\nProvider: ${details.providerId}`;
+  }
+  if (details.retryable !== undefined) {
+    userMessage += ` | Retryable: ${details.retryable}`;
+  }
+  if (details.requestId) {
+    userMessage += `\nRequest ID: ${details.requestId}`;
+  }
+  if (details.sdkErrors?.length) {
+    userMessage += `\n\nSDK errors:\n${details.sdkErrors.map((e) => `  - ${e}`).join("\n")}`;
+  }
 
   if (details.stderr) {
-    userMessage += `\n\nstderr:\n${details.stderr.slice(0, 300)}`;
+    userMessage += `\n\nstderr:\n${details.stderr.slice(0, 500)}`;
   }
 
   if (details.hint) {

@@ -242,6 +242,16 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
         }
 
         if (event.type === "result") {
+          // Detect SDK error result variants
+          const resultSubtype = (event as unknown as { subtype?: string }).subtype;
+          const resultErrors = (event as unknown as { errors?: string[] }).errors;
+          const resultIsError = (event as unknown as { is_error?: boolean }).is_error;
+          const isErrorResult = resultSubtype !== undefined && resultSubtype !== "success";
+
+          if (isErrorResult) {
+            console.error(`[SDK-RESULT-ERROR] provider=${this.providerId}, subtype=${resultSubtype}, is_error=${resultIsError}, errors=${JSON.stringify(resultErrors ?? [])}`);
+          }
+
           if ("modelUsage" in event && event.modelUsage) {
             const modelUsage = event.modelUsage as Record<string, ClaudeModelUsage>;
             let totalInput = 0;
@@ -305,7 +315,10 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
             queryId: handle.queryId,
             timestamp: Date.now(),
             type: "done",
-            reason: "completed",
+            reason: isErrorResult ? "failed" : "completed",
+            ...(isErrorResult && resultErrors?.length
+              ? { errorMessage: resultErrors.join("; ") }
+              : {}),
           });
         }
       }

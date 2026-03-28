@@ -432,7 +432,7 @@ async function handleSkillCallback(
     await ctx.editMessageText(`🚀 Launching skill: <b>${skillId}</b>`, {
       parse_mode: "HTML",
     });
-  } catch {}
+  } catch (e) { console.warn("[CALLBACK] editMessageText failed:", e); }
 
   const session = sessionManager.getSession(chatId, threadId);
   const message = `/${skillId}`;
@@ -700,7 +700,7 @@ async function handleGroupConfirmCallback(
     await ctx.answerCallbackQuery({ text: "요청이 만료되었습니다" });
     try {
       await ctx.editMessageText("⏰ 이 요청은 만료되었습니다.");
-    } catch {}
+    } catch (e) { console.warn("[CALLBACK] expired edit failed:", e); }
     return;
   }
 
@@ -716,7 +716,7 @@ async function handleGroupConfirmCallback(
     await ctx.answerCallbackQuery({ text: "이 요청은 더 이상 유효하지 않습니다" });
     try {
       await ctx.editMessageText("⏰ 이 요청은 새로운 요청으로 대체되었습니다.");
-    } catch {}
+    } catch (e) { console.warn("[CALLBACK] superseded edit failed:", e); }
     return;
   }
 
@@ -736,7 +736,7 @@ async function handleGroupConfirmCallback(
         `✅ 그룹 <b>${escapeHtml(pending.chatTitle)}</b> 활성화됨\n이제 이 그룹에서 메시지에 응답합니다.`,
         { parse_mode: "HTML" }
       );
-    } catch {}
+    } catch (e) { console.warn("[CALLBACK] group-approve edit failed:", e); }
 
     // Send welcome message to the group
     try {
@@ -762,7 +762,7 @@ async function handleGroupConfirmCallback(
         `❌ 그룹 <b>${escapeHtml(pending.chatTitle)}</b> 거부됨\n봇은 그룹에 남아있지만 응답하지 않습니다.`,
         { parse_mode: "HTML" }
       );
-    } catch {}
+    } catch (e) { console.warn("[CALLBACK] group-deny edit failed:", e); }
 
     await ctx.answerCallbackQuery({ text: "그룹 거부됨" });
     console.log(`[GroupConfirm] Owner ${userId} rejected group ${chatId}`);
