@@ -1,8 +1,9 @@
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ProviderOrchestrator } from "../../providers/orchestrator";
 import type { ProviderEvent, ProviderQueryInput } from "../../providers/types.models";
+import { resolve } from "path";
 import { STREAMING_THROTTLE_MS, TEMP_PATHS } from "../../config";
-import { formatToolStatus } from "../../formatting";
+import { escapeHtml, formatToolStatus } from "../../formatting";
 import { checkCommandSafety, isPathAllowed } from "../../security";
 import type { QueryMetadata, StatusCallback, UsageSnapshot } from "../../types/runtime";
 import type { Provider } from "../../types/provider";
@@ -52,7 +53,9 @@ export function createQueryRuntimeHooks(
 
     if (deps.getStopRequested()) {
       console.log(`[HOOK] Abort requested - blocking tool: ${toolName}`);
-      throw new Error("Abort requested by user");
+      const abortError = new Error("Abort requested by user");
+      abortError.name = "AbortError";
+      throw abortError;
     }
 
     // Validate tool input and block gracefully instead of throwing fatal errors.
@@ -222,6 +225,12 @@ type ToolInputValidation =
  * Returns a validation result instead of throwing so callers can decide
  * whether to block gracefully (via SDK hook) or log and continue.
  */
+// Regex to extract file paths from common file-reading Bash commands.
+// Matches: cat, head, tail, less, more, cp, mv, tee, wc, sort, sed, awk
+// followed by optional flags (-n, -5, etc.) and then a path starting with /
+const BASH_FILE_READ_RE =
+  /\b(?:cat|head|tail|less|more|cp|mv|tee|wc|sort|sed|awk)\b(?:\s+-\S+)*\s+(\/[^\s|;&>]+)/gi;
+
 export function checkToolInputSafety(
   toolName: string,
   toolInput: Record<string, unknown>
@@ -232,20 +241,52 @@ export function checkToolInputSafety(
     if (!isSafe) {
       return { allowed: false, reason: `Unsafe command blocked: ${reason}` };
     }
+
+    // Check file paths embedded in common file-reading commands
+    let match: RegExpExecArray | null;
+    BASH_FILE_READ_RE.lastIndex = 0;
+    while ((match = BASH_FILE_READ_RE.exec(command)) !== null) {
+      const extractedPath = match[1]!;
+      const resolvedPath = resolve(extractedPath);
+      if (!isPathAllowed(resolvedPath)) {
+        return {
+          allowed: false,
+          reason: `Bash command accesses blocked path: ${extractedPath} — outside allowed directories.`,
+        };
+      }
+    }
   }
 
   if (["Read", "Write", "Edit"].includes(toolName)) {
     const filePath = String(toolInput.file_path || "");
     if (filePath) {
+      // Resolve to absolute path BEFORE any prefix check to prevent
+      // traversal attacks like /tmp/../etc/passwd → /etc/passwd
+      const resolvedPath = resolve(filePath);
+
       const isTmpRead =
         toolName === "Read" &&
-        (TEMP_PATHS.some((p) => filePath.startsWith(p)) ||
-          filePath.includes("/.claude/"));
+        (TEMP_PATHS.some((p) => resolvedPath.startsWith(p)) ||
+          resolvedPath.includes("/.claude/"));
 
-      if (!isTmpRead && !isPathAllowed(filePath)) {
+      if (!isTmpRead && !isPathAllowed(resolvedPath)) {
         return {
           allowed: false,
           reason: `File access blocked: ${filePath} — path is outside allowed directories. Try an alternative approach or ask the user to share the file content directly.`,
+        };
+      }
+    }
+  }
+
+  // Validate path parameter for Grep and Glob tools
+  if (["Grep", "Glob"].includes(toolName)) {
+    const toolPath = String(toolInput.path || "");
+    if (toolPath) {
+      const resolvedPath = resolve(toolPath);
+      if (!isPathAllowed(resolvedPath)) {
+        return {
+          allowed: false,
+          reason: `${toolName} path blocked: ${toolPath} — outside allowed directories.`,
         };
       }
     }
@@ -276,7 +317,8 @@ async function validateToolInput(
   const result = checkToolInputSafety(toolName, toolInput);
   if (!result.allowed) {
     console.error(`[SECURITY] Tool blocked (defense-in-depth): ${result.reason}`);
-    await statusCallback("tool", result.reason);
+    // HTML-escape the reason before sending to Telegram (parse_mode: "HTML")
+    await statusCallback("tool", escapeHtml(result.reason));
     return false;
   }
   return true;

@@ -48,6 +48,148 @@ describe("checkToolInputSafety", () => {
     const result = checkToolInputSafety("Write", { file_path: "/tmp/out.ts" });
     expect(result).toEqual({ allowed: true });
   });
+
+  // --- Path traversal tests (Issue #9) ---
+
+  test("blocks path traversal via /tmp/../etc/passwd", () => {
+    const result = checkToolInputSafety("Read", {
+      file_path: "/tmp/../etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks path traversal via /private/tmp/../../etc/shadow", () => {
+    const result = checkToolInputSafety("Read", {
+      file_path: "/private/tmp/../../etc/shadow",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks /.claude/ substring injection in unrelated path", () => {
+    const result = checkToolInputSafety("Read", {
+      file_path: "/malicious/.claude/../../etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  // --- Write/Edit block tests ---
+
+  test("blocks Write to path outside allowed directories", () => {
+    const result = checkToolInputSafety("Write", {
+      file_path: "/etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks Edit to path outside allowed directories", () => {
+    const result = checkToolInputSafety("Edit", {
+      file_path: "/home/user/secret.txt",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  // --- Malformed input tests ---
+
+  test("allows when file_path is empty string", () => {
+    const result = checkToolInputSafety("Read", { file_path: "" });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("allows when file_path is missing from tool_input", () => {
+    const result = checkToolInputSafety("Read", {});
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("allows unknown tool names without validation", () => {
+    const result = checkToolInputSafety("WebFetch", {
+      url: "https://example.com",
+    });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  // --- Grep/Glob path validation (Issue #12, Scenario 1) ---
+
+  test("blocks Grep with path outside allowed directories", () => {
+    const result = checkToolInputSafety("Grep", {
+      path: "/etc/passwd",
+      pattern: "root",
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("Grep path blocked");
+    }
+  });
+
+  test("blocks Glob with path outside allowed directories", () => {
+    const result = checkToolInputSafety("Glob", {
+      path: "/home/user/secrets",
+      pattern: "*.key",
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("Glob path blocked");
+    }
+  });
+
+  test("allows Grep with path in temp directories", () => {
+    const result = checkToolInputSafety("Grep", {
+      path: "/tmp/project",
+      pattern: "TODO",
+    });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("allows Grep without path parameter", () => {
+    const result = checkToolInputSafety("Grep", { pattern: "TODO" });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  // --- Bash file-read command detection (Issue #12, Scenario 2) ---
+
+  test("blocks Bash cat of file outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "cat /etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("Bash command accesses blocked path");
+    }
+  });
+
+  test("blocks Bash head of file outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "head -5 /home/user/secret.txt",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks Bash tail of file outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "tail -f /var/log/auth.log",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("allows Bash cat of file in temp paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "cat /tmp/output.log",
+    });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("allows Bash echo (no file access)", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "echo hello world",
+    });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("allows Bash ls (no file-read path extraction)", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "ls -la /etc",
+    });
+    expect(result).toEqual({ allowed: true });
+  });
 });
 
 describe("query-runtime hooks", () => {
@@ -63,6 +205,25 @@ describe("query-runtime hooks", () => {
     await expect(
       hooks.preToolUseHook({ tool_name: "Bash" }, null, null)
     ).rejects.toThrow("Abort requested by user");
+  });
+
+  test("abort error from hook has name AbortError for isAbortError recognition", async () => {
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => true,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    try {
+      await hooks.preToolUseHook({ tool_name: "Bash" }, null, null);
+      expect(true).toBe(false); // should not reach
+    } catch (error) {
+      expect(error instanceof Error).toBe(true);
+      expect((error as Error).name).toBe("AbortError");
+      expect((error as Error).message).toBe("Abort requested by user");
+    }
   });
 
   test("pre hook returns decision:block for file access outside allowed paths", async () => {
@@ -85,6 +246,51 @@ describe("query-runtime hooks", () => {
 
     expect(result.decision).toBe("block");
     expect(typeof result.reason).toBe("string");
+    expect((result.reason as string)).toContain("File access blocked");
+  });
+
+  test("pre hook blocks unsafe Bash command with decision:block", async () => {
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const result = await hooks.preToolUseHook(
+      {
+        tool_name: "Bash",
+        tool_input: { command: "rm -rf /" },
+      },
+      null,
+      null
+    );
+
+    expect(result.decision).toBe("block");
+    expect(typeof result.reason).toBe("string");
+    expect((result.reason as string)).toContain("Unsafe command blocked");
+  });
+
+  test("pre hook blocks path traversal via /tmp/../etc/passwd", async () => {
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const result = await hooks.preToolUseHook(
+      {
+        tool_name: "Read",
+        tool_input: { file_path: "/tmp/../etc/passwd" },
+      },
+      null,
+      null
+    );
+
+    expect(result.decision).toBe("block");
     expect((result.reason as string)).toContain("File access blocked");
   });
 
