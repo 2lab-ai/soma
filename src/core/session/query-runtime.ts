@@ -255,23 +255,31 @@ export function checkToolInputSafety(
 }
 
 /**
- * @deprecated Use checkToolInputSafety + PreToolUse hook instead.
- * Kept for backward compatibility with provider event path where hooks
- * may not fire. Logs warnings but does NOT throw — the model should
- * handle blocked tools gracefully.
+ * Secondary validation in event handlers (defense-in-depth).
+ *
+ * The PRIMARY enforcement is the PreToolUse hook returning { decision: 'block' }.
+ * This function is called in event handlers where tool_use events are observed.
+ *
+ * Returns true if the tool is allowed, false if blocked.
+ * Does NOT throw — throwing here kills the entire session (the original bug).
+ * Callers should skip tool processing when this returns false.
+ *
+ * Note: All current providers (ClaudeProviderAdapter) pass hooks to the SDK,
+ * so PreToolUse always fires. This is a safety net for hypothetical future
+ * providers that might not invoke hooks.
  */
 async function validateToolInput(
   toolName: string,
   toolInput: Record<string, unknown>,
   statusCallback: StatusCallback
-): Promise<void> {
+): Promise<boolean> {
   const result = checkToolInputSafety(toolName, toolInput);
   if (!result.allowed) {
-    console.warn(`[VALIDATE] ${result.reason}`);
+    console.error(`[SECURITY] Tool blocked (defense-in-depth): ${result.reason}`);
     await statusCallback("tool", result.reason);
-    // Intentionally NOT throwing — the PreToolUse hook handles blocking
-    // gracefully via { decision: 'block' }. This path is a fallback log only.
+    return false;
   }
+  return true;
 }
 
 function toProviderPermissionMode(
@@ -376,7 +384,14 @@ async function executeProviderRuntime(
           event.payload && typeof event.payload === "object"
             ? (event.payload as Record<string, unknown>)
             : {};
-        await validateToolInput(event.toolName, toolInput, input.statusCallback);
+        const toolAllowed = await validateToolInput(
+          event.toolName,
+          toolInput,
+          input.statusCallback
+        );
+        if (!toolAllowed) {
+          return; // Skip tool processing — PreToolUse hook already blocked this
+        }
 
         if (currentSegmentText) {
           await input.statusCallback(
@@ -637,7 +652,14 @@ export async function executeQueryRuntime(
         if (block.type === "tool_use") {
           const toolName = block.name;
           const toolInput = block.input as Record<string, unknown>;
-          await validateToolInput(toolName, toolInput, input.statusCallback);
+          const toolAllowed = await validateToolInput(
+            toolName,
+            toolInput,
+            input.statusCallback
+          );
+          if (!toolAllowed) {
+            continue; // Skip tool processing — PreToolUse hook already blocked this
+          }
 
           if (currentSegmentText) {
             await input.statusCallback(
