@@ -4,6 +4,7 @@ import { createSessionIdentity } from "../routing/session-key";
 import {
   buildQueryRuntimeMetadata,
   buildQueryRuntimeOptions,
+  checkToolInputSafety,
   createQueryRuntimeHooks,
   executeQueryRuntime,
 } from "./query-runtime";
@@ -15,6 +16,39 @@ function toAsyncGenerator(messages: SDKMessage[]): AsyncGenerator<SDKMessage> {
     }
   })();
 }
+
+describe("checkToolInputSafety", () => {
+  test("allows file access within temp paths", () => {
+    const result = checkToolInputSafety("Read", { file_path: "/tmp/test.ts" });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("blocks file access outside allowed paths without throwing", () => {
+    const result = checkToolInputSafety("Read", {
+      file_path: "/home/zhugehyuk/kl-v2.png",
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("File access blocked");
+      expect(result.reason).toContain("/home/zhugehyuk/kl-v2.png");
+    }
+  });
+
+  test("blocks unsafe bash commands without throwing", () => {
+    const result = checkToolInputSafety("Bash", { command: "rm -rf /" });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("allows safe bash commands", () => {
+    const result = checkToolInputSafety("Bash", { command: "echo hello" });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("allows Write to temp paths", () => {
+    const result = checkToolInputSafety("Write", { file_path: "/tmp/out.ts" });
+    expect(result).toEqual({ allowed: true });
+  });
+});
 
 describe("query-runtime hooks", () => {
   test("pre hook blocks tool execution when stop was requested", async () => {
@@ -29,6 +63,51 @@ describe("query-runtime hooks", () => {
     await expect(
       hooks.preToolUseHook({ tool_name: "Bash" }, null, null)
     ).rejects.toThrow("Abort requested by user");
+  });
+
+  test("pre hook returns decision:block for file access outside allowed paths", async () => {
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const result = await hooks.preToolUseHook(
+      {
+        tool_name: "Read",
+        tool_input: { file_path: "/home/zhugehyuk/kl-v2.png" },
+      },
+      null,
+      null
+    );
+
+    expect(result.decision).toBe("block");
+    expect(typeof result.reason).toBe("string");
+    expect((result.reason as string)).toContain("File access blocked");
+  });
+
+  test("pre hook allows tool with valid path (does not block)", async () => {
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const result = await hooks.preToolUseHook(
+      {
+        tool_name: "Read",
+        tool_input: { file_path: "/tmp/valid-file.ts" },
+      },
+      null,
+      null
+    );
+
+    expect(result).toEqual({});
+    expect(result.decision).toBeUndefined();
   });
 
   test("post hook injects steering payload when buffered messages exist", async () => {
