@@ -27,6 +27,21 @@ describe("normalizeProviderError", () => {
     expect(error.retryable).toBe(true);
   });
 
+  test("preserves original error as cause (S7 contract test)", () => {
+    const originalError = new Error("rate limit exceeded");
+    const normalized = normalizeProviderError("anthropic", originalError);
+    expect(normalized.cause).toBe(originalError);
+  });
+
+  test("cause chain is preserved through double normalization", () => {
+    const originalError = new Error("deep cause");
+    const normalized = normalizeProviderError("anthropic", originalError);
+    // Re-normalizing a NormalizedProviderError returns the same instance
+    const reNormalized = normalizeProviderError("anthropic", normalized);
+    expect(reNormalized).toBe(normalized);
+    expect(reNormalized.cause).toBe(originalError);
+  });
+
   test("preserves already-normalized errors", () => {
     const normalized = new NormalizedProviderError(
       "codex",
