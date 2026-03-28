@@ -159,6 +159,81 @@ describe("ClaudeProviderAdapter", () => {
     });
   });
 
+  test("S3: error result variant emits done:failed with errorMessage and throws", async () => {
+    const mockEvents: SDKMessage[] = [
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["billing_error", "quota_exceeded"],
+        duration_ms: 100,
+        duration_api_ms: 50,
+        num_turns: 1,
+        total_cost_usd: 0,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "session-err",
+      } as unknown as SDKMessage,
+    ];
+
+    const adapter = new ClaudeProviderAdapter(() => toAsyncGenerator(mockEvents));
+    const events: ProviderEvent[] = [];
+
+    const handle = await adapter.startQuery(createInput("q-err"));
+
+    // Error result must throw so callers can handle it
+    try {
+      await adapter.streamEvents(handle, (event) => {
+        events.push(event);
+      });
+      throw new Error("Expected adapter to throw on error result");
+    } catch (error) {
+      expect(error instanceof NormalizedProviderError).toBe(true);
+      const normalized = error as NormalizedProviderError;
+      expect(normalized.message).toContain("billing_error");
+    }
+
+    // done:failed event should be emitted exactly once (no duplicate)
+    const doneEvents = events.filter((event) => event.type === "done");
+    expect(doneEvents.length).toBe(1);
+    expect(doneEvents[0]!.reason).toBe("failed");
+    expect((doneEvents[0] as any).errorMessage).toContain("billing_error");
+    expect((doneEvents[0] as any).errorMessage).toContain("quota_exceeded");
+  });
+
+  test("S3: success result variant emits done:completed", async () => {
+    const mockEvents: SDKMessage[] = [
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: "done",
+        duration_ms: 100,
+        duration_api_ms: 50,
+        num_turns: 1,
+        total_cost_usd: 0.01,
+        usage: { inputTokens: 10, outputTokens: 5 },
+        modelUsage: {},
+        permission_denials: [],
+        session_id: "session-ok",
+      } as unknown as SDKMessage,
+    ];
+
+    const adapter = new ClaudeProviderAdapter(() => toAsyncGenerator(mockEvents));
+    const events: ProviderEvent[] = [];
+
+    const handle = await adapter.startQuery(createInput("q-ok"));
+    await adapter.streamEvents(handle, (event) => {
+      events.push(event);
+    });
+
+    const doneEvent = events.find((event) => event.type === "done");
+    expect(doneEvent).toBeDefined();
+    expect(doneEvent!.reason).toBe("completed");
+    expect((doneEvent as any).errorMessage).toBeUndefined();
+  });
+
   test("emits normalized rate-limit and failed done events on provider error", async () => {
     const adapter = new ClaudeProviderAdapter(() => {
       throw new Error("429 rate limit exceeded");

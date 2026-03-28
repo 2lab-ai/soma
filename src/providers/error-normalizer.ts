@@ -36,9 +36,10 @@ export class NormalizedProviderError extends Error implements ProviderBoundaryEr
     code: ProviderBoundaryErrorCode,
     message: string,
     retryable: boolean,
-    statusCode?: number
+    statusCode?: number,
+    options?: { cause?: unknown }
   ) {
-    super(message);
+    super(message, options);
     this.name = "NormalizedProviderError";
     this.providerId = providerId;
     this.code = code;
@@ -96,6 +97,7 @@ export function normalizeProviderError(
     code,
     message,
     isRetryable(code),
-    statusCode
+    statusCode,
+    { cause: error }
   );
 }
