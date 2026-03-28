@@ -178,12 +178,19 @@ export function isAuthorizedForChat(
     return ALLOWED_USERS.includes(userId);
   }
 
-  // Group/Supergroup: group must be allowed (static OR dynamic) AND user must be allowed
+  // Group/Supergroup
   if (chatType === "group" || chatType === "supergroup") {
-    const groupAllowed =
-      ALLOWED_GROUPS.includes(chatId) || groupRegistry.isRegistered(chatId);
-    if (!groupAllowed) return false;
-    return ALLOWED_USERS.includes(userId);
+    // Static groups: any ALLOWED_USER (backward compat)
+    if (ALLOWED_GROUPS.includes(chatId)) {
+      return ALLOWED_USERS.includes(userId);
+    }
+    // Dynamic groups: owner only
+    // Trace: docs/group-owner-confirm/trace.md, Scenario 4, Section 3a
+    if (groupRegistry.isRegistered(chatId)) {
+      const owner = groupRegistry.getOwner(chatId);
+      return userId === owner;
+    }
+    return false;
   }
 
   // Channels not supported
