@@ -201,7 +201,12 @@ const TRANSCRIPTION_CONTEXT = process.env.TRANSCRIPTION_CONTEXT || "";
 export const TRANSCRIPTION_PROMPT = TRANSCRIPTION_CONTEXT
   ? `${BASE_TRANSCRIPTION_PROMPT}\n\nAdditional context:\n${TRANSCRIPTION_CONTEXT}`
   : BASE_TRANSCRIPTION_PROMPT;
-export const TRANSCRIPTION_AVAILABLE = !!OPENAI_API_KEY;
+export const COHERE_STT_URL = process.env.COHERE_STT_URL || "";
+export const TRANSCRIPTION_AVAILABLE = !!(OPENAI_API_KEY || COHERE_STT_URL);
+
+// Voice reply mode: respond with TTS audio when user sends voice message
+export const VOICE_REPLY_ENABLED = parseEnvBool("VOICE_REPLY_ENABLED", true);
+export const VOICE_REPLY_VOICE = process.env.VOICE_REPLY_VOICE || "iu";
 
 export const DEFAULT_THINKING_TOKENS = Math.min(
   Math.max(0, parseEnvInt("DEFAULT_THINKING_TOKENS", 0)),

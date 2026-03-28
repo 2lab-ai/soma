@@ -11,6 +11,7 @@ export {
   handleRestart,
   handleSessions,
   handleStart,
+  handleVoiceMode,
 } from "./system-commands";
 export {
   handleContext,

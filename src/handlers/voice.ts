@@ -1,11 +1,17 @@
 /**
  * Voice message handler for Claude Telegram Bot.
+ * Includes voice reply mode: responds with TTS audio (fish-tts).
  */
 
 import type { Context } from "grammy";
-import { unlinkSync } from "fs";
+import { createReadStream, unlinkSync } from "fs";
 import { sessionManager } from "../core/session/session-manager";
-import { TEMP_DIR, TRANSCRIPTION_AVAILABLE } from "../config";
+import {
+  TEMP_DIR,
+  TRANSCRIPTION_AVAILABLE,
+  VOICE_REPLY_ENABLED,
+  VOICE_REPLY_VOICE,
+} from "../config";
 import {
   type ChatType,
   isAuthorizedForChat,
@@ -16,10 +22,39 @@ import { auditLog, auditLogRateLimit } from "../utils/audit";
 import { addTimestamp } from "../utils/interrupt";
 import { startTypingIndicator } from "../utils/typing";
 import { transcribeVoice } from "../utils/voice";
+import { generateSpeech, cleanupTtsFile } from "../utils/tts";
 import { StreamingState, createStatusCallback } from "./streaming";
 import { botUsername } from "./text";
 import { handleAbortError } from "../utils/error-classification";
 import { Reactions } from "../constants/reactions";
+import { InputFile } from "grammy";
+
+// ── Voice reply mode toggle (per-chat) ──
+const voiceReplyState = new Map<number, boolean>();
+
+/**
+ * Get voice reply mode for a chat. Defaults to config value.
+ */
+export function isVoiceReplyEnabled(chatId: number): boolean {
+  return voiceReplyState.get(chatId) ?? VOICE_REPLY_ENABLED;
+}
+
+/**
+ * Toggle voice reply mode for a chat. Returns new state.
+ */
+export function toggleVoiceReply(chatId: number): boolean {
+  const current = isVoiceReplyEnabled(chatId);
+  const next = !current;
+  voiceReplyState.set(chatId, next);
+  return next;
+}
+
+/**
+ * Set voice reply mode explicitly for a chat.
+ */
+export function setVoiceReply(chatId: number, enabled: boolean): void {
+  voiceReplyState.set(chatId, enabled);
+}
 
 /**
  * Handle incoming voice messages.
@@ -66,7 +101,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
   // 2. Check if transcription is available
   if (!TRANSCRIPTION_AVAILABLE) {
     await ctx.reply(
-      "Voice transcription is not configured. Set OPENAI_API_KEY in .env"
+      "Voice transcription is not configured. Set OPENAI_API_KEY or COHERE_STT_URL in .env"
     );
     return;
   }
@@ -94,6 +129,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
   const state = new StreamingState();
 
   let voicePath: string | null = null;
+  let ttsPath: string | null = null;
 
   try {
     // 6. Download voice file
@@ -128,17 +164,40 @@ export async function handleVoice(ctx: Context): Promise<void> {
     // 9. Create streaming callback
     const statusCallback = await createStatusCallback(ctx, state, session);
 
-    // 10. Send to Claude (with timestamp)
+    // 10. Send to Claude (with timestamp + voice message tag)
+    const voiceTaggedTranscript = `[음성 메시지] ${transcript}`;
     const claudeResponse = await session.sendMessageStreaming(
-      addTimestamp(transcript),
+      addTimestamp(voiceTaggedTranscript),
       statusCallback,
       chatId
     );
 
-    // 11. Audit log
+    // 11. Voice reply mode: generate TTS and send as voice message
+    if (isVoiceReplyEnabled(chatId) && claudeResponse) {
+      try {
+        const replyText =
+          typeof claudeResponse === "string"
+            ? claudeResponse
+            : String(claudeResponse);
+
+        if (replyText.trim()) {
+          await ctx.api.sendChatAction(chatId, "record_voice");
+
+          ttsPath = await generateSpeech(replyText, VOICE_REPLY_VOICE);
+          if (ttsPath) {
+            await ctx.replyWithVoice(new InputFile(createReadStream(ttsPath)));
+          }
+        }
+      } catch (ttsError) {
+        console.error("[voice] TTS reply failed:", ttsError);
+        // Don't fail the whole handler, text response already sent
+      }
+    }
+
+    // 12. Audit log
     await auditLog(userId, username, "VOICE", transcript, claudeResponse);
 
-    // 12. Update reaction to show complete
+    // 13. Update reaction to show complete
     try {
       await ctx.react(Reactions.COMPLETE);
     } catch {
@@ -170,6 +229,11 @@ export async function handleVoice(ctx: Context): Promise<void> {
       } catch (error) {
         console.debug("Failed to delete voice file:", error);
       }
+    }
+
+    // Clean up TTS file
+    if (ttsPath) {
+      cleanupTtsFile(ttsPath);
     }
   }
 }

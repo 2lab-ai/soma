@@ -4,6 +4,10 @@ import { type ChatType, isAuthorizedForChat } from "../../security";
 import { getSchedulerStatus, reloadScheduler } from "../../scheduler/service";
 import { sessionManager } from "../../core/session/session-manager";
 import { addSystemReaction, sendSystemMessage } from "../../utils/system-message";
+import {
+  isVoiceReplyEnabled,
+  setVoiceReply,
+} from "../voice";
 
 /**
  * /start - Show welcome message and status.
@@ -171,6 +175,48 @@ export async function handleCron(ctx: Context): Promise<void> {
     `${status}\n\n<i>cron.yaml is auto-monitored for changes.\nYou can also use /cron reload to force reload.</i>`,
     { parse_mode: "HTML" }
   );
+}
+
+/**
+ * /voicemode - Toggle voice reply mode (TTS responses to voice messages).
+ */
+export async function handleVoiceMode(ctx: Context): Promise<void> {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  const chatType = ctx.chat?.type as ChatType | undefined;
+
+  if (!isAuthorizedForChat(userId, chatId, chatType)) {
+    if (chatType === "private") {
+      await ctx.reply("Unauthorized.");
+    }
+    return;
+  }
+
+  if (!chatId) return;
+
+  const text = ctx.message?.text || "";
+  const arg = text.replace("/voicemode", "").trim().toLowerCase();
+
+  if (arg === "on") {
+    setVoiceReply(chatId, true);
+    await ctx.reply("🔊 음성 답변 모드 ON\n음성 메시지에 IU 보이스로 답변합니다.");
+  } else if (arg === "off") {
+    setVoiceReply(chatId, false);
+    await ctx.reply("🔇 음성 답변 모드 OFF\n텍스트로만 답변합니다.");
+  } else {
+    const current = isVoiceReplyEnabled(chatId);
+    const newState = !current;
+    setVoiceReply(chatId, newState);
+    const emoji = newState ? "🔊" : "🔇";
+    const label = newState ? "ON" : "OFF";
+    await ctx.reply(
+      `${emoji} 음성 답변 모드 ${label}\n\n` +
+        `사용법:\n` +
+        `/voicemode on - 켜기\n` +
+        `/voicemode off - 끄기\n` +
+        `/voicemode - 토글`
+    );
+  }
 }
 
 /**

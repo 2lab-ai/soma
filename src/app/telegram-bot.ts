@@ -18,6 +18,7 @@ import {
   handleSessions,
   handleModel,
   handleSkills,
+  handleVoiceMode,
   handleText,
   handleVoice,
   handlePhoto,
@@ -42,6 +43,7 @@ const TELEGRAM_COMMANDS = [
   { command: "retry", description: "Retry last message" },
   { command: "cron", description: "Scheduled jobs status/reload" },
   { command: "sessions", description: "List all active sessions (admin)" },
+  { command: "voicemode", description: "Toggle voice reply mode (IU TTS)" },
 ] as const;
 
 export function createTelegramBot(): Bot<Context> {
@@ -130,6 +132,7 @@ export async function registerBotCommands(bot: Bot<Context>): Promise<void> {
   bot.command("retry", handleRetry);
   bot.command("cron", handleCron);
   bot.command("sessions", handleSessions);
+  bot.command("voicemode", handleVoiceMode);
 }
 
 export function registerBotHandlers(bot: Bot<Context>): void {
