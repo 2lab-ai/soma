@@ -43,7 +43,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
   try {
     await deliverInboundReaction(Reactions.PROCESSING);
-  } catch {}
+  } catch (e) { console.warn("[REACT] deliverInboundReaction failed:", e); }
 
   const typing = startTypingIndicator(ctx);
   let state = new StreamingState();
@@ -63,7 +63,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
         try {
           await deliverInboundReaction(Reactions.COMPLETE);
-        } catch {}
+        } catch (e) { console.warn("[REACT] complete reaction failed:", e); }
 
         const MAX_AUTO_CONTINUE_ROUNDS = 5;
         let autoContinueRound = 0;
@@ -138,7 +138,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
                 parse_mode: "HTML",
               }
             );
-          } catch {}
+          } catch (e) { console.warn("[SYSTEM-MSG] steering notification failed:", e); }
 
           const followUpMessage = `[이전 응답 중 보낸 메시지 - 지금 처리합니다]\n${steeringContent}`;
 
@@ -280,7 +280,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           session.addSteering(message, msgId);
           try {
             await sendSystemMessage(ctx, "⏳ 이전 요청 처리 중입니다. 메시지가 대기열에 추가되었습니다.");
-          } catch {}
+          } catch (e) { console.warn("[SYSTEM-MSG] steering queue notification failed:", e); }
           return;
         }
 
@@ -373,7 +373,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
               await auditLog(userId, username, "TEXT_FALLBACK", message, retryResponse);
               try {
                 await deliverInboundReaction(Reactions.COMPLETE);
-              } catch {}
+              } catch (e) { console.warn("[REACT] fallback complete reaction failed:", e); }
 
               const fallbackModel = session.temporaryModelOverride;
               const modelName = fallbackModel
@@ -423,7 +423,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         if (!(await handleAbortError(ctx, error, session))) {
           try {
             await deliverInboundReaction(Reactions.ERROR_MODEL);
-          } catch {}
+          } catch (e) { console.warn("[REACT] error reaction failed:", e); }
           await ctx.reply(formatErrorForUser(error));
         }
         break;
