@@ -34,10 +34,18 @@ export interface QueryFlowParams {
   deliverInboundReaction: (reaction: string) => Promise<void>;
 }
 
+// Marker returned by interrupt-flow when steering messages remain in buffer.
+// When detected, skip the initial Claude query and go straight to auto-continue.
+const INTERRUPT_STEERING_MARKER = "[시스템: 인터럽트 후 대기 메시지 처리]";
+
 export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
   const { ctx, session, message, chatId, userId, username, deliverInboundReaction } =
     params;
-  session.lastMessage = message;
+  // Don't pollute lastMessage with synthetic interrupt marker (breaks /retry)
+  const isInterruptDrain = message === INTERRUPT_STEERING_MARKER;
+  if (!isInterruptDrain) {
+    session.lastMessage = message;
+  }
   const messageWithTimestamp = addTimestamp(message);
   const stopProcessing = session.startProcessing();
 
@@ -51,19 +59,26 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
   const MAX_RETRIES = 1;
 
   try {
+    // When interrupt drains steering, skip initial query — go straight to auto-continue loop
+    if (isInterruptDrain) {
+      console.log("[QUERY-FLOW] Interrupt drain mode: skipping initial query, entering auto-continue");
+    }
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const response = await session.sendMessageStreaming(
-          messageWithTimestamp,
-          statusCallback,
-          chatId
-        );
+        if (!isInterruptDrain) {
+          const response = await session.sendMessageStreaming(
+            messageWithTimestamp,
+            statusCallback,
+            chatId
+          );
 
-        await auditLog(userId, username, "TEXT", message, response);
+          await auditLog(userId, username, "TEXT", message, response);
 
-        try {
-          await deliverInboundReaction(Reactions.COMPLETE);
-        } catch {}
+          try {
+            await deliverInboundReaction(Reactions.COMPLETE);
+          } catch {}
+        } // end if (!isInterruptDrain)
 
         const MAX_AUTO_CONTINUE_ROUNDS = 5;
         let autoContinueRound = 0;
@@ -457,9 +472,13 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
               `[STEERING] Preserved ${lostCount} message(s) as nextQueryContext due to error`
             );
           }
-          await ctx.reply(
-            `⚠️ 에러 발생. 대기 중이던 ${lostCount}개 메시지가 다음 요청에 자동 포함됩니다.`
-          );
+          try {
+            await ctx.reply(
+              `⚠️ 에러 발생. 대기 중이던 ${lostCount}개 메시지가 다음 요청에 자동 포함됩니다.`
+            );
+          } catch (notifyError) {
+            console.error("[STEERING] Failed to notify user of error recovery:", notifyError);
+          }
         }
 
         if (!(await handleAbortError(ctx, error, session))) {

@@ -45,12 +45,13 @@ export async function runInterruptRoute(
     console.log(
       `[INTERRUPT] Stopped processing. ${pendingCount} steering message(s) remain in buffer for auto-processing.`
     );
-    try {
-      await sendSystemMessage(
-        ctx,
-        `🛑 중단됨. 대기 메시지 ${pendingCount}개 자동 처리 중...`
-      );
-    } catch {
+    // sendSystemMessage swallows errors and returns null on failure,
+    // so we check return value instead of relying on try-catch.
+    const notifyResult = await sendSystemMessage(
+      ctx,
+      `🛑 중단됨. 대기 메시지 ${pendingCount}개 자동 처리 중...`
+    );
+    if (!notifyResult) {
       try {
         await deliverInboundReaction(Reactions.INTERRUPTED);
       } catch {}
