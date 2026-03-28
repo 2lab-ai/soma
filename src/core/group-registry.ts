@@ -9,6 +9,7 @@
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { ALLOWED_USERS } from "../config";
 
 const DEFAULT_PERSISTENCE_PATH = "/tmp/soma-groups.json";
 const WRITE_TMP_SUFFIX = ".tmp";
@@ -124,9 +125,11 @@ export class GroupRegistry {
       let migrated = 0;
       for (const entry of data.groups) {
         if (typeof entry === "number" && Number.isFinite(entry)) {
-          // Old format: plain number → migrate with default ownerId=0
+          // Old format: plain number → migrate with owner=ALLOWED_USERS[0]
+          // ownerId=0 would brick the group since isAuthorizedForChat checks owner match
+          const fallbackOwner = ALLOWED_USERS[0] ?? 0;
           this.registeredGroups.set(entry, {
-            ownerId: 0,
+            ownerId: fallbackOwner,
             activatedAt: "migrated",
           });
           migrated++;
