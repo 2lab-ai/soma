@@ -7,7 +7,9 @@ import {
   checkToolInputSafety,
   createQueryRuntimeHooks,
   executeQueryRuntime,
+  extractBashFilePaths,
 } from "./query-runtime";
+import { isAbortError } from "../../utils/error-classification";
 
 function toAsyncGenerator(messages: SDKMessage[]): AsyncGenerator<SDKMessage> {
   return (async function* () {
@@ -190,6 +192,128 @@ describe("checkToolInputSafety", () => {
     });
     expect(result).toEqual({ allowed: true });
   });
+
+  // --- Codex review findings: two-token flags ---
+
+  test("blocks Bash head -n 5 of file outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "head -n 5 /etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks Bash tail -n 20 of file outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "tail -n 20 /etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks Bash sed with file argument outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "sed -n '1p' /etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks Bash awk with file argument outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "awk '{print $1}' /etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  // --- Codex review findings: multi-operand (cp/mv destination) ---
+
+  test("blocks Bash cp when destination is outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "cp /tmp/ok /etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks Bash mv when destination is outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "mv /tmp/ok /root/.ssh/authorized_keys",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks Bash tee to file outside allowed paths", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "tee /tmp/ok /etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  // --- Codex review findings: piped commands ---
+
+  test("blocks piped Bash command accessing blocked file", () => {
+    const result = checkToolInputSafety("Bash", {
+      command: "echo foo | cat /etc/shadow",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  // --- Codex review findings: Grep/Glob traversal ---
+
+  test("blocks Grep with path traversal via /tmp/../etc/passwd", () => {
+    const result = checkToolInputSafety("Grep", {
+      path: "/tmp/../etc/passwd",
+      pattern: "root",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks Glob with path traversal via /tmp/../home/user", () => {
+    const result = checkToolInputSafety("Glob", {
+      path: "/tmp/../home/user",
+      pattern: "*.key",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("allows Glob with path in temp directories", () => {
+    const result = checkToolInputSafety("Glob", {
+      path: "/tmp/project",
+      pattern: "*.ts",
+    });
+    expect(result).toEqual({ allowed: true });
+  });
+});
+
+// --- extractBashFilePaths unit tests ---
+
+describe("extractBashFilePaths", () => {
+  test("extracts single absolute path from cat", () => {
+    expect(extractBashFilePaths("cat /etc/passwd")).toEqual(["/etc/passwd"]);
+  });
+
+  test("extracts path after two-token flag (head -n 5)", () => {
+    expect(extractBashFilePaths("head -n 5 /etc/passwd")).toEqual(["/etc/passwd"]);
+  });
+
+  test("extracts all paths from cp (source + destination)", () => {
+    const paths = extractBashFilePaths("cp /tmp/a /etc/passwd");
+    expect(paths).toContain("/tmp/a");
+    expect(paths).toContain("/etc/passwd");
+    expect(paths).toHaveLength(2);
+  });
+
+  test("skips quoted arguments (awk patterns)", () => {
+    expect(extractBashFilePaths("awk '{print $1}' /etc/passwd")).toEqual(["/etc/passwd"]);
+  });
+
+  test("extracts paths from piped commands", () => {
+    const paths = extractBashFilePaths("echo foo | cat /etc/shadow");
+    expect(paths).toEqual(["/etc/shadow"]);
+  });
+
+  test("returns empty for non-file commands", () => {
+    expect(extractBashFilePaths("echo hello world")).toEqual([]);
+    expect(extractBashFilePaths("ls -la /etc")).toEqual([]);
+    expect(extractBashFilePaths("git status")).toEqual([]);
+  });
 });
 
 describe("query-runtime hooks", () => {
@@ -223,6 +347,8 @@ describe("query-runtime hooks", () => {
       expect(error instanceof Error).toBe(true);
       expect((error as Error).name).toBe("AbortError");
       expect((error as Error).message).toBe("Abort requested by user");
+      // Integration: verify isAbortError() actually recognizes this error
+      expect(isAbortError(error)).toBe(true);
     }
   });
 
