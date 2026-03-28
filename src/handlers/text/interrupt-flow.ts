@@ -36,27 +36,27 @@ export async function runInterruptRoute(
     return { handled: true, message: nextMessage, wasInterrupt };
   }
 
-  const lostMessages = session.extractSteeringMessages();
-  if (lostMessages.length > 0) {
-    const sessionKey = sessionManager.deriveKey(chatId, threadId);
-    session.setPendingRecovery(lostMessages, chatId);
+  // Check if there are queued steering messages
+  const pendingCount = session.getSteeringCount();
 
-    const keyboard = TelegramChoiceBuilder.buildLostMessageKeyboard(sessionKey);
-    const messageText = TelegramChoiceBuilder.buildLostMessageText(lostMessages, true);
-
+  if (pendingCount > 0) {
+    // Messages stay in steering buffer — auto-continue loop will process them.
+    // Do NOT extract/remove them (old behavior silently lost messages on timeout).
+    console.log(
+      `[INTERRUPT] Stopped processing. ${pendingCount} steering message(s) remain in buffer for auto-processing.`
+    );
     try {
-      const sentMsg = await ctx.reply(messageText, {
-        reply_markup: keyboard,
-        parse_mode: "Markdown",
-      });
-      session.setPendingRecovery(lostMessages, chatId, sentMsg.message_id);
-    } catch (replyError) {
-      console.error("[INTERRUPT] Failed to send lost message UI:", replyError);
+      await sendSystemMessage(
+        ctx,
+        `🛑 중단됨. 대기 메시지 ${pendingCount}개 자동 처리 중...`
+      );
+    } catch {
       try {
-        await sendSystemMessage(ctx, "🛑 Stopped (had undelivered messages)");
+        await deliverInboundReaction(Reactions.INTERRUPTED);
       } catch {}
     }
-    return { handled: true, message: nextMessage, wasInterrupt };
+    // Return handled=false so text.ts continues to runQueryFlow → auto-continue drains buffer
+    return { handled: false, message: "", wasInterrupt };
   }
 
   try {
