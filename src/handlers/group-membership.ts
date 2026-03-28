@@ -1,16 +1,16 @@
 /**
  * Group Membership Handler for Telegram Bot.
  *
- * Handles my_chat_member events to auto-detect when the bot is
- * added to or removed from groups. Dynamically registers/unregisters
- * groups in GroupRegistry.
+ * Handles my_chat_member events. On bot join: sends DM to owner for confirmation
+ * instead of auto-registering. On bot leave: unregisters group.
  *
- * Trace: docs/telegram-group-session/trace.md, Scenarios 1-3
+ * Trace: docs/group-owner-confirm/trace.md, Scenarios 1, 3
  */
 
-import type { Context } from "grammy";
+import { InlineKeyboard, type Context } from "grammy";
 import { ALLOWED_GROUPS, ALLOWED_USERS } from "../config";
 import { groupRegistry } from "../core/group-registry";
+import { pendingGroupStore } from "../core/pending-group-store";
 
 /** Chat types that are considered groups. */
 const GROUP_CHAT_TYPES = new Set(["group", "supergroup"]);
@@ -24,7 +24,6 @@ function isMemberStatus(member: { status: string; is_member?: boolean }): boolea
   if (status === "member" || status === "administrator" || status === "creator") {
     return true;
   }
-  // `restricted` status: check is_member flag (Telegram supergroup feature)
   if (status === "restricted") {
     return member.is_member === true;
   }
@@ -34,8 +33,7 @@ function isMemberStatus(member: { status: string; is_member?: boolean }): boolea
 /**
  * Handle my_chat_member updates — bot added/removed from groups.
  *
- * Trace S1: Bot added → register if adder is ALLOWED_USER.
- * Trace S2: Bot added by unauthorized user → ignore.
+ * Trace S1: Bot added → send DM to owner for confirmation.
  * Trace S3: Bot removed → unregister.
  */
 export async function handleGroupMembership(ctx: Context): Promise<void> {
@@ -46,7 +44,6 @@ export async function handleGroupMembership(ctx: Context): Promise<void> {
   const chatType = update.chat.type;
   const adderId = update.from.id;
 
-  // Guard: only handle group/supergroup events
   if (!GROUP_CHAT_TYPES.has(chatType)) {
     return;
   }
@@ -59,23 +56,18 @@ export async function handleGroupMembership(ctx: Context): Promise<void> {
   } else if (wasMember && !isMember) {
     handleBotLeftGroup(chatId);
   }
-  // Other transitions (e.g., promoted within member state) are silently ignored.
 }
 
 /**
  * Handle bot being added to a group.
- * Trace S1, Section 3a: validate adder is ALLOWED_USER → register.
- * Trace S2, Section 3a: unauthorized adder → silent reject.
- *
- * Skips registration for groups already in static ALLOWED_GROUPS
- * to preserve their existing mention-based response behavior.
+ * Trace S1: Instead of auto-register, send DM to owner for confirmation.
  */
 async function handleBotJoinedGroup(
   ctx: Context,
   chatId: number,
   adderId: number
 ): Promise<void> {
-  // Security gate: only ALLOWED_USERS can register groups
+  // Security gate: only ALLOWED_USERS can trigger the flow
   if (!ALLOWED_USERS.includes(adderId)) {
     console.warn(
       `[GroupMembership] Unauthorized user ${adderId} added bot to group ${chatId}`
@@ -83,42 +75,92 @@ async function handleBotJoinedGroup(
     return;
   }
 
-  // Skip registration for statically configured groups — preserve their
-  // existing mention-based response policy (backward compatibility).
+  // Static groups: skip (backward compatibility)
   if (ALLOWED_GROUPS.includes(chatId)) {
     console.log(
-      `[GroupMembership] Bot added to static group ${chatId} — skipping dynamic registration`
+      `[GroupMembership] Bot added to static group ${chatId} — skipping confirmation flow`
     );
     return;
   }
 
-  const isNew = groupRegistry.register(chatId);
-  if (isNew) {
+  // Already registered: skip
+  if (groupRegistry.isRegistered(chatId)) {
     console.log(
-      `[GroupMembership] Bot added to group ${chatId} by user ${adderId}`
+      `[GroupMembership] Group ${chatId} already registered — skipping`
     );
+    return;
+  }
 
-    // Send welcome message
-    try {
-      await ctx.reply(
-        "안녕하세요! 이 그룹에서 도움이 필요하시면 말씀해 주세요. 🤖"
-      );
-    } catch (error) {
-      console.error(
-        `[GroupMembership] Failed to send welcome to group ${chatId} (bot may lack send permission):`,
-        error
-      );
-    }
+  const ownerId = ALLOWED_USERS[0]!;
+  const chatTitle =
+    (ctx.myChatMember?.chat as { title?: string })?.title || `Group ${chatId}`;
+
+  // Build confirmation keyboard
+  const keyboard = new InlineKeyboard()
+    .text("✅ 활성화", `grp:${chatId}:accept`)
+    .text("❌ 거부", `grp:${chatId}:reject`);
+
+  // Send DM to owner
+  let dmMessageId = 0;
+  try {
+    const dmMessage = await ctx.api.sendMessage(
+      ownerId,
+      `🔔 <b>그룹 활성화 요청</b>\n\n` +
+        `그룹: <b>${escapeHtml(chatTitle)}</b>\n` +
+        `그룹 ID: <code>${chatId}</code>\n` +
+        `추가한 사용자: <code>${adderId}</code>\n\n` +
+        `이 그룹에서 봇을 활성화하시겠습니까?`,
+      { parse_mode: "HTML", reply_markup: keyboard }
+    );
+    dmMessageId = dmMessage.message_id;
+  } catch (error) {
+    console.error(
+      `[GroupMembership] Failed to send DM to owner ${ownerId} for group ${chatId}:`,
+      error
+    );
+    return;
+  }
+
+  // Store pending confirmation
+  pendingGroupStore.add({
+    chatId,
+    chatTitle,
+    adderId,
+    ownerId,
+    dmMessageId,
+    createdAt: Date.now(),
+  });
+
+  console.log(
+    `[GroupMembership] Pending confirmation sent for group ${chatId} to owner ${ownerId}`
+  );
+
+  // Send waiting message to group
+  try {
+    await ctx.reply("⏳ 오너 확인을 기다리는 중입니다...");
+  } catch (error) {
+    console.error(
+      `[GroupMembership] Failed to send waiting message to group ${chatId}:`,
+      error
+    );
   }
 }
 
 /**
  * Handle bot being removed from a group.
- * Trace S3, Section 3a: unregister group.
  */
 function handleBotLeftGroup(chatId: number): void {
   const wasRegistered = groupRegistry.unregister(chatId);
   if (wasRegistered) {
     console.log(`[GroupMembership] Bot removed from group ${chatId}`);
   }
+  // Also clean up any pending confirmation
+  pendingGroupStore.remove(chatId);
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }

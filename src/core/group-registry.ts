@@ -1,11 +1,11 @@
 /**
  * Dynamic Group Registry for Telegram Group Session Management.
  *
- * Maintains a runtime-mutable set of registered group chatIds,
+ * Maintains a runtime-mutable map of registered group chatIds with owner info,
  * persisted to disk as JSON. Merges with static ALLOWED_GROUPS
  * at the security layer (not here — single responsibility).
  *
- * Trace: docs/telegram-group-session/trace.md, Scenarios 1-6
+ * Trace: docs/group-owner-confirm/trace.md, Scenario 6
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "fs";
@@ -13,13 +13,20 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "fs";
 const DEFAULT_PERSISTENCE_PATH = "/tmp/soma-groups.json";
 const WRITE_TMP_SUFFIX = ".tmp";
 
+/** Entry stored per registered group. */
+export interface GroupEntry {
+  ownerId: number;
+  activatedAt: string;
+}
+
+/** Persistence format — supports both old (number[]) and new (GroupEntry[]) formats. */
 interface PersistedGroupData {
-  groups: number[];
+  groups: (number | { chatId: number; ownerId: number; activatedAt: string })[];
   updatedAt: string;
 }
 
 export class GroupRegistry {
-  private readonly registeredGroups: Set<number> = new Set();
+  private readonly registeredGroups: Map<number, GroupEntry> = new Map();
   private readonly persistencePath: string;
 
   constructor(persistencePath: string = DEFAULT_PERSISTENCE_PATH) {
@@ -28,17 +35,17 @@ export class GroupRegistry {
   }
 
   /**
-   * Register a group chatId. Returns true if newly added, false if already existed.
-   * Trace S1, Section 3b: adds chatId to Set, triggers saveToDisk.
+   * Register a group chatId with owner. Returns true if newly added.
+   * Trace S6, Section 3a: register(chatId, ownerId) stores owner association.
    */
-  register(chatId: number): boolean {
+  register(chatId: number, ownerId: number = 0): boolean {
     if (this.registeredGroups.has(chatId)) {
       return false;
     }
-    this.registeredGroups.add(chatId);
+    const entry: GroupEntry = { ownerId, activatedAt: new Date().toISOString() };
+    this.registeredGroups.set(chatId, entry);
     const persisted = this.saveToDisk();
     if (!persisted) {
-      // Roll back: memory must match disk to prevent ghost entries on restart
       this.registeredGroups.delete(chatId);
       console.error(
         `[GroupRegistry] ROLLED BACK register of group ${chatId} — disk write failed`
@@ -46,24 +53,24 @@ export class GroupRegistry {
       return false;
     }
     console.log(
-      `[GroupRegistry] Registered group ${chatId} (total: ${this.registeredGroups.size})`
+      `[GroupRegistry] Registered group ${chatId} owner=${ownerId} (total: ${this.registeredGroups.size})`
     );
     return true;
   }
 
   /**
-   * Unregister a group chatId. Returns true if was registered, false if wasn't.
-   * Trace S3, Section 3b: removes chatId from Set, triggers saveToDisk.
+   * Unregister a group chatId. Returns true if was registered.
+   * Trace S3, Section 3b.
    */
   unregister(chatId: number): boolean {
-    if (!this.registeredGroups.has(chatId)) {
+    const entry = this.registeredGroups.get(chatId);
+    if (!entry) {
       return false;
     }
     this.registeredGroups.delete(chatId);
     const persisted = this.saveToDisk();
     if (!persisted) {
-      // Roll back: re-add to memory so state matches stale disk file
-      this.registeredGroups.add(chatId);
+      this.registeredGroups.set(chatId, entry);
       console.error(
         `[GroupRegistry] ROLLED BACK unregister of group ${chatId} — disk write failed`
       );
@@ -77,22 +84,26 @@ export class GroupRegistry {
 
   /**
    * Check if a group chatId is dynamically registered.
-   * Trace S4, Section 3a: O(1) Set lookup.
    */
   isRegistered(chatId: number): boolean {
     return this.registeredGroups.has(chatId);
   }
 
   /**
-   * Number of dynamically registered groups.
+   * Get the owner userId for a registered group.
+   * Trace S6, Section 3a: returns ownerId or undefined.
    */
+  getOwner(chatId: number): number | undefined {
+    return this.registeredGroups.get(chatId)?.ownerId;
+  }
+
   get size(): number {
     return this.registeredGroups.size;
   }
 
   /**
    * Load persisted groups from disk.
-   * Trace S5, Section 3a: read file → parse JSON → populate Set.
+   * Trace S6, Section 3b: supports migration from old number[] to new GroupEntry[] format.
    */
   private loadFromDisk(): void {
     try {
@@ -110,37 +121,62 @@ export class GroupRegistry {
       }
 
       let skipped = 0;
-      for (const groupId of data.groups) {
-        if (typeof groupId === "number" && Number.isFinite(groupId)) {
-          this.registeredGroups.add(groupId);
+      let migrated = 0;
+      for (const entry of data.groups) {
+        if (typeof entry === "number" && Number.isFinite(entry)) {
+          // Old format: plain number → migrate with default ownerId=0
+          this.registeredGroups.set(entry, {
+            ownerId: 0,
+            activatedAt: "migrated",
+          });
+          migrated++;
+        } else if (
+          typeof entry === "object" &&
+          entry !== null &&
+          typeof entry.chatId === "number" &&
+          Number.isFinite(entry.chatId) &&
+          typeof entry.ownerId === "number"
+        ) {
+          // New format: GroupEntry object
+          this.registeredGroups.set(entry.chatId, {
+            ownerId: entry.ownerId,
+            activatedAt: entry.activatedAt || "unknown",
+          });
         } else {
           skipped++;
           console.warn(
-            `[GroupRegistry] Skipping invalid group entry: ${JSON.stringify(groupId)}`
+            `[GroupRegistry] Skipping invalid group entry: ${JSON.stringify(entry)}`
           );
         }
       }
 
-      console.log(
-        `[GroupRegistry] Loaded ${this.registeredGroups.size} groups from disk` +
-          (skipped > 0 ? ` (${skipped} invalid entries skipped)` : "")
+      const parts: string[] = [];
+      parts.push(
+        `[GroupRegistry] Loaded ${this.registeredGroups.size} groups from disk`
       );
+      if (migrated > 0) parts.push(`(${migrated} migrated from old format)`);
+      if (skipped > 0) parts.push(`(${skipped} invalid entries skipped)`);
+      console.log(parts.join(" "));
+
+      // Auto-save if migration occurred to persist new format
+      if (migrated > 0) {
+        this.saveToDisk();
+      }
     } catch (error) {
       console.error("[GroupRegistry] Failed to load from disk:", error);
-      // Start with empty set — non-critical failure
     }
   }
 
   /**
-   * Save current groups to disk.
-   * Trace S5, Section 3b: Set → Array → JSON → writeFileSync.
+   * Save current groups to disk in new GroupEntry[] format.
    */
   private saveToDisk(): boolean {
     try {
-      const data: PersistedGroupData = {
-        groups: Array.from(this.registeredGroups),
-        updatedAt: new Date().toISOString(),
-      };
+      const groups: { chatId: number; ownerId: number; activatedAt: string }[] = [];
+      for (const [chatId, entry] of this.registeredGroups) {
+        groups.push({ chatId, ownerId: entry.ownerId, activatedAt: entry.activatedAt });
+      }
+      const data = { groups, updatedAt: new Date().toISOString() };
       const tmpPath = this.persistencePath + WRITE_TMP_SUFFIX;
       writeFileSync(tmpPath, JSON.stringify(data, null, 2));
       renameSync(tmpPath, this.persistencePath);
