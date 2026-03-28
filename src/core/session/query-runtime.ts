@@ -740,10 +740,21 @@ export async function executeQueryRuntime(
     }
 
     if (event.type === "result") {
-      console.log("Response complete");
       closeCurrentTool();
-      queryCompleted = true;
-      input.onQueryCompleted?.();
+
+      // Check for SDK error variants (error_during_execution, error_max_turns, etc.)
+      const resultSubtype = (event as unknown as { subtype?: string }).subtype;
+      const resultErrors = (event as unknown as { errors?: string[] }).errors;
+      const resultIsError = (event as unknown as { is_error?: boolean }).is_error;
+
+      if (resultSubtype && resultSubtype !== "success") {
+        console.error(`[SDK-RESULT-ERROR] subtype=${resultSubtype}, is_error=${resultIsError}, errors=${JSON.stringify(resultErrors ?? [])}`);
+        queryCompleted = false;
+      } else {
+        console.log("Response complete");
+        queryCompleted = true;
+        input.onQueryCompleted?.();
+      }
 
       const contextWindowFromClaudeCode = (() => {
         const cw = (event as unknown as { context_window?: unknown }).context_window;

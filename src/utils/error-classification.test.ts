@@ -206,6 +206,110 @@ describe("formatErrorForUser", () => {
   });
 });
 
+describe("extractErrorDetails — SDK/Provider fields (S1 contract test)", () => {
+  test("extracts NormalizedProviderError fields: statusCode, code, providerId, retryable", () => {
+    // Simulate a NormalizedProviderError-like object
+    const err = new Error("429 rate limit exceeded") as Error & {
+      statusCode: number;
+      code: string;
+      providerId: string;
+      retryable: boolean;
+    };
+    err.name = "NormalizedProviderError";
+    err.statusCode = 429;
+    err.code = "RATE_LIMIT";
+    err.providerId = "anthropic";
+    err.retryable = true;
+
+    const details = extractErrorDetails(err);
+    expect(details.statusCode).toBe(429);
+    expect(details.errorCode).toBe("RATE_LIMIT");
+    expect(details.providerId).toBe("anthropic");
+    expect(details.retryable).toBe(true);
+  });
+
+  test("extracts status field when statusCode not present", () => {
+    const err = new Error("server error") as Error & { status: number };
+    err.status = 500;
+    const details = extractErrorDetails(err);
+    expect(details.statusCode).toBe(500);
+  });
+
+  test("extracts request_id from error", () => {
+    const err = new Error("api error") as Error & { request_id: string };
+    err.request_id = "req-abc123";
+    const details = extractErrorDetails(err);
+    expect(details.requestId).toBe("req-abc123");
+  });
+
+  test("extracts errors array (sdkErrors)", () => {
+    const err = new Error("execution failed") as Error & { errors: string[] };
+    err.errors = ["rate limit exceeded", "billing error"];
+    const details = extractErrorDetails(err);
+    expect(details.sdkErrors).toEqual(["rate limit exceeded", "billing error"]);
+  });
+
+  test("converts non-string entries in errors array", () => {
+    const err = new Error("mixed errors") as Error & { errors: unknown[] };
+    err.errors = ["valid error", 123, null, "another error", { message: "structured error" }];
+    const details = extractErrorDetails(err);
+    expect(details.sdkErrors).toEqual(["valid error", "123", "another error", "structured error"]);
+  });
+
+  test("skips Node.js system error codes (ENOENT, EACCES)", () => {
+    const err = new Error("no such file") as Error & { code: string };
+    err.code = "ENOENT";
+    const details = extractErrorDetails(err);
+    expect(details.errorCode).toBeUndefined();
+  });
+
+  test("does not extract SDK fields from plain Error", () => {
+    const details = extractErrorDetails(new Error("plain error"));
+    expect(details.statusCode).toBeUndefined();
+    expect(details.errorCode).toBeUndefined();
+    expect(details.providerId).toBeUndefined();
+    expect(details.retryable).toBeUndefined();
+    expect(details.requestId).toBeUndefined();
+    expect(details.sdkErrors).toBeUndefined();
+  });
+});
+
+describe("formatErrorForUser — SDK diagnostic info (S5 contract test)", () => {
+  test("includes HTTP status code in user message", () => {
+    const err = new Error("rate limited") as Error & { statusCode: number; code: string };
+    err.statusCode = 429;
+    err.code = "RATE_LIMIT";
+    const msg = formatErrorForUser(err);
+    expect(msg).toContain("[HTTP 429]");
+    expect(msg).toContain("[RATE_LIMIT]");
+  });
+
+  test("includes provider and retryable info", () => {
+    const err = new Error("error") as Error & { providerId: string; retryable: boolean };
+    err.providerId = "anthropic";
+    err.retryable = true;
+    const msg = formatErrorForUser(err);
+    expect(msg).toContain("Provider: anthropic");
+    expect(msg).toContain("Retryable: true");
+  });
+
+  test("includes SDK errors list", () => {
+    const err = new Error("failed") as Error & { errors: string[] };
+    err.errors = ["billing_error", "quota_exceeded"];
+    const msg = formatErrorForUser(err);
+    expect(msg).toContain("SDK errors:");
+    expect(msg).toContain("billing_error");
+    expect(msg).toContain("quota_exceeded");
+  });
+
+  test("allows messages up to 2000 chars (not 800)", () => {
+    const longMsg = "x".repeat(1500);
+    const msg = formatErrorForUser(new Error(longMsg));
+    // The message portion alone should be preserved up to 2000 chars
+    expect(msg).toContain("x".repeat(1500));
+  });
+});
+
 describe("formatErrorForLog", () => {
   test("includes error name and message", () => {
     const log = formatErrorForLog(new Error("test error"));

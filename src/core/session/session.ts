@@ -881,7 +881,7 @@ export class ClaudeSession {
         console.warn(`Suppressed expected abort (completed: ${queryCompleted})`);
       } else {
         console.error("Error in query:", error);
-        this.lastError = String(error).slice(0, 100);
+        this.lastError = String(error).slice(0, 500);
         this.lastErrorTime = new Date();
         throw error;
       }
