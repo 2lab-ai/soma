@@ -788,9 +788,26 @@ export async function executeQueryRuntime(
       const resultErrors = (event as unknown as { errors?: string[] }).errors;
       const resultIsError = (event as unknown as { is_error?: boolean }).is_error;
 
-      if (resultSubtype && resultSubtype !== "success") {
+      // Use allowlist of known error subtypes (same as claude-adapter.ts)
+      const SDK_ERROR_SUBTYPES = new Set([
+        "error_during_execution",
+        "error_max_turns",
+        "error_tool_execution",
+        "error_max_budget_usd",
+        "error_max_structured_output_retries",
+      ]);
+      const isErrorResult = resultSubtype !== undefined && (
+        SDK_ERROR_SUBTYPES.has(resultSubtype) || resultIsError === true
+      );
+
+      if (isErrorResult) {
+        const errorMsg = resultErrors?.length
+          ? resultErrors.join("; ")
+          : `SDK execution error: ${resultSubtype}`;
         console.error(`[SDK-RESULT-ERROR] subtype=${resultSubtype}, is_error=${resultIsError}, errors=${JSON.stringify(resultErrors ?? [])}`);
         queryCompleted = false;
+        // Throw so session.ts catch block captures this as a real error
+        throw new Error(errorMsg);
       } else {
         console.log("Response complete");
         queryCompleted = true;
