@@ -253,6 +253,8 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
             "error_during_execution",
             "error_max_turns",
             "error_tool_execution",
+            "error_max_budget_usd",
+            "error_max_structured_output_retries",
           ]);
           const isErrorResult = resultSubtype !== undefined && (
             SDK_ERROR_SUBTYPES.has(resultSubtype) || resultIsError === true
@@ -320,6 +322,9 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
             }
           }
 
+          // Set flag BEFORE await to prevent duplicate done emission
+          // even if onEvent throws partway through processing.
+          doneEmitted = true;
           await onEvent({
             providerId: this.providerId,
             queryId: handle.queryId,
@@ -330,7 +335,6 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
               ? { errorMessage: resultErrors.join("; ") }
               : {}),
           });
-          doneEmitted = true;
 
           // Throw on error results so callers (query-flow.ts) can handle
           // through normal error pipeline (rate-limit, retry, etc.)
@@ -338,9 +342,16 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
             const errorMsg = resultErrors?.length
               ? resultErrors.join("; ")
               : `SDK result error: ${resultSubtype}`;
+            // Preserve SDK fields on the error object so extractErrorDetails
+            // can pick them up downstream (not just a plain Error).
+            const sdkError = Object.assign(new Error(errorMsg), {
+              errors: resultErrors ?? [],
+              subtype: resultSubtype,
+              is_error: resultIsError,
+            });
             throw normalizeProviderError(
               this.providerId,
-              new Error(errorMsg)
+              sdkError
             );
           }
         }
