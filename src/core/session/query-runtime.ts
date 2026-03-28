@@ -1,6 +1,7 @@
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ProviderOrchestrator } from "../../providers/orchestrator";
 import type { ProviderEvent, ProviderQueryInput } from "../../providers/types.models";
+import { resolve } from "path";
 import { STREAMING_THROTTLE_MS, TEMP_PATHS } from "../../config";
 import { formatToolStatus } from "../../formatting";
 import { checkCommandSafety, isPathAllowed } from "../../security";
@@ -237,12 +238,16 @@ export function checkToolInputSafety(
   if (["Read", "Write", "Edit"].includes(toolName)) {
     const filePath = String(toolInput.file_path || "");
     if (filePath) {
+      // Resolve to absolute path BEFORE any prefix check to prevent
+      // traversal attacks like /tmp/../etc/passwd → /etc/passwd
+      const resolvedPath = resolve(filePath);
+
       const isTmpRead =
         toolName === "Read" &&
-        (TEMP_PATHS.some((p) => filePath.startsWith(p)) ||
-          filePath.includes("/.claude/"));
+        (TEMP_PATHS.some((p) => resolvedPath.startsWith(p)) ||
+          resolvedPath.includes("/.claude/"));
 
-      if (!isTmpRead && !isPathAllowed(filePath)) {
+      if (!isTmpRead && !isPathAllowed(resolvedPath)) {
         return {
           allowed: false,
           reason: `File access blocked: ${filePath} — path is outside allowed directories. Try an alternative approach or ask the user to share the file content directly.`,

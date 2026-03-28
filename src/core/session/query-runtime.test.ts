@@ -48,6 +48,64 @@ describe("checkToolInputSafety", () => {
     const result = checkToolInputSafety("Write", { file_path: "/tmp/out.ts" });
     expect(result).toEqual({ allowed: true });
   });
+
+  // --- Path traversal tests (Issue #9) ---
+
+  test("blocks path traversal via /tmp/../etc/passwd", () => {
+    const result = checkToolInputSafety("Read", {
+      file_path: "/tmp/../etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks path traversal via /private/tmp/../../etc/shadow", () => {
+    const result = checkToolInputSafety("Read", {
+      file_path: "/private/tmp/../../etc/shadow",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks /.claude/ substring injection in unrelated path", () => {
+    const result = checkToolInputSafety("Read", {
+      file_path: "/malicious/.claude/../../etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  // --- Write/Edit block tests ---
+
+  test("blocks Write to path outside allowed directories", () => {
+    const result = checkToolInputSafety("Write", {
+      file_path: "/etc/passwd",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  test("blocks Edit to path outside allowed directories", () => {
+    const result = checkToolInputSafety("Edit", {
+      file_path: "/home/user/secret.txt",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  // --- Malformed input tests ---
+
+  test("allows when file_path is empty string", () => {
+    const result = checkToolInputSafety("Read", { file_path: "" });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("allows when file_path is missing from tool_input", () => {
+    const result = checkToolInputSafety("Read", {});
+    expect(result).toEqual({ allowed: true });
+  });
+
+  test("allows unknown tool names without validation", () => {
+    const result = checkToolInputSafety("Grep", {
+      file_path: "/etc/passwd",
+    });
+    expect(result).toEqual({ allowed: true });
+  });
 });
 
 describe("query-runtime hooks", () => {
@@ -85,6 +143,51 @@ describe("query-runtime hooks", () => {
 
     expect(result.decision).toBe("block");
     expect(typeof result.reason).toBe("string");
+    expect((result.reason as string)).toContain("File access blocked");
+  });
+
+  test("pre hook blocks unsafe Bash command with decision:block", async () => {
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const result = await hooks.preToolUseHook(
+      {
+        tool_name: "Bash",
+        tool_input: { command: "rm -rf /" },
+      },
+      null,
+      null
+    );
+
+    expect(result.decision).toBe("block");
+    expect(typeof result.reason).toBe("string");
+    expect((result.reason as string)).toContain("Unsafe command blocked");
+  });
+
+  test("pre hook blocks path traversal via /tmp/../etc/passwd", async () => {
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const result = await hooks.preToolUseHook(
+      {
+        tool_name: "Read",
+        tool_input: { file_path: "/tmp/../etc/passwd" },
+      },
+      null,
+      null
+    );
+
+    expect(result.decision).toBe("block");
     expect((result.reason as string)).toContain("File access blocked");
   });
 
