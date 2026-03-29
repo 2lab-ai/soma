@@ -143,6 +143,7 @@ export class ClaudeSession {
   private abortController: AbortController | null = null;
   private _queryState: QueryState = initialRuntimeState.queryState;
   private stopRequested = initialRuntimeState.stopRequested;
+  private _wasStoppedByUser = false;
   private _generation = initialRuntimeState.generation;
   private _wasInterruptedByNewMessage = initialRuntimeState.wasInterruptedByNewMessage;
   private _isInterrupting = initialRuntimeState.isInterrupting;
@@ -327,6 +328,15 @@ export class ClaudeSession {
 
   get isProcessing(): boolean {
     return isQueryProcessing(this.getRuntimeState());
+  }
+
+  /**
+   * True when the user explicitly issued /stop during query execution.
+   * Checked by auto-continue loop to prevent steering from being processed after stop.
+   * Reset at the start of each new query (startProcessing).
+   */
+  get wasStoppedByUser(): boolean {
+    return this._wasStoppedByUser;
   }
 
   consumeInterruptFlag(): boolean {
@@ -526,6 +536,7 @@ export class ClaudeSession {
   }
 
   startProcessing(): () => void {
+    this._wasStoppedByUser = false;
     this.applyRuntimeState(startProcessingTransition(this.getRuntimeState()));
     const PROCESSING_TIMEOUT_MS = 60_000;
     let released = false;
@@ -572,6 +583,7 @@ export class ClaudeSession {
 
   async stop(): Promise<"stopped" | "pending" | false> {
     if (this._queryState === "running" && this.abortController) {
+      this._wasStoppedByUser = true;
       this.applyRuntimeState(
         requestStopDuringRunningTransition(this.getRuntimeState())
       );
@@ -594,6 +606,7 @@ export class ClaudeSession {
     }
 
     if (this._queryState === "preparing") {
+      this._wasStoppedByUser = true;
       this.applyRuntimeState(
         requestStopDuringPreparingTransition(this.getRuntimeState())
       );
