@@ -7,6 +7,7 @@ import {
   formatErrorForUser,
   formatErrorForLog,
 } from "./error-classification";
+import { NormalizedProviderError } from "../providers/error-normalizer";
 import type { ClaudeUsage } from "../types/provider";
 
 describe("isRateLimitError", () => {
@@ -140,6 +141,41 @@ describe("isAbortError", () => {
 
   test("does not match partial abort messages", () => {
     expect(isAbortError(new Error("request was aborted by client"))).toBe(false);
+  });
+
+  test("detects NormalizedProviderError with code ABORT", () => {
+    const err = new NormalizedProviderError(
+      "anthropic",
+      "ABORT",
+      "Claude Code process aborted by user",
+      false
+    );
+    expect(isAbortError(err)).toBe(true);
+  });
+
+  test("does not detect NormalizedProviderError with non-ABORT code", () => {
+    const err = new NormalizedProviderError(
+      "anthropic",
+      "RATE_LIMIT",
+      "429 rate limit exceeded",
+      true,
+      429
+    );
+    expect(isAbortError(err)).toBe(false);
+  });
+
+  test("detects 'Query cancelled' message from preparing-state abort", () => {
+    expect(isAbortError(new Error("Query cancelled"))).toBe(true);
+  });
+
+  test("detects NormalizedProviderError ABORT even with unusual message", () => {
+    const err = new NormalizedProviderError(
+      "anthropic",
+      "ABORT",
+      "some unusual abort message",
+      false
+    );
+    expect(isAbortError(err)).toBe(true);
   });
 });
 
