@@ -552,6 +552,7 @@ export class ClaudeSession {
       released = true;
       clearTimeout(timer);
       const prevState = this._queryState;
+      this._wasStoppedByUser = false; // Reset at query lifecycle end to prevent stuck flag
       this.applyRuntimeState(stopProcessingTransition(this.getRuntimeState()));
       console.log(
         `[PROCESSING] stopProcessing() called: ${prevState} → idle, steering=${this.steering.getSteeringCount()}`

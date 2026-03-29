@@ -232,6 +232,14 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             );
             await Bun.sleep(500);
           } catch (followUpError) {
+            // Fix #24: Distinguish user-initiated stop from real failures
+            if (session.wasStoppedByUser || isAbortError(followUpError)) {
+              console.log(
+                `[AUTO-CONTINUE] Round ${autoContinueRound}: Follow-up stopped by user`
+              );
+              break;
+            }
+
             console.error(
               `[AUTO-CONTINUE] Round ${autoContinueRound}: Follow-up FAILED:`,
               followUpError
