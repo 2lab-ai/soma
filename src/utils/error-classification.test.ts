@@ -164,6 +164,10 @@ describe("isAbortError", () => {
     expect(isAbortError(err)).toBe(false);
   });
 
+  test("detects 'Query cancelled' message from preparing-state abort", () => {
+    expect(isAbortError(new Error("Query cancelled"))).toBe(true);
+  });
+
   test("detects NormalizedProviderError ABORT even with unusual message", () => {
     const err = new NormalizedProviderError(
       "anthropic",
