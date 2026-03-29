@@ -95,6 +95,19 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         // The auto-continue loop below already consumes directly from the buffer.
         // For tool-use responses, postToolUseHook handles track+consume correctly.
 
+        // Fix #24: If user issued /stop, abort was suppressed in sendMessageStreaming
+        // but we must NOT continue processing steering messages.
+        if (session.wasStoppedByUser) {
+          console.log("[AUTO-CONTINUE] Skipping — user issued /stop");
+          if (session.hasSteeringMessages()) {
+            const lostCount = session.getSteeringCount();
+            session.consumeSteering();
+            session.clearInjectedSteeringTracking();
+            console.log(`[AUTO-CONTINUE] Discarded ${lostCount} steering message(s) due to /stop`);
+          }
+          break;
+        }
+
         while (true) {
           // Restore any injected messages from tool-use hooks back to buffer
           // (only relevant when postToolUseHook ran during the query)
@@ -104,6 +117,16 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           console.log(
             `[STEERING DEBUG] Round ${autoContinueRound}: Before restore: ${bufferBeforeRestore}, Restored: ${restoredCount}, After: ${bufferAfterRestore}`
           );
+
+          // Fix #24: Check if user stopped mid-loop
+          if (session.wasStoppedByUser) {
+            console.log(`[AUTO-CONTINUE] Breaking loop — user issued /stop during round ${autoContinueRound}`);
+            if (session.hasSteeringMessages()) {
+              session.consumeSteering();
+              session.clearInjectedSteeringTracking();
+            }
+            break;
+          }
 
           const hasSteering = session.hasSteeringMessages();
           console.log(
