@@ -382,6 +382,27 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
         if (isClaudeCodeCrash) {
           console.error(`[CRASH] Claude Code crashed: ${errorStr}`);
+
+          // Auto-recovery: reset session and retry once instead of giving up.
+          // This handles context exhaustion crashes that slip past pre-query compaction.
+          if (attempt < MAX_RETRIES) {
+            console.log(`[CRASH-RECOVERY] Attempt ${attempt + 1}: resetting session and retrying`);
+            await session.kill();
+            session.clearStopRequested();
+
+            await sendSystemMessage(
+              ctx,
+              `⚡ Context overflow detected — auto-recovering with fresh session...`,
+            );
+
+            // Reset streaming state for retry
+            state.cleanup();
+            state = new StreamingState();
+            statusCallback = await createStatusCallback(ctx, state, session);
+            continue; // retry loop
+          }
+
+          // Final attempt exhausted — give up gracefully
           await session.kill();
           session.clearStopRequested();
           const shortError = errorStr.slice(0, 800);
@@ -389,7 +410,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             ctx,
             `💥 **Claude Code Exception**\n\n` +
               `\`\`\`\n${shortError}\n\`\`\`\n\n` +
-              `세션 초기화됨. 새 메시지를 보내세요.`,
+              `Auto-recovery failed. 세션 초기화됨. 새 메시지를 보내세요.`,
             { parse_mode: "Markdown" }
           );
           break;
