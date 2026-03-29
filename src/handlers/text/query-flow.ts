@@ -13,6 +13,7 @@ import {
   formatErrorForUser,
   formatRateLimitForUser,
   handleAbortError,
+  isAbortError,
   isRateLimitError,
   isSonnetAvailable,
 } from "../../utils/error-classification";
@@ -458,6 +459,18 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         }
 
         console.error(formatErrorForLog(error));
+
+        // User abort: skip steering preservation — user wants to STOP, not continue
+        if (isAbortError(error)) {
+          console.log("[QUERY-FLOW] User abort detected — skipping steering preservation");
+          if (session.hasSteeringMessages()) {
+            const lostCount = session.getSteeringCount();
+            session.consumeSteering(); // discard steering buffer
+            console.log(`[QUERY-FLOW] Discarded ${lostCount} steering message(s) due to user abort`);
+          }
+          await handleAbortError(ctx, error, session);
+          break;
+        }
 
         if (session.hasSteeringMessages()) {
           const lostCount = session.getSteeringCount();

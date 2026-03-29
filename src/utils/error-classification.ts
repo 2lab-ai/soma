@@ -127,13 +127,18 @@ export function isSonnetAvailable(usage: ClaudeUsage | null): boolean {
 
 /**
  * Check if an error is an abort/cancellation error
- * Handles both DOMException.AbortError and Node.js AbortError
+ * Handles DOMException.AbortError, Node.js AbortError, and NormalizedProviderError with code ABORT
  */
 export function isAbortError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
 
   // Check error name first (most reliable)
   if (error.name === "AbortError") return true;
+
+  // Check NormalizedProviderError.code === "ABORT"
+  // This catches "Claude Code process aborted by user" and similar SDK abort errors
+  const anyError = error as unknown as { code?: string; boundary?: string };
+  if (anyError.boundary === "provider" && anyError.code === "ABORT") return true;
 
   // Check for exact abort/cancel messages only (avoid partial matches)
   const msg = error.message.toLowerCase();
