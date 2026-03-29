@@ -148,14 +148,19 @@ export function buildQueryRuntimeOptions(
         {
           hooks: [
             async () => {
-              console.log("[HOOK] PreCompact fired — SDK auto-compaction in progress");
-              return {
-                // Inject context-preservation instructions into compaction summary
-                systemMessage:
-                  "When compacting, preserve: (1) the user's current task/goal, " +
-                  "(2) key decisions made so far, (3) file paths and code changes discussed, " +
-                  "(4) any pending action items. Discard verbose tool outputs and redundant explanations.",
-              };
+              try {
+                console.log("[HOOK] PreCompact fired — SDK auto-compaction in progress");
+                return {
+                  // Inject context-preservation instructions into compaction summary
+                  systemMessage:
+                    "When compacting, preserve: (1) the user's current task/goal, " +
+                    "(2) key decisions made so far, (3) file paths and code changes discussed, " +
+                    "(4) any pending action items. Discard verbose tool outputs and redundant explanations.",
+                };
+              } catch (error) {
+                console.error("[HOOK] PreCompact hook failed:", error);
+                return {};
+              }
             },
           ],
         },

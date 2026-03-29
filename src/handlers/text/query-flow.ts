@@ -381,38 +381,50 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         cleanupToolMessages(ctx, state.toolMessages);
 
         if (isClaudeCodeCrash) {
-          console.error(`[CRASH] Claude Code crashed: ${errorStr}`);
+          const exitCodeMatch = errorStr.match(/exited with code (\d+)/);
+          const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1], 10) : null;
+          console.error(`[CRASH] Claude Code crashed: exit_code=${exitCode}, error=${errorStr}`);
 
-          // Auto-recovery: reset session and retry once instead of giving up.
-          // This handles context exhaustion crashes that slip past pre-query compaction.
-          if (attempt < MAX_RETRIES) {
-            console.log(`[CRASH-RECOVERY] Attempt ${attempt + 1}: resetting session and retrying`);
-            await session.kill();
-            session.clearStopRequested();
+          // Preserve steering messages before kill() clears them
+          const killResult = await session.kill();
+          session.clearStopRequested();
 
-            await sendSystemMessage(
-              ctx,
-              `⚡ Context overflow detected — auto-recovering with fresh session...`,
+          // Preserve lost steering messages as context for next query
+          if (killResult.count > 0) {
+            const preserved = killResult.messages.map(m => m.content).join("\n---\n");
+            const existing = session.nextQueryContext || "";
+            session.nextQueryContext = existing
+              ? `${existing}\n[CRASH RECOVERY - ${killResult.count} message(s)]\n${preserved}\n[END RECOVERY]`
+              : `[CRASH RECOVERY - ${killResult.count} message(s)]\n${preserved}\n[END RECOVERY]`;
+            console.warn(
+              `[CRASH-RECOVERY] Preserved ${killResult.count} steering message(s) as nextQueryContext`
             );
-
-            // Reset streaming state for retry
-            state.cleanup();
-            state = new StreamingState();
-            statusCallback = await createStatusCallback(ctx, state, session);
-            continue; // retry loop
           }
 
-          // Final attempt exhausted — give up gracefully
-          await session.kill();
-          session.clearStopRequested();
+          // Preserve user's original message as context for next interaction
+          // NOTE: We do NOT auto-retry because tools may have already executed
+          // during the crashed turn — replaying would cause non-idempotent side effects.
+          if (!isInterruptDrain) {
+            const existing = session.nextQueryContext || "";
+            const crashContext = `[SYSTEM: Previous query crashed (exit code ${exitCode ?? "unknown"}). The user's message below was being processed when the crash occurred.]\n${message}`;
+            session.nextQueryContext = existing
+              ? `${existing}\n${crashContext}`
+              : crashContext;
+          }
+
           const shortError = errorStr.slice(0, 800);
-          await sendSystemMessage(
-            ctx,
-            `💥 **Claude Code Exception**\n\n` +
-              `\`\`\`\n${shortError}\n\`\`\`\n\n` +
-              `Auto-recovery failed. 세션 초기화됨. 새 메시지를 보내세요.`,
-            { parse_mode: "Markdown" }
-          );
+          try {
+            await sendSystemMessage(
+              ctx,
+              `💥 **Claude Code crashed** (exit ${exitCode ?? "?"})\n\n` +
+                `\`\`\`\n${shortError}\n\`\`\`\n\n` +
+                `세션 초기화됨. 다음 메시지에 이전 문맥이 자동 포함됩니다.` +
+                (killResult.count > 0 ? `\n⚠️ 대기 중이던 ${killResult.count}개 메시지도 보존됨.` : ""),
+              { parse_mode: "Markdown" }
+            );
+          } catch (notifyErr) {
+            console.warn("[CRASH-RECOVERY] Failed to notify user:", notifyErr);
+          }
           break;
         }
 
