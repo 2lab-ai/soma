@@ -146,6 +146,7 @@ export function isAbortError(error: unknown): boolean {
     msg === "aborted" ||
     msg === "cancelled" ||
     msg === "canceled" ||
+    msg === "query cancelled" ||
     msg === "the operation was aborted" ||
     msg === "this operation was aborted"
   );
