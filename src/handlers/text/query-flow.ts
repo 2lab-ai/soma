@@ -95,7 +95,30 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         // The auto-continue loop below already consumes directly from the buffer.
         // For tool-use responses, postToolUseHook handles track+consume correctly.
 
+        // Fix #24: If user issued /stop, abort was suppressed in sendMessageStreaming
+        // but we must NOT continue processing steering messages.
+        if (session.wasStoppedByUser) {
+          console.log("[AUTO-CONTINUE] Skipping — user issued /stop");
+          if (session.hasSteeringMessages()) {
+            const lostCount = session.getSteeringCount();
+            session.consumeSteering();
+            session.clearInjectedSteeringTracking();
+            console.log(`[AUTO-CONTINUE] Discarded ${lostCount} steering message(s) due to /stop`);
+          }
+          break;
+        }
+
         while (true) {
+          // Fix #24: Check FIRST if user stopped — before any buffer work
+          if (session.wasStoppedByUser) {
+            console.log(`[AUTO-CONTINUE] Breaking loop — user issued /stop during round ${autoContinueRound}`);
+            if (session.hasSteeringMessages()) {
+              session.consumeSteering();
+              session.clearInjectedSteeringTracking();
+            }
+            break;
+          }
+
           // Restore any injected messages from tool-use hooks back to buffer
           // (only relevant when postToolUseHook ran during the query)
           const bufferBeforeRestore = session.getSteeringCount();
@@ -209,6 +232,14 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             );
             await Bun.sleep(500);
           } catch (followUpError) {
+            // Fix #24: Distinguish user-initiated stop from real failures
+            if (session.wasStoppedByUser || isAbortError(followUpError)) {
+              console.log(
+                `[AUTO-CONTINUE] Round ${autoContinueRound}: Follow-up stopped by user`
+              );
+              break;
+            }
+
             console.error(
               `[AUTO-CONTINUE] Round ${autoContinueRound}: Follow-up FAILED:`,
               followUpError
