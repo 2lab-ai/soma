@@ -77,16 +77,17 @@ export async function handleStop(ctx: Context): Promise<void> {
 
   const session = sessionManager.getSession(chatId!, threadId);
   if (session.isProcessing) {
-    // Discard all pending steering messages so auto-continue loop won't process them
-    const discardedCount = session.getSteeringCount();
-    if (discardedCount > 0) {
-      session.consumeSteering();
-      session.clearInjectedSteeringTracking();
-      console.log(`[/stop] Discarded ${discardedCount} steering message(s)`);
-    }
-
     const result = await session.stop();
     if (result) {
+      // Discard steering AFTER stop() so wasStoppedByUser is already set,
+      // preventing any new messages arriving between cleanup and flag-set
+      const discardedCount = session.getSteeringCount();
+      if (discardedCount > 0) {
+        session.consumeSteering();
+        session.clearInjectedSteeringTracking();
+        console.log(`[/stop] Discarded ${discardedCount} steering message(s)`);
+      }
+
       await Bun.sleep(100);
       session.clearStopRequested();
     }
