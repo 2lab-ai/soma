@@ -79,6 +79,24 @@ export async function handleStop(ctx: Context): Promise<void> {
   if (session.isProcessing) {
     const result = await session.stop();
     if (result) {
+      // Discard steering AFTER stop() so wasStoppedByUser is already set,
+      // preventing any new messages arriving between cleanup and flag-set
+      const discardedCount = session.getSteeringCount();
+      if (discardedCount > 0) {
+        const discardedContent = session.consumeSteering();
+        session.clearInjectedSteeringTracking();
+        console.log(
+          `[/stop] Discarded ${discardedCount} steering message(s): "${discardedContent?.slice(0, 200) ?? ""}"`
+        );
+        // Notify user that their pending messages were discarded
+        try {
+          await sendSystemMessage(
+            ctx,
+            `🛑 Stopped. ${discardedCount}개 대기 메시지 폐기됨.`
+          );
+        } catch {}
+      }
+
       await Bun.sleep(100);
       session.clearStopRequested();
     }
