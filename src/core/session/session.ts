@@ -314,6 +314,34 @@ export class ClaudeSession {
     // return this.contextLimitWarned && !this.recentlyRestored;
   }
 
+  // ─── Auto-compaction (SDK-native) ────────────────────────────────
+  // The Claude Code SDK handles compaction internally via auto-trigger.
+  // We only track compaction events observed from the SDK for telemetry.
+  private _compactionCount: number = 0;
+  private _lastCompactionTime: number = 0;
+
+  /**
+   * Called when SDK emits a compact_boundary event.
+   * Tracks compaction telemetry without interfering with SDK behavior.
+   */
+  onCompactionObserved(trigger: string, preTokens: number): void {
+    this._compactionCount++;
+    this._lastCompactionTime = Date.now();
+    console.log(
+      `[COMPACT] SDK compaction #${this._compactionCount}: trigger=${trigger}, pre_tokens=${preTokens}`
+    );
+  }
+
+  get compactionCount(): number {
+    return this._compactionCount;
+  }
+
+  get lastCompactionTime(): number {
+    return this._lastCompactionTime;
+  }
+
+  // ─── End auto-compaction ───────────────────────────────────────────
+
   get needsWarning70(): boolean {
     return this.warned70 && !this.recentlyRestored;
   }
@@ -843,6 +871,9 @@ export class ClaudeSession {
         queryStartedMs,
         onQueryCompleted: () => {
           queryCompleted = true;
+        },
+        onCompactionObserved: (trigger: string, preTokens: number) => {
+          this.onCompactionObserved(trigger, preTokens);
         },
         providerExecution: this.providerOrchestrator
           ? {

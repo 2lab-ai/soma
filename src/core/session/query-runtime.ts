@@ -144,6 +144,27 @@ export function buildQueryRuntimeOptions(
           hooks: [input.hooks.postToolUseHook],
         },
       ],
+      PreCompact: [
+        {
+          hooks: [
+            async () => {
+              try {
+                console.log("[HOOK] PreCompact fired — SDK auto-compaction in progress");
+                return {
+                  // Inject context-preservation instructions into compaction summary
+                  systemMessage:
+                    "When compacting, preserve: (1) the user's current task/goal, " +
+                    "(2) key decisions made so far, (3) file paths and code changes discussed, " +
+                    "(4) any pending action items. Discard verbose tool outputs and redundant explanations.",
+                };
+              } catch (error) {
+                console.error("[HOOK] PreCompact hook failed:", error);
+                return {};
+              }
+            },
+          ],
+        },
+      ],
     },
     abortController: input.abortController,
   };
@@ -169,6 +190,7 @@ export interface QueryRuntimeExecutionInput {
   ) => Promise<ContextWindowUsage | null>;
   queryStartedMs: number;
   onQueryCompleted?: () => void;
+  onCompactionObserved?: (trigger: string, preTokens: number) => void;
   queryFactory?: (payload: {
     prompt: string;
     options: Options & { abortController: AbortController };
@@ -697,9 +719,10 @@ export async function executeQueryRuntime(
         console.log(
           `[COMPACT] ${trigger} compact triggered (pre_tokens: ${preTokens})`
         );
+        input.onCompactionObserved?.(trigger, preTokens);
         await input.statusCallback(
           "system",
-          `🔄 Context compacting (${trigger}, ${preTokens} tokens)...`
+          `🔄 Context compacting (${trigger}, ${preTokens.toLocaleString()} tokens)...`
         );
       }
       if (sysEvent.subtype === "status" && sysEvent.status === "compacting") {
