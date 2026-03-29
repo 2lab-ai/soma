@@ -314,88 +314,22 @@ export class ClaudeSession {
     // return this.contextLimitWarned && !this.recentlyRestored;
   }
 
-  // ─── Auto-compaction ───────────────────────────────────────────────
-  private static readonly AUTO_COMPACT_THRESHOLD = 0.80;
-  private _lastCompactionTime: number = 0;
+  // ─── Auto-compaction (SDK-native) ────────────────────────────────
+  // The Claude Code SDK handles compaction internally via auto-trigger.
+  // We only track compaction events observed from the SDK for telemetry.
   private _compactionCount: number = 0;
+  private _lastCompactionTime: number = 0;
 
   /**
-   * Returns current context usage as a fraction (0.0 – 1.0).
-   * Returns null when SDK has not yet reported context window size.
+   * Called when SDK emits a compact_boundary event.
+   * Tracks compaction telemetry without interfering with SDK behavior.
    */
-  getContextPercentage(): number | null {
-    const maxTokens = this.actualContextMax ?? (this.contextWindowSize > 0 ? this.contextWindowSize : 0);
-    if (maxTokens <= 0) return null;
-    return this.currentContextTokens / maxTokens;
-  }
-
-  /**
-   * True when context usage exceeds the auto-compaction threshold (80%)
-   * and the session has an active SDK session to compact.
-   */
-  get needsAutoCompact(): boolean {
-    if (!this.sessionId) return false;
-    if (this.recentlyRestored) return false;
-    const pct = this.getContextPercentage();
-    if (pct === null) return false;
-    return pct >= ClaudeSession.AUTO_COMPACT_THRESHOLD;
-  }
-
-  /**
-   * Auto-compact: reset the current SDK session and carry over a brief
-   * context summary so the next query starts a fresh session without
-   * losing conversational continuity.
-   *
-   * Returns the context carry-over text that was set, or null if
-   * compaction was not needed / not possible.
-   */
-  autoCompact(): string | null {
-    if (!this.sessionId) return null;
-
-    const pct = this.getContextPercentage();
-    const pctStr = pct !== null ? `${(pct * 100).toFixed(1)}%` : "unknown";
-    const maxTokens = this.actualContextMax ?? this.contextWindowSize;
-    const usedTokens = this.currentContextTokens;
-
-    console.log(
-      `[AUTO-COMPACT] Triggering: context ${usedTokens}/${maxTokens} (${pctStr}), queries=${this.totalQueries}, compaction #${this._compactionCount + 1}`
-    );
-
-    // Build carry-over context from session stats
-    const carryOver = [
-      `[SYSTEM: Auto-compaction triggered — previous session context was at ${pctStr} (${usedTokens.toLocaleString()}/${maxTokens.toLocaleString()} tokens)]`,
-      `[Previous session had ${this.totalQueries} queries. Session has been reset to prevent context overflow.]`,
-      this.lastMessage ? `[User's last topic: "${this.lastMessage.slice(0, 200)}"]` : null,
-      `[Continue the conversation naturally. The user may reference earlier context — do your best to infer from available information.]`,
-    ].filter(Boolean).join("\n");
-
-    // Reset session (similar to kill() but lighter — no steering disruption)
-    const prevSessionId = this.sessionId;
-    this.sessionId = null;
-    this.contextWindowUsage = null;
-    this.actualContextUsed = null;
-    this.actualContextMax = null;
-    this.totalInputTokens = 0;
-    this.totalOutputTokens = 0;
-    this.totalCacheReadTokens = 0;
-    this.totalCacheCreateTokens = 0;
-    this.totalQueries = 0;
-    this.cumulativeToolDurations = {};
-    this.resetWarningFlags();
-    this._lastCompactionTime = Date.now();
+  onCompactionObserved(trigger: string, preTokens: number): void {
     this._compactionCount++;
-
-    // Set carry-over for the next query
-    const existing = this.nextQueryContext || "";
-    this.nextQueryContext = existing
-      ? `${existing}\n${carryOver}`
-      : carryOver;
-
+    this._lastCompactionTime = Date.now();
     console.log(
-      `[AUTO-COMPACT] Complete: old session ${prevSessionId?.slice(0, 8)}, carry-over ${carryOver.length} chars`
+      `[COMPACT] SDK compaction #${this._compactionCount}: trigger=${trigger}, pre_tokens=${preTokens}`
     );
-
-    return carryOver;
   }
 
   get compactionCount(): number {
@@ -730,20 +664,6 @@ export class ClaudeSession {
 
     if (chatId) process.env.TELEGRAM_CHAT_ID = String(chatId);
 
-    // ─── Pre-query auto-compaction ────────────────────────────────
-    // If context window is above threshold, reset session proactively
-    // to prevent SDK process crash from context exhaustion.
-    if (this.needsAutoCompact) {
-      const pctBefore = this.getContextPercentage();
-      const pctStr = pctBefore !== null ? `${(pctBefore * 100).toFixed(1)}%` : "?";
-      console.log(`[AUTO-COMPACT] Pre-query check: context at ${pctStr}, triggering compaction`);
-      await statusCallback(
-        "system",
-        `🔄 Context at ${pctStr} — auto-compacting session...`
-      );
-      this.autoCompact();
-    }
-
     const prevInjectedCount = this.steering.restoreInjectedSteering();
     if (prevInjectedCount > 0) {
       console.log(
@@ -951,6 +871,9 @@ export class ClaudeSession {
         queryStartedMs,
         onQueryCompleted: () => {
           queryCompleted = true;
+        },
+        onCompactionObserved: (trigger: string, preTokens: number) => {
+          this.onCompactionObserved(trigger, preTokens);
         },
         providerExecution: this.providerOrchestrator
           ? {
