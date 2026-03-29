@@ -109,16 +109,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         }
 
         while (true) {
-          // Restore any injected messages from tool-use hooks back to buffer
-          // (only relevant when postToolUseHook ran during the query)
-          const bufferBeforeRestore = session.getSteeringCount();
-          const restoredCount = session.restoreInjectedSteering();
-          const bufferAfterRestore = session.getSteeringCount();
-          console.log(
-            `[STEERING DEBUG] Round ${autoContinueRound}: Before restore: ${bufferBeforeRestore}, Restored: ${restoredCount}, After: ${bufferAfterRestore}`
-          );
-
-          // Fix #24: Check if user stopped mid-loop
+          // Fix #24: Check FIRST if user stopped — before any buffer work
           if (session.wasStoppedByUser) {
             console.log(`[AUTO-CONTINUE] Breaking loop — user issued /stop during round ${autoContinueRound}`);
             if (session.hasSteeringMessages()) {
@@ -127,6 +118,15 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             }
             break;
           }
+
+          // Restore any injected messages from tool-use hooks back to buffer
+          // (only relevant when postToolUseHook ran during the query)
+          const bufferBeforeRestore = session.getSteeringCount();
+          const restoredCount = session.restoreInjectedSteering();
+          const bufferAfterRestore = session.getSteeringCount();
+          console.log(
+            `[STEERING DEBUG] Round ${autoContinueRound}: Before restore: ${bufferBeforeRestore}, Restored: ${restoredCount}, After: ${bufferAfterRestore}`
+          );
 
           const hasSteering = session.hasSteeringMessages();
           console.log(
