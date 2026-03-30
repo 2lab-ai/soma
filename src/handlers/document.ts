@@ -23,6 +23,8 @@ import { botUsername } from "./text";
 import { Reactions } from "../constants/reactions";
 import { downloadTelegramFile } from "../utils/telegram-file";
 import { ensureSupportedImageFormat } from "../utils/image-format";
+import { resolve } from "path";
+import { sanitizeExtractedDir, isPathContained, isSymlink } from "../utils/archive-safety";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -320,9 +322,16 @@ async function extractArchive(archivePath: string, fileName: string): Promise<st
   if (ext === ".zip") {
     await Bun.$`unzip -q -o ${archivePath} -d ${extractDir}`.quiet();
   } else if (ext === ".tar" || ext === ".tar.gz" || ext === ".tgz") {
-    await Bun.$`tar -xf ${archivePath} -C ${extractDir}`.quiet();
+    // --no-same-permissions prevents setuid bit preservation
+    await Bun.$`tar --no-same-permissions -xf ${archivePath} -C ${extractDir}`.quiet();
   } else {
     throw new Error(`Unknown archive type: ${ext}`);
+  }
+
+  // Post-extraction security: remove path traversals and symlinks
+  const removed = await sanitizeExtractedDir(extractDir);
+  if (removed.length > 0) {
+    console.warn(`[SECURITY] Archive ${fileName} contained dangerous entries:`, removed);
   }
 
   return extractDir;
@@ -351,7 +360,12 @@ async function extractArchiveContent(extractDir: string): Promise<{
   let totalSize = 0;
 
   for (const relativePath of tree) {
-    const fullPath = `${extractDir}/${relativePath}`;
+    const fullPath = resolve(extractDir, relativePath);
+
+    // Security: skip escaped paths and symlinks
+    if (!isPathContained(extractDir, relativePath)) continue;
+    if (isSymlink(fullPath)) continue;
+
     const stat = await Bun.file(fullPath).exists();
     if (!stat) continue;
 
