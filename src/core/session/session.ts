@@ -697,7 +697,7 @@ export class ClaudeSession {
     }
 
     if (this.nextQueryContext) {
-      if (!queryUserId || this.nextQueryContext.userId === queryUserId) {
+      if (this.nextQueryContext.userId === queryUserId) {
         console.log(`[CONTEXT] Prepending recovered context from previous session (userId=${this.nextQueryContext.userId})`);
         messageToSend = `${this.nextQueryContext.context}\n\n${messageToSend}`;
         this.nextQueryContext = null;
