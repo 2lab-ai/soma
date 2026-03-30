@@ -60,6 +60,24 @@ describe("normalizeProviderError", () => {
     expect(error.retryable).toBe(false);
   });
 
+  test("classifies '429 + command failed' as RATE_LIMIT, not TOOL (precedence)", () => {
+    const error = normalizeProviderError(
+      "anthropic",
+      new Error("429 rate limit: command failed")
+    );
+    expect(error.code).toBe("RATE_LIMIT");
+    expect(error.retryable).toBe(true);
+  });
+
+  test("classifies 'fetch failed + EISDIR' as NETWORK, not TOOL (precedence)", () => {
+    const error = normalizeProviderError(
+      "anthropic",
+      new Error("fetch failed: EISDIR something")
+    );
+    expect(error.code).toBe("NETWORK");
+    expect(error.retryable).toBe(true);
+  });
+
   test("preserves already-normalized errors", () => {
     const normalized = new NormalizedProviderError(
       "codex",
