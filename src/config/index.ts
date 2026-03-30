@@ -193,6 +193,22 @@ export const BLOCKED_PATTERNS = [
   "dd if=",
 ];
 
+/**
+ * Regex patterns to detect pipe-to-shell execution.
+ * Security Audit S5: curl|sh, wget|bash, etc. bypass BLOCKED_PATTERNS.
+ *
+ * Word boundary (\b) after interpreter name prevents false positives
+ * like `| sha256sum` or `| show`.
+ */
+export const BLOCKED_PIPE_PATTERNS: RegExp[] = [
+  // pipe output to shell interpreters
+  /\|\s*(?:sh|bash|zsh|dash|ksh|csh|tcsh|fish)\b/i,
+  // pipe output to script interpreters
+  /\|\s*(?:python[23]?|perl|ruby|node|php)\b/i,
+  // curl/wget piped to anything — the intent is remote code execution
+  /(?:curl|wget)\b[^|]*\|/i,
+];
+
 const BASE_TRANSCRIPTION_PROMPT = `Transcribe this voice message accurately.
 The speaker may use multiple languages (English, and possibly others).
 Focus on accuracy for proper nouns, technical terms, and commands.`;
