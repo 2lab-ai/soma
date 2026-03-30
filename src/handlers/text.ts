@@ -88,6 +88,7 @@ async function flushBatch(key: string): Promise<void> {
       ctx: params.ctx,
       session: params.session,
       chatId: params.chatId,
+      userId: params.userId,
     });
 
     await runQueryFlow({
