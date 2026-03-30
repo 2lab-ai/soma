@@ -21,6 +21,7 @@ import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { botUsername } from "./text";
 import { Reactions } from "../constants/reactions";
+import { downloadTelegramFile } from "../utils/telegram-file";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -91,18 +92,14 @@ async function downloadDocument(ctx: Context): Promise<string> {
     throw new Error("No document in message");
   }
 
-  const file = await ctx.getFile();
   const fileName = doc.file_name || `doc_${Date.now()}`;
 
   // Sanitize filename
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
   const docPath = `${TEMP_DIR}/${safeName}`;
 
-  // Download
-  const response = await fetch(
-    `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`
-  );
-  const buffer = await response.arrayBuffer();
+  // Download via secure helper (token never exposed in errors)
+  const buffer = await downloadTelegramFile(ctx);
   await Bun.write(docPath, buffer);
 
   return docPath;
