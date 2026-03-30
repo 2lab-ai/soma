@@ -234,6 +234,13 @@ describe("extractErrorDetails", () => {
     );
     expect(details.hint).toContain("gemini CLI");
   });
+
+  test("does NOT add Node.js hint for unrelated regex flag error (soma-gemini-eisdir)", () => {
+    const details = extractErrorDetails(
+      new Error("Invalid regular expression flags in user input")
+    );
+    expect(details.hint).toBeUndefined();
+  });
 });
 
 describe("formatErrorForUser", () => {
