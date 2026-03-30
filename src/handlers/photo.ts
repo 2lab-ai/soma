@@ -20,6 +20,7 @@ import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { botUsername } from "./text";
 import { Reactions } from "../constants/reactions";
+import { downloadTelegramFile } from "../utils/telegram-file";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -37,18 +38,12 @@ async function downloadPhoto(ctx: Context): Promise<string> {
     throw new Error("No photo in message");
   }
 
-  // Get the largest photo
-  const file = await ctx.getFile();
-
   const timestamp = Date.now();
   const random = Math.random().toString(36).slice(2, 8);
   const photoPath = `${TEMP_DIR}/photo_${timestamp}_${random}.jpg`;
 
-  // Download
-  const response = await fetch(
-    `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`
-  );
-  const buffer = await response.arrayBuffer();
+  // Download via secure helper (token never exposed in errors)
+  const buffer = await downloadTelegramFile(ctx);
   await Bun.write(photoPath, buffer);
 
   return photoPath;
