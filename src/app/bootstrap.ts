@@ -45,7 +45,7 @@ interface SessionPort {
   getSteeringCount(): number;
   consumeSteering(): string | null;
   formatToolStats(): string;
-  nextQueryContext: string | null;
+  nextQueryContext: { userId: number; context: string } | null;
   sendMessageStreaming(
     prompt: string,
     statusCallback: (

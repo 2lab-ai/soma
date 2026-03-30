@@ -72,7 +72,9 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           const response = await session.sendMessageStreaming(
             messageWithTimestamp,
             statusCallback,
-            chatId
+            chatId,
+            "general",
+            userId
           );
 
           await auditLog(userId, username, "TEXT", message, response);
@@ -204,7 +206,9 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             const followUpResponse = await session.sendMessageStreaming(
               followUpMessage,
               followUpCallback,
-              chatId
+              chatId,
+              "general",
+              userId
             );
             console.log(
               `[AUTO-CONTINUE] Round ${autoContinueRound}: Follow-up complete, response length: ${followUpResponse.length}`
@@ -274,7 +278,9 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             const saveResponse = await session.sendMessageStreaming(
               "Context limit reached. Execute: Skill tool with skill='oh-my-claude:save'",
               async () => {},
-              chatId
+              chatId,
+              "general",
+              userId
             );
 
             const saveIdMatch = saveResponse.match(
@@ -385,13 +391,18 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           const killResult = await session.kill();
           session.clearStopRequested();
 
-          // Preserve lost steering messages as context for next query
+          // Preserve lost steering messages as context for next query (user-bound)
           if (killResult.count > 0) {
             const preserved = formatSteeringMessages(killResult.messages);
-            const existing = session.nextQueryContext || "";
-            session.nextQueryContext = existing
-              ? `${existing}\n[CRASH RECOVERY - ${killResult.count} message(s)]\n${preserved}\n[END RECOVERY]`
-              : `[CRASH RECOVERY - ${killResult.count} message(s)]\n${preserved}\n[END RECOVERY]`;
+            const existingCtx = session.nextQueryContext?.userId === userId
+              ? session.nextQueryContext.context
+              : "";
+            session.nextQueryContext = {
+              userId,
+              context: existingCtx
+                ? `${existingCtx}\n[CRASH RECOVERY - ${killResult.count} message(s)]\n${preserved}\n[END RECOVERY]`
+                : `[CRASH RECOVERY - ${killResult.count} message(s)]\n${preserved}\n[END RECOVERY]`,
+            };
             console.warn(
               `[CRASH-RECOVERY] Preserved ${killResult.count} steering message(s) as nextQueryContext`
             );
@@ -401,11 +412,16 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           // NOTE: We do NOT auto-retry because tools may have already executed
           // during the crashed turn — replaying would cause non-idempotent side effects.
           if (!isInterruptDrain) {
-            const existing = session.nextQueryContext || "";
+            const existingCtx = session.nextQueryContext?.userId === userId
+              ? session.nextQueryContext.context
+              : "";
             const crashContext = `[SYSTEM: Previous query crashed (exit code ${exitCode ?? "unknown"}). The user's message below was being processed when the crash occurred.]\n${message}`;
-            session.nextQueryContext = existing
-              ? `${existing}\n${crashContext}`
-              : crashContext;
+            session.nextQueryContext = {
+              userId,
+              context: existingCtx
+                ? `${existingCtx}\n${crashContext}`
+                : crashContext,
+            };
           }
 
           const shortError = errorStr.slice(0, 800);
@@ -477,7 +493,9 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
               const retryResponse = await session.sendMessageStreaming(
                 messageWithTimestamp,
                 statusCallback,
-                chatId
+                chatId,
+                "general",
+                userId
               );
               await auditLog(userId, username, "TEXT_FALLBACK", message, retryResponse);
               try {
@@ -536,10 +554,15 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         const lostMessages = session.extractSteeringMessages();
         if (lostMessages.length > 0) {
           const preserved = formatSteeringMessages(lostMessages);
-          const existing = session.nextQueryContext || "";
-          session.nextQueryContext = existing
-            ? `${existing}\n[ERROR RECOVERY - ${lostMessages.length} message(s)]\n${preserved}\n[END RECOVERY]`
-            : `[ERROR RECOVERY - ${lostMessages.length} message(s)]\n${preserved}\n[END RECOVERY]`;
+          const existingCtx = session.nextQueryContext?.userId === userId
+            ? session.nextQueryContext.context
+            : "";
+          session.nextQueryContext = {
+            userId,
+            context: existingCtx
+              ? `${existingCtx}\n[ERROR RECOVERY - ${lostMessages.length} message(s)]\n${preserved}\n[END RECOVERY]`
+              : `[ERROR RECOVERY - ${lostMessages.length} message(s)]\n${preserved}\n[END RECOVERY]`,
+          };
           console.warn(
             `[STEERING] Preserved ${lostMessages.length} message(s) as nextQueryContext due to error`
           );

@@ -152,7 +152,7 @@ export class ClaudeSession {
   choiceState: ChoiceState | null = null;
   pendingDirectInput: DirectInputState | null = null;
   parseTextChoiceState: ParseTextChoiceState | null = null;
-  nextQueryContext: string | null = null; // Context to prepend to next query
+  nextQueryContext: { userId: number; context: string } | null = null; // Context to prepend to next query (user-bound)
   private _activityState: ActivityState = initialRuntimeState.activityState;
 
   // Rate limit fallback state
@@ -650,7 +650,8 @@ export class ClaudeSession {
     message: string,
     statusCallback: StatusCallback,
     chatId?: number,
-    modelContext: ConfigContext = "general"
+    modelContext: ConfigContext = "general",
+    queryUserId?: number
   ): Promise<string> {
     // Re-entrancy guard: prevent concurrent calls from corrupting session state
     if (this.isRunning) {
@@ -696,9 +697,13 @@ export class ClaudeSession {
     }
 
     if (this.nextQueryContext) {
-      console.log("[CONTEXT] Prepending recovered context from previous session");
-      messageToSend = `${this.nextQueryContext}\n\n${messageToSend}`;
-      this.nextQueryContext = null;
+      if (!queryUserId || this.nextQueryContext.userId === queryUserId) {
+        console.log(`[CONTEXT] Prepending recovered context from previous session (userId=${this.nextQueryContext.userId})`);
+        messageToSend = `${this.nextQueryContext.context}\n\n${messageToSend}`;
+        this.nextQueryContext = null;
+      } else {
+        console.log(`[CONTEXT] Skipping recovered context: bound to userId=${this.nextQueryContext.userId}, current query userId=${queryUserId}`);
+      }
     }
 
     if (isNewSession) {
