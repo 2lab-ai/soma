@@ -19,6 +19,7 @@ import {
 } from "../../utils/error-classification";
 import { isReentrancyError } from "./query-flow-guard";
 import { sendSystemMessage } from "../../utils/system-message";
+import { formatSteeringMessages } from "../../core/session/session-helpers";
 import {
   StreamingState,
   cleanupToolMessages,
@@ -99,11 +100,9 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         // but we must NOT continue processing steering messages.
         if (session.wasStoppedByUser) {
           console.log("[AUTO-CONTINUE] Skipping — user issued /stop");
-          if (session.hasSteeringMessages()) {
-            const lostCount = session.getSteeringCount();
-            session.consumeSteering();
-            session.clearInjectedSteeringTracking();
-            console.log(`[AUTO-CONTINUE] Discarded ${lostCount} steering message(s) due to /stop`);
+          const discarded = session.extractSteeringMessages();
+          if (discarded.length > 0) {
+            console.log(`[AUTO-CONTINUE] Discarded ${discarded.length} steering message(s) due to /stop`);
           }
           break;
         }
@@ -112,10 +111,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           // Fix #24: Check FIRST if user stopped — before any buffer work
           if (session.wasStoppedByUser) {
             console.log(`[AUTO-CONTINUE] Breaking loop — user issued /stop during round ${autoContinueRound}`);
-            if (session.hasSteeringMessages()) {
-              session.consumeSteering();
-              session.clearInjectedSteeringTracking();
-            }
+            session.extractSteeringMessages(); // drain both stores
             break;
           }
 
@@ -391,7 +387,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
           // Preserve lost steering messages as context for next query
           if (killResult.count > 0) {
-            const preserved = killResult.messages.map(m => m.content).join("\n---\n");
+            const preserved = formatSteeringMessages(killResult.messages);
             const existing = session.nextQueryContext || "";
             session.nextQueryContext = existing
               ? `${existing}\n[CRASH RECOVERY - ${killResult.count} message(s)]\n${preserved}\n[END RECOVERY]`
@@ -527,34 +523,29 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         // User abort: skip steering preservation — user wants to STOP, not continue
         if (isAbortError(error)) {
           console.log("[QUERY-FLOW] User abort detected — skipping steering preservation");
-          if (session.hasSteeringMessages()) {
-            const lostCount = session.getSteeringCount();
-            session.consumeSteering(); // discard live steering buffer
-            console.log(`[QUERY-FLOW] Discarded ${lostCount} steering message(s) due to user abort`);
+          // Drain both steeringBuffer and injectedSteeringDuringQuery (fix #32)
+          const discarded = session.extractSteeringMessages();
+          if (discarded.length > 0) {
+            console.log(`[QUERY-FLOW] Discarded ${discarded.length} steering message(s) due to user abort`);
           }
-          // Also clear injected steering tracked by postToolUseHook during this query.
-          // Without this, restoreInjectedSteering() on next query start would bring them back.
-          session.clearInjectedSteeringTracking();
           await handleAbortError(ctx, error, session);
           break;
         }
 
-        if (session.hasSteeringMessages()) {
-          const lostCount = session.getSteeringCount();
-          const preserved = session.consumeSteering();
-          if (preserved) {
-            // Preserve steering messages as context for next query instead of discarding
-            const existing = session.nextQueryContext || "";
-            session.nextQueryContext = existing
-              ? `${existing}\n[ERROR RECOVERY - ${lostCount} message(s)]\n${preserved}\n[END RECOVERY]`
-              : `[ERROR RECOVERY - ${lostCount} message(s)]\n${preserved}\n[END RECOVERY]`;
-            console.warn(
-              `[STEERING] Preserved ${lostCount} message(s) as nextQueryContext due to error`
-            );
-          }
+        // Drain BOTH steeringBuffer and injectedSteeringDuringQuery (fix #32)
+        const lostMessages = session.extractSteeringMessages();
+        if (lostMessages.length > 0) {
+          const preserved = formatSteeringMessages(lostMessages);
+          const existing = session.nextQueryContext || "";
+          session.nextQueryContext = existing
+            ? `${existing}\n[ERROR RECOVERY - ${lostMessages.length} message(s)]\n${preserved}\n[END RECOVERY]`
+            : `[ERROR RECOVERY - ${lostMessages.length} message(s)]\n${preserved}\n[END RECOVERY]`;
+          console.warn(
+            `[STEERING] Preserved ${lostMessages.length} message(s) as nextQueryContext due to error`
+          );
           try {
             await ctx.reply(
-              `⚠️ 에러 발생. 대기 중이던 ${lostCount}개 메시지가 다음 요청에 자동 포함됩니다.`
+              `⚠️ 에러 발생. 대기 중이던 ${lostMessages.length}개 메시지가 다음 요청에 자동 포함됩니다.`
             );
           } catch (notifyError) {
             console.error("[STEERING] Failed to notify user of error recovery:", notifyError);
