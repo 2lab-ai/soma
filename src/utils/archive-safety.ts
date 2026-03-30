@@ -47,28 +47,22 @@ export async function validateArchiveMembers(
   fileName: string
 ): Promise<void> {
   const ext = fileName.toLowerCase();
-  let memberList: string;
+  let members: string[];
 
   if (ext.endsWith(".zip")) {
-    const result = await Bun.$`unzip -l ${archivePath}`.quiet();
-    memberList = result.text();
+    const result = await Bun.$`unzip -Z1 ${archivePath}`.quiet();
+    members = result.text().trim().split("\n").filter(Boolean);
   } else {
     // tar, tar.gz, tgz
     const result = await Bun.$`tar -tf ${archivePath}`.quiet();
-    memberList = result.text();
+    members = result.text().trim().split("\n").filter(Boolean);
   }
 
-  const lines = memberList.split("\n").filter(Boolean);
   const dangerous: string[] = [];
 
-  for (const line of lines) {
-    // For unzip -l, the filename is the last column
-    // For tar -tf, each line is a filename
-    const memberName = ext.endsWith(".zip")
-      ? line.trim().split(/\s+/).pop() || ""
-      : line.trim();
-
-    if (memberName.includes("..")) {
+  for (const memberName of members) {
+    const segments = memberName.split("/");
+    if (segments.some(seg => seg === "..")) {
       dangerous.push(memberName);
     }
   }

@@ -431,10 +431,11 @@ async function processArchive(
       parse_mode: "HTML",
     });
 
+    let extractDir: string | undefined;
     try {
       // Extract archive
       console.log(`Extracting archive: ${fileName}`);
-      const extractDir = await extractArchive(archivePath, fileName);
+      extractDir = await extractArchive(archivePath, fileName);
       const { tree, contents } = await extractArchiveContent(extractDir);
       console.log(`Extracted: ${tree.length} files, ${contents.length} readable`);
 
@@ -502,9 +503,6 @@ ${contentsStr}`;
         // Ignore reaction errors
       }
 
-      // Cleanup
-      await Bun.$`rm -rf ${extractDir}`.quiet();
-
       // Delete status message
       try {
         await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
@@ -521,6 +519,9 @@ ${contentsStr}`;
       }
       await ctx.reply(`❌ Failed to process archive: ${String(error).slice(0, 100)}`);
     } finally {
+      if (extractDir) {
+        try { await Bun.$`rm -rf ${extractDir}`.quiet(); } catch {}
+      }
       state.cleanup();
       stopProcessing();
       typing.stop();
