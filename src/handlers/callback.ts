@@ -99,7 +99,9 @@ async function sendMessageToClaude(
     const response = await session.sendMessageStreaming(
       message,
       statusCallback,
-      chatId
+      chatId,
+      "general",
+      userId
     );
     await auditLog(userId, username, auditAction, message, response);
   } catch (error) {
