@@ -241,6 +241,51 @@ describe("extractErrorDetails", () => {
     );
     expect(details.hint).toBeUndefined();
   });
+
+  // Precedence tests: real error messages contain multiple patterns
+  test("combined EISDIR+gemini message gets gemini hint, not EISDIR (precedence)", () => {
+    const details = extractErrorDetails(
+      new Error("Command failed: gemini ... EISDIR: illegal operation on a directory")
+    );
+    expect(details.hint).toContain("gemini CLI");
+  });
+
+  test("combined string-width+EISDIR message gets Node.js hint, not EISDIR (precedence)", () => {
+    const details = extractErrorDetails(
+      new Error("SyntaxError: Invalid regular expression flags at string-width/index.js; EISDIR: illegal operation")
+    );
+    expect(details.hint).toContain("Node.js v20+");
+  });
+
+  // Negative tests: partial pattern matches should NOT trigger
+  test("does NOT add gemini hint for 'Command failed' without gemini", () => {
+    const details = extractErrorDetails(
+      new Error("Command failed: git push origin main")
+    );
+    expect(details.hint).toBeUndefined();
+  });
+
+  test("does NOT add gemini hint for 'gemini' without 'Command failed'", () => {
+    const details = extractErrorDetails(
+      new Error("gemini model returned unexpected response")
+    );
+    expect(details.hint).toBeUndefined();
+  });
+
+  // Branch isolation: each side of the OR independently
+  test("Invalid regex flags + string-width (without SyntaxError) gets Node.js hint", () => {
+    const details = extractErrorDetails(
+      new Error("Invalid regular expression flags in string-width/index.js")
+    );
+    expect(details.hint).toContain("Node.js v20+");
+  });
+
+  test("SyntaxError + string-width (without 'Invalid regex flags') gets Node.js hint", () => {
+    const details = extractErrorDetails(
+      new Error("SyntaxError in module string-width")
+    );
+    expect(details.hint).toContain("Node.js v20+");
+  });
 });
 
 describe("formatErrorForUser", () => {
