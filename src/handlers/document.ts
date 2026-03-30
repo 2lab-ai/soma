@@ -22,6 +22,7 @@ import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { botUsername } from "./text";
 import { Reactions } from "../constants/reactions";
 import { downloadTelegramFile } from "../utils/telegram-file";
+import { scrubBotToken } from "../utils/scrub-token";
 import { ensureSupportedImageFormat } from "../utils/image-format";
 import { resolve } from "path";
 import { sanitizeExtractedDir, isPathContained, isSymlink, isHardlink, validateArchiveMembers } from "../utils/archive-safety";
@@ -517,7 +518,7 @@ ${contentsStr}`;
       } catch {
         // Ignore
       }
-      await ctx.reply(`❌ Failed to process archive: ${String(error).slice(0, 100)}`);
+      await ctx.reply(`❌ Failed to process archive: ${scrubBotToken(error, ctx.api.token).slice(0, 100)}`);
     } finally {
       if (extractDir) {
         try { await Bun.$`rm -rf ${extractDir}`.quiet(); } catch {}
@@ -826,8 +827,8 @@ export async function handleDocument(ctx: Context): Promise<void> {
         threadId
       );
     } catch (error) {
-      console.error("Failed to extract document:", error);
-      await ctx.reply("❌ Failed to process document: " + String(error).slice(0, 100));
+      console.error("Failed to extract document:", scrubBotToken(error, ctx.api.token));
+      await ctx.reply("❌ Failed to process document: " + scrubBotToken(error, ctx.api.token).slice(0, 100));
     }
     return;
   }
