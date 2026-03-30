@@ -275,8 +275,8 @@ export function extractErrorDetails(error: unknown): ErrorDetails {
   } else if (error.message.includes("EACCES")) {
     details.hint = "Access denied. Check permissions.";
   } else if (
-    error.message.includes("Invalid regular expression flags") ||
-    error.message.includes("SyntaxError") && error.message.includes("string-width")
+    (error.message.includes("Invalid regular expression flags") && error.message.includes("string-width")) ||
+    (error.message.includes("SyntaxError") && error.message.includes("string-width"))
   ) {
     details.hint = "Node.js version too old. gemini CLI requires Node.js v20+.";
   } else if (error.message.includes("Command failed") && error.message.includes("gemini")) {
