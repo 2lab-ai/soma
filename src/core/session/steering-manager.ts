@@ -26,7 +26,7 @@ export class SteeringManager {
   }
 
   hasSteeringMessages(): boolean {
-    return this.steeringBuffer.length > 0;
+    return this.steeringBuffer.length > 0 || this.injectedSteeringDuringQuery.length > 0;
   }
 
   /** Total messages evicted since last reset. */
@@ -85,10 +85,25 @@ export class SteeringManager {
   }
 
   extractSteeringMessages(): SteeringMessage[] {
-    if (!this.steeringBuffer.length) return [];
-    const messages = [...this.steeringBuffer];
+    // Collect from BOTH stores: injectedSteeringDuringQuery (already sent to
+    // Claude via PostToolUse but not yet acknowledged) AND steeringBuffer
+    // (queued but not yet injected).  Deduplicate by messageId so messages
+    // tracked in both arrays aren't returned twice.
+    const seen = new Set<number>();
+    const combined: SteeringMessage[] = [];
+
+    for (const msg of this.injectedSteeringDuringQuery) {
+      if (msg.messageId !== undefined) seen.add(msg.messageId);
+      combined.push(msg);
+    }
+    for (const msg of this.steeringBuffer) {
+      if (msg.messageId !== undefined && seen.has(msg.messageId)) continue;
+      combined.push(msg);
+    }
+
+    this.injectedSteeringDuringQuery = [];
     this.steeringBuffer = [];
-    return messages;
+    return combined;
   }
 
   trackBufferedMessagesForInjection(): number {
