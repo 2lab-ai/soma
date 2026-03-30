@@ -99,7 +99,8 @@ describe("handleDocument image regression", () => {
     expect(isImageDocumentType("image.jpg")).toBe(true);
     expect(isImageDocumentType("image.jpeg")).toBe(true);
     expect(isImageDocumentType("image.webp")).toBe(true);
-    expect(isImageDocumentType("vector.svg", "image/svg+xml")).toBe(true);
+    // SVG intentionally excluded — not a raster format, not supported by Claude vision API
+    expect(isImageDocumentType("vector.svg", "image/svg+xml")).toBe(false);
     expect(isImageDocumentType("report.pdf", "application/pdf")).toBe(false);
   });
 
