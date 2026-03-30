@@ -12,7 +12,7 @@ import {
   ALLOWED_PATHS,
   ALLOWED_USERS,
   BLOCKED_PATTERNS,
-  BLOCKED_PIPE_PATTERNS,
+  BLOCKED_EXECUTION_RULES,
   RATE_LIMIT_ENABLED,
   RATE_LIMIT_REQUESTS,
   RATE_LIMIT_WINDOW,
@@ -128,10 +128,10 @@ export function checkCommandSafety(command: string): [safe: boolean, reason: str
     }
   }
 
-  // Check pipe-to-shell patterns (Security Audit S5)
-  for (const regex of BLOCKED_PIPE_PATTERNS) {
-    if (regex.test(command)) {
-      return [false, `Blocked pipe-to-shell pattern: ${regex.source}`];
+  // Check execution dispatch patterns (Security Audit S5)
+  for (const rule of BLOCKED_EXECUTION_RULES) {
+    if (rule.regex.test(command)) {
+      return [false, `Blocked: ${rule.reason} (${rule.id})`];
     }
   }
 
