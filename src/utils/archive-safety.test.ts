@@ -63,6 +63,17 @@ describe("isSymlink", () => {
 });
 
 describe("sanitizeExtractedDir", () => {
+  test("removes directory symlinks", async () => {
+    const dir = join(TEST_DIR, "dir-symlink-test");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "safe.txt"), "ok");
+    symlinkSync("/tmp", join(dir, "escape-dir"));
+    const removed = await sanitizeExtractedDir(dir);
+    expect(removed.some(r => r.includes("symlink"))).toBe(true);
+    expect(existsSync(join(dir, "escape-dir"))).toBe(false);
+    expect(existsSync(join(dir, "safe.txt"))).toBe(true);
+  });
+
   test("removes symlinks but keeps normal files", async () => {
     const dir = join(TEST_DIR, "sanitize-test");
     mkdirSync(dir, { recursive: true });
@@ -101,22 +112,26 @@ describe("extractArchive integration", () => {
     writeFileSync(join(tarDir, "escape.txt"), escapeContent);
     writeFileSync(join(tarDir, "safe.txt"), "safe content");
 
-    // Build a tar with a traversal member using transform
+    // Create tar with path traversal using python3 (works on all platforms)
     const tarPath = join(TEST_DIR, "malicious.tar");
-    try {
-      // Use tar --transform to rename escape.txt to ../../escape.txt
-      await Bun.$`tar -cf ${tarPath} -C ${tarDir} --transform='s|escape.txt|../../escape.txt|' escape.txt safe.txt`.quiet();
-    } catch {
-      // Some tar versions don't support --transform, use alternate approach
-      // Create directory structure that mimics traversal
-      const traversalDir = join(tarDir, "sub", "deep");
-      mkdirSync(traversalDir, { recursive: true });
-      writeFileSync(join(traversalDir, "escape.txt"), escapeContent);
-      await Bun.$`tar -cf ${tarPath} -C ${tarDir} safe.txt`.quiet();
-    }
+    await Bun.$`python3 -c "
+import tarfile, io
+t = tarfile.open('${tarPath}', 'w')
+info = tarfile.TarInfo(name='../../escape.txt')
+info.size = 7
+t.addfile(info, io.BytesIO(b'escaped'))
+info2 = tarfile.TarInfo(name='safe.txt')
+info2.size = 4
+t.addfile(info2, io.BytesIO(b'safe'))
+t.close()
+"`.quiet();
 
-    // Extract and sanitize
-    await Bun.$`tar --no-same-permissions -xf ${tarPath} -C ${extractDir}`.quiet();
+    // Extract and sanitize (tar may reject traversal entries with non-zero exit on macOS)
+    try {
+      await Bun.$`tar --no-same-permissions -xf ${tarPath} -C ${extractDir}`.quiet();
+    } catch {
+      // Expected: some tar implementations reject path traversal entries
+    }
     const removed = await sanitizeExtractedDir(extractDir);
 
     // The safe file should exist in the extract directory

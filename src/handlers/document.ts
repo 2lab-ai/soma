@@ -342,7 +342,7 @@ async function extractArchive(archivePath: string, fileName: string): Promise<st
  */
 async function buildFileTree(dir: string): Promise<string[]> {
   const entries = await Array.fromAsync(
-    new Bun.Glob("**/*").scan({ cwd: dir, dot: false })
+    new Bun.Glob("**/*").scan({ cwd: dir, dot: false, followSymlinks: false })
   );
   entries.sort();
   return entries.slice(0, 100); // Limit to 100 files

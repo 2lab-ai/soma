@@ -1,4 +1,4 @@
-import { resolve, relative } from "path";
+import { resolve } from "path";
 import { lstatSync, readdirSync } from "fs";
 
 /**
