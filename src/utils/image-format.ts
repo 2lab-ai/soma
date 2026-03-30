@@ -67,7 +67,7 @@ export function detectImageFormat(buffer: ArrayBuffer): ImageFormatInfo | null {
     bytes.length >= 12 &&
     bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70
   ) {
-    const brand = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
+    const brand = String.fromCharCode(bytes[8]!, bytes[9]!, bytes[10]!, bytes[11]!);
     if (brand.startsWith("hei") || brand.startsWith("mif")) {
       return { format: "heic", extension: ".heic", supported: false };
     }
