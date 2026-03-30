@@ -21,6 +21,7 @@ import { StreamingState, createStatusCallback } from "./streaming";
 import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { botUsername } from "./text";
 import { Reactions } from "../constants/reactions";
+import { downloadTelegramFile } from "../utils/telegram-file";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -91,18 +92,14 @@ async function downloadDocument(ctx: Context): Promise<string> {
     throw new Error("No document in message");
   }
 
-  const file = await ctx.getFile();
   const fileName = doc.file_name || `doc_${Date.now()}`;
 
   // Sanitize filename
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
   const docPath = `${TEMP_DIR}/${safeName}`;
 
-  // Download
-  const response = await fetch(
-    `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`
-  );
-  const buffer = await response.arrayBuffer();
+  // Download via secure helper (token never exposed in errors)
+  const buffer = await downloadTelegramFile(ctx);
   await Bun.write(docPath, buffer);
 
   return docPath;
@@ -229,7 +226,10 @@ async function processMixedDocumentInputs(
       documents.length === 1
         ? `Document: ${documents[0]!.name}\n\nContent:\n${documents[0]!.content}`
         : `${documents.length} Documents:\n\n${documents
-            .map((doc, index) => `--- Document ${index + 1}: ${doc.name} ---\n${doc.content}`)
+            .map(
+              (doc, index) =>
+                `--- Document ${index + 1}: ${doc.name} ---\n${doc.content}`
+            )
             .join("\n\n")}`;
     const promptBody = [imageSection, documentSection].join("\n\n");
     const prompt = caption
@@ -598,7 +598,7 @@ async function processDocumentPaths(
   threadId?: number
 ): Promise<void> {
   const imagePaths = paths.filter((path) => isImagePath(path));
-  const textPaths = paths.filter((path) => isImagePath(path) === false);
+  const textPaths = paths.filter((path) => !isImagePath(path));
   const documents: Array<{ path: string; name: string; content: string }> = [];
 
   for (const path of textPaths) {
@@ -726,7 +726,9 @@ export async function handleDocument(ctx: Context): Promise<void> {
     if (allowed === false) {
       const waitSeconds = retryAfter ?? 0;
       await auditLogRateLimit(userId, username, waitSeconds);
-      await ctx.reply("⏳ Rate limited. Please wait " + waitSeconds.toFixed(1) + " seconds.");
+      await ctx.reply(
+        "⏳ Rate limited. Please wait " + waitSeconds.toFixed(1) + " seconds."
+      );
       return;
     }
 
@@ -749,7 +751,9 @@ export async function handleDocument(ctx: Context): Promise<void> {
     if (allowed === false) {
       const waitSeconds = retryAfter ?? 0;
       await auditLogRateLimit(userId, username, waitSeconds);
-      await ctx.reply("⏳ Rate limited. Please wait " + waitSeconds.toFixed(1) + " seconds.");
+      await ctx.reply(
+        "⏳ Rate limited. Please wait " + waitSeconds.toFixed(1) + " seconds."
+      );
       return;
     }
 
