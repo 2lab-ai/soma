@@ -165,7 +165,7 @@ export function registerBotHandlers(bot: Bot<Context>): void {
         err.ctx.reply(
           `⚠️ Bot Error (unhandled)\n\n${truncated}\n\n이 에러가 반복되면 /new 로 세션을 초기화하세요.`
         ).catch(() => {
-          console.error(`[BOT-CATCH] Failed to notify user ${chatId}:`, replyErr);
+          console.error(`[BOT-CATCH] Failed to notify user ${chatId}:`, scrubBotToken(replyErr, token));
         });
       });
     }
