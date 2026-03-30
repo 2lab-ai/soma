@@ -137,4 +137,64 @@ describe("downloadTelegramFile", () => {
       }
     }
   });
+
+  test("empty token does not mangle error messages", async () => {
+    const ctx = {
+      api: { token: "" },
+      getFile: mock(() =>
+        Promise.resolve({ file_path: "x" } as { file_path: string })
+      ),
+    } as unknown as import("grammy").Context;
+    globalThis.fetch = mock(() =>
+      Promise.reject(new Error("socket hang up"))
+    ) as unknown as typeof fetch;
+
+    try {
+      await downloadTelegramFile(ctx);
+      throw new Error("should have thrown");
+    } catch (err: unknown) {
+      const msg = String(err);
+      expect(msg).toContain("socket hang up");
+      expect(msg).not.toContain("[REDACTED]");
+    }
+  });
+
+  test("scrubs token when arrayBuffer() rejects after ok response", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve({
+        ok: true,
+        arrayBuffer: () =>
+          Promise.reject(new Error(`stream failed for bot${FAKE_TOKEN}`)),
+      } as unknown as Response)
+    ) as unknown as typeof fetch;
+
+    try {
+      await downloadTelegramFile(makeFakeCtx("file.jpg"));
+      throw new Error("should have thrown");
+    } catch (err: unknown) {
+      const msg = String(err);
+      expect(msg).not.toContain(FAKE_TOKEN);
+      expect(msg).toContain("Telegram file download failed");
+    }
+  });
+
+  test("scrubs token from HTTP statusText", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response("err", {
+          status: 403,
+          statusText: `Forbidden ${FAKE_TOKEN}`,
+        })
+      )
+    ) as unknown as typeof fetch;
+
+    try {
+      await downloadTelegramFile(makeFakeCtx("secret.jpg"));
+      throw new Error("should have thrown");
+    } catch (err: unknown) {
+      const msg = String(err);
+      expect(msg).not.toContain(FAKE_TOKEN);
+      expect(msg).toContain("Telegram file download failed");
+    }
+  });
 });
