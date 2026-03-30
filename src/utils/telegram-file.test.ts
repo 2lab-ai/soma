@@ -6,7 +6,7 @@
  * 2. Return ArrayBuffer on success
  * 3. On fetch failure, throw an error whose message does NOT contain the bot token
  */
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, afterEach } from "bun:test";
 import { downloadTelegramFile } from "./telegram-file";
 
 // Fake bot token — the value that must NEVER appear in any thrown error
@@ -24,22 +24,18 @@ function makeFakeCtx(filePath: string) {
 describe("downloadTelegramFile", () => {
   const originalFetch = globalThis.fetch;
 
-  beforeEach(() => {
-    // Reset fetch to original after each test
+  afterEach(() => {
+    // Restore original fetch after each test (including after suite's last test)
     globalThis.fetch = originalFetch;
   });
 
   test("returns ArrayBuffer on successful download", async () => {
     const payload = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG header bytes
     globalThis.fetch = mock(() =>
-      Promise.resolve(
-        new Response(payload, { status: 200 })
-      )
+      Promise.resolve(new Response(payload, { status: 200 }))
     ) as unknown as typeof fetch;
 
-    const result = await downloadTelegramFile(
-      makeFakeCtx("photos/file_42.jpg")
-    );
+    const result = await downloadTelegramFile(makeFakeCtx("photos/file_42.jpg"));
 
     expect(result).toBeInstanceOf(ArrayBuffer);
     expect(new Uint8Array(result)).toEqual(payload);
@@ -63,9 +59,7 @@ describe("downloadTelegramFile", () => {
   test("on network error, thrown message does NOT contain the bot token", async () => {
     globalThis.fetch = mock(() =>
       Promise.reject(
-        new Error(
-          `request to https://api.telegram.org/file/bot${FAKE_TOKEN}/x failed`
-        )
+        new Error(`request to https://api.telegram.org/file/bot${FAKE_TOKEN}/x failed`)
       )
     ) as unknown as typeof fetch;
 
@@ -94,13 +88,44 @@ describe("downloadTelegramFile", () => {
     }
   });
 
+  test("on getFile failure, thrown message does NOT contain the bot token", async () => {
+    const ctx = {
+      api: { token: FAKE_TOKEN },
+      getFile: mock(() =>
+        Promise.reject(
+          new Error(`https://api.telegram.org/bot${FAKE_TOKEN}/getFile failed`)
+        )
+      ),
+    } as unknown as import("grammy").Context;
+
+    try {
+      await downloadTelegramFile(ctx);
+      throw new Error("should have thrown");
+    } catch (err: unknown) {
+      const msg = String(err);
+      expect(msg).not.toContain(FAKE_TOKEN);
+      expect(msg).toContain("Telegram file download failed");
+    }
+  });
+
+  test("on non-Error throwable, thrown message does NOT contain the bot token", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.reject(`raw string with token ${FAKE_TOKEN} leaked`)
+    ) as unknown as typeof fetch;
+
+    try {
+      await downloadTelegramFile(makeFakeCtx("x"));
+      throw new Error("should have thrown");
+    } catch (err: unknown) {
+      const msg = String(err);
+      expect(msg).not.toContain(FAKE_TOKEN);
+      expect(msg).toContain("Telegram file download failed");
+    }
+  });
+
   test("on error, stack trace does NOT contain the bot token", async () => {
     globalThis.fetch = mock(() =>
-      Promise.reject(
-        new Error(
-          `https://api.telegram.org/file/bot${FAKE_TOKEN}/leak`
-        )
-      )
+      Promise.reject(new Error(`https://api.telegram.org/file/bot${FAKE_TOKEN}/leak`))
     ) as unknown as typeof fetch;
 
     try {
