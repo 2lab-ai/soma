@@ -19,6 +19,7 @@ import {
 } from "../../utils/error-classification";
 import { isReentrancyError } from "./query-flow-guard";
 import { sendSystemMessage } from "../../utils/system-message";
+import { formatSteeringMessages } from "../../core/session/session-helpers";
 import {
   StreamingState,
   cleanupToolMessages,
@@ -391,7 +392,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
           // Preserve lost steering messages as context for next query
           if (killResult.count > 0) {
-            const preserved = killResult.messages.map(m => m.content).join("\n---\n");
+            const preserved = formatSteeringMessages(killResult.messages);
             const existing = session.nextQueryContext || "";
             session.nextQueryContext = existing
               ? `${existing}\n[CRASH RECOVERY - ${killResult.count} message(s)]\n${preserved}\n[END RECOVERY]`
