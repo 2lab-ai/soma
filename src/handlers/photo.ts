@@ -203,20 +203,25 @@ export async function handlePhoto(ctx: Context): Promise<void> {
   try {
     photoPath = await downloadPhoto(ctx);
   } catch (error) {
-    console.error("Failed to download photo:", error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const isFormatError = errMsg.includes("Unsupported image format");
+    const userMessage = isFormatError
+      ? `❌ ${errMsg}`
+      : "❌ Failed to download photo.";
+    console.error("Failed to process photo:", error);
     if (statusMsg) {
       try {
         await ctx.api.editMessageText(
           statusMsg.chat.id,
           statusMsg.message_id,
-          "❌ Failed to download photo."
+          userMessage
         );
       } catch (editError) {
         console.debug("Failed to edit status message:", editError);
-        await ctx.reply("❌ Failed to download photo.");
+        await ctx.reply(userMessage);
       }
     } else {
-      await ctx.reply("❌ Failed to download photo.");
+      await ctx.reply(userMessage);
     }
     return;
   }

@@ -46,13 +46,17 @@ const TEXT_EXTENSIONS = [
   ".toml",
 ];
 
-const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".svg"];
+const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".heic", ".avif"];
 const IMAGE_MIME_TYPES = [
   "image/png",
   "image/jpg",
   "image/jpeg",
   "image/webp",
-  "image/svg+xml",
+  "image/gif",
+  "image/bmp",
+  "image/tiff",
+  "image/heic",
+  "image/avif",
 ];
 
 export function isImageDocumentType(fileName: string, mimeType?: string): boolean {

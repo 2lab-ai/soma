@@ -8,9 +8,6 @@
  * Claude API supported image formats: JPEG, PNG, GIF, WebP
  */
 
-/** Formats the Claude API accepts for vision. */
-const SUPPORTED_FORMATS = new Set(["jpeg", "png", "gif", "webp"]);
-
 interface ImageFormatInfo {
   /** Detected format name (e.g., "jpeg", "png", "webp", "gif", "bmp", "tiff", "heic") */
   format: string;
