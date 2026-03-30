@@ -221,10 +221,18 @@ export const BLOCKED_EXECUTION_RULES: readonly BlockRule[] = [
   {
     id: "pipe-to-path-interpreter",
     regex: new RegExp(
-      `\\|\\s*(?:\\/(?:usr\\/)?(?:local\\/)?bin\\/(?:env\\s+)?|env\\s+)(?:${ALL_INTERPRETERS})\\b`,
+      `\\|\\s*(?:\\/(?:usr\\/)?(?:local\\/)?(?:s?bin)\\/(?:env\\s+(?:-\\S+\\s+)*)?|env\\s+(?:-\\S+\\s+)*)(?:${ALL_INTERPRETERS})\\b`,
       "i"
     ),
     reason: "Pipe to absolute-path or env-wrapped interpreter",
+  },
+  {
+    id: "pipe-to-busybox",
+    regex: new RegExp(
+      `\\|\\s*(?:\\/(?:usr\\/)?(?:local\\/)?(?:s?bin)\\/)?busybox\\s+(?:sh|bash|ash|dash)\\b`,
+      "i"
+    ),
+    reason: "Pipe to busybox-wrapped shell",
   },
   {
     id: "process-substitution",
@@ -235,9 +243,24 @@ export const BLOCKED_EXECUTION_RULES: readonly BlockRule[] = [
     reason: "Process substitution with remote fetch",
   },
   {
+    id: "source-dot-substitution",
+    // dot-source: `. <(curl ...)` / `source <(curl ...)` — `\.\s` (not just `\.`)
+    // because shell requires whitespace after `.` builtin to distinguish from filenames
+    regex: /(?:source|\.\s)\s*<\(\s*(?:curl|wget)\b/i,
+    reason: "Source/dot process substitution with remote fetch",
+  },
+  {
     id: "xargs-to-interpreter",
     regex: new RegExp(`\\|\\s*xargs\\s+(?:${ALL_INTERPRETERS})\\b`, "i"),
     reason: "Xargs to shell/script interpreter",
+  },
+  {
+    id: "env-wrapped-interpreter",
+    regex: new RegExp(
+      `\\|\\s*(?:\\/(?:usr\\/)?(?:local\\/)?(?:s?bin)\\/)?env\\s+(?:-\\S+\\s+)*(?:${ALL_INTERPRETERS})\\b`,
+      "i"
+    ),
+    reason: "Env-wrapped pipe to interpreter",
   },
 ];
 
