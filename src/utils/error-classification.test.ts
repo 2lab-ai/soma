@@ -215,6 +215,32 @@ describe("extractErrorDetails", () => {
     const details = extractErrorDetails(new Error("ENOENT: no such file"));
     expect(details.hint).toContain("File not found");
   });
+
+  test("adds EISDIR hint (soma-gemini-eisdir)", () => {
+    const details = extractErrorDetails(new Error("EISDIR: illegal operation on a directory, read"));
+    expect(details.hint).toContain("directory was read as a file");
+  });
+
+  test("adds Node.js version hint for string-width regex flag error (soma-gemini-eisdir)", () => {
+    const details = extractErrorDetails(
+      new Error("SyntaxError: Invalid regular expression flags at string-width/index.js:16")
+    );
+    expect(details.hint).toContain("Node.js v20+");
+  });
+
+  test("adds gemini CLI hint for Command failed (soma-gemini-eisdir)", () => {
+    const details = extractErrorDetails(
+      new Error("Error executing gemini: Command failed: gemini \"Please visit...\"")
+    );
+    expect(details.hint).toContain("gemini CLI");
+  });
+
+  test("does NOT add Node.js hint for unrelated regex flag error (soma-gemini-eisdir)", () => {
+    const details = extractErrorDetails(
+      new Error("Invalid regular expression flags in user input")
+    );
+    expect(details.hint).toBeUndefined();
+  });
 });
 
 describe("formatErrorForUser", () => {

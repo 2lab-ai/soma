@@ -42,6 +42,24 @@ describe("normalizeProviderError", () => {
     expect(reNormalized.cause).toBe(originalError);
   });
 
+  test("classifies 'Command failed' as TOOL error (soma-gemini-eisdir)", () => {
+    const error = normalizeProviderError(
+      "anthropic",
+      new Error("only prompt commands are supported in streaming mode; Error: Error executing gemini: Command failed: gemini \"Please visit...\"")
+    );
+    expect(error.code).toBe("TOOL");
+    expect(error.retryable).toBe(false);
+  });
+
+  test("classifies EISDIR as TOOL error (soma-gemini-eisdir)", () => {
+    const error = normalizeProviderError(
+      "anthropic",
+      new Error("EISDIR: illegal operation on a directory, read")
+    );
+    expect(error.code).toBe("TOOL");
+    expect(error.retryable).toBe(false);
+  });
+
   test("preserves already-normalized errors", () => {
     const normalized = new NormalizedProviderError(
       "codex",

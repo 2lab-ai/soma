@@ -19,7 +19,7 @@ const NETWORK_PATTERNS = [
   "socket hang up",
   "fetch failed",
 ];
-const TOOL_PATTERNS = ["tool", "mcp", "hook"];
+const TOOL_PATTERNS = ["tool", "mcp", "hook", "command failed", "eisdir"];
 const ABORT_PATTERNS = ["abort", "aborted", "cancelled", "canceled"];
 const CONTEXT_LIMIT_PATTERNS = ["context limit", "context_length", "too large"];
 const INVALID_REQUEST_PATTERNS = ["invalid request", "bad request", "400"];

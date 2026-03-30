@@ -268,10 +268,19 @@ export function extractErrorDetails(error: unknown): ErrorDetails {
     } else {
       details.hint = "Claude Code crashed. Session will auto-reconnect.";
     }
+  } else if (error.message.includes("EISDIR")) {
+    details.hint = "A directory was read as a file. Check SDK version or path config.";
   } else if (error.message.includes("ENOENT")) {
     details.hint = "File not found. Check path.";
   } else if (error.message.includes("EACCES")) {
     details.hint = "Access denied. Check permissions.";
+  } else if (
+    (error.message.includes("Invalid regular expression flags") && error.message.includes("string-width")) ||
+    (error.message.includes("SyntaxError") && error.message.includes("string-width"))
+  ) {
+    details.hint = "Node.js version too old. gemini CLI requires Node.js v20+.";
+  } else if (error.message.includes("Command failed") && error.message.includes("gemini")) {
+    details.hint = "gemini CLI execution failed. Check Node.js version (v20+ required) and installation.";
   }
 
   return details;
