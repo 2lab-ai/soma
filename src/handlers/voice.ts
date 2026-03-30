@@ -20,6 +20,7 @@ import { StreamingState, createStatusCallback } from "./streaming";
 import { botUsername } from "./text";
 import { handleAbortError } from "../utils/error-classification";
 import { Reactions } from "../constants/reactions";
+import { downloadTelegramFile } from "../utils/telegram-file";
 
 /**
  * Handle incoming voice messages.
@@ -96,16 +97,11 @@ export async function handleVoice(ctx: Context): Promise<void> {
   let voicePath: string | null = null;
 
   try {
-    // 6. Download voice file
-    const file = await ctx.getFile();
+    // 6. Download voice file via secure helper (token never exposed in errors)
     const timestamp = Date.now();
     voicePath = `${TEMP_DIR}/voice_${timestamp}.ogg`;
 
-    // Download the file
-    const downloadRes = await fetch(
-      `https://api.telegram.org/file/bot${ctx.api.token}/${file.file_path}`
-    );
-    const buffer = await downloadRes.arrayBuffer();
+    const buffer = await downloadTelegramFile(ctx);
     await Bun.write(voicePath, buffer);
 
     // 7. Transcribe
