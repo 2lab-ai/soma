@@ -118,8 +118,19 @@ export function isPathAllowed(path: string): boolean {
 
 // ============== Command Safety ==============
 
+/**
+ * Normalize a command string for security checks.
+ * Collapses line continuations so multi-line bypass attempts are caught.
+ */
+function normalizeCommand(command: string): string {
+  // Collapse shell line continuations: backslash + newline
+  return command.replace(/\\\n/g, "");
+}
+
 export function checkCommandSafety(command: string): [safe: boolean, reason: string] {
-  const lowerCommand = command.toLowerCase();
+  // Normalize command to defeat line-continuation bypass
+  const normalized = normalizeCommand(command);
+  const lowerCommand = normalized.toLowerCase();
 
   // Check blocked patterns
   for (const pattern of BLOCKED_PATTERNS) {
@@ -130,7 +141,7 @@ export function checkCommandSafety(command: string): [safe: boolean, reason: str
 
   // Check execution dispatch patterns (Security Audit S5)
   for (const rule of BLOCKED_EXECUTION_RULES) {
-    if (rule.regex.test(command)) {
+    if (rule.regex.test(normalized)) {
       return [false, `Blocked: ${rule.reason} (${rule.id})`];
     }
   }
