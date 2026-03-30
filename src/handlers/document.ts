@@ -22,6 +22,7 @@ import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { botUsername } from "./text";
 import { Reactions } from "../constants/reactions";
 import { downloadTelegramFile } from "../utils/telegram-file";
+import { ensureSupportedImageFormat } from "../utils/image-format";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -85,6 +86,10 @@ const documentBuffer = createMediaGroupBuffer({
 
 /**
  * Download a document and return the local path.
+ *
+ * For image documents, validates the actual format from magic bytes and
+ * converts unsupported formats to PNG. This prevents Claude Agent SDK
+ * "unsupported image format" errors.
  */
 async function downloadDocument(ctx: Context): Promise<string> {
   const doc = ctx.message?.document;
@@ -93,15 +98,31 @@ async function downloadDocument(ctx: Context): Promise<string> {
   }
 
   const fileName = doc.file_name || `doc_${Date.now()}`;
-
-  // Sanitize filename
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const docPath = `${TEMP_DIR}/${safeName}`;
 
   // Download via secure helper (token never exposed in errors)
-  const buffer = await downloadTelegramFile(ctx);
-  await Bun.write(docPath, buffer);
+  const rawBuffer = await downloadTelegramFile(ctx);
 
+  // For image documents, validate and fix format before saving
+  const isImage = isImageDocumentType(fileName, doc.mime_type);
+  if (isImage) {
+    const result = await ensureSupportedImageFormat(rawBuffer);
+    if (!result) {
+      throw new Error(
+        `Unsupported image format for ${fileName}. Supported: JPEG, PNG, GIF, WebP.`
+      );
+    }
+
+    // Use correct extension based on actual detected format
+    const baseName = safeName.replace(/\.[^.]+$/, "");
+    const docPath = `${TEMP_DIR}/${baseName}${result.extension}`;
+    await Bun.write(docPath, result.buffer);
+    return docPath;
+  }
+
+  // Non-image documents — save as-is
+  const docPath = `${TEMP_DIR}/${safeName}`;
+  await Bun.write(docPath, rawBuffer);
   return docPath;
 }
 

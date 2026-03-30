@@ -21,6 +21,7 @@ import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { botUsername } from "./text";
 import { Reactions } from "../constants/reactions";
 import { downloadTelegramFile } from "../utils/telegram-file";
+import { ensureSupportedImageFormat } from "../utils/image-format";
 
 // Create photo-specific media group buffer
 const photoBuffer = createMediaGroupBuffer({
@@ -30,7 +31,11 @@ const photoBuffer = createMediaGroupBuffer({
 });
 
 /**
- * Download a photo and return the local path.
+ * Download a photo, validate its format, and return the local path.
+ *
+ * Detects actual image format from magic bytes (not extension) and
+ * converts unsupported formats to PNG. This prevents the Claude Agent SDK
+ * from failing with "unsupported image format" errors.
  */
 async function downloadPhoto(ctx: Context): Promise<string> {
   const photos = ctx.message?.photo;
@@ -40,11 +45,20 @@ async function downloadPhoto(ctx: Context): Promise<string> {
 
   const timestamp = Date.now();
   const random = Math.random().toString(36).slice(2, 8);
-  const photoPath = `${TEMP_DIR}/photo_${timestamp}_${random}.jpg`;
 
   // Download via secure helper (token never exposed in errors)
-  const buffer = await downloadTelegramFile(ctx);
-  await Bun.write(photoPath, buffer);
+  const rawBuffer = await downloadTelegramFile(ctx);
+
+  // Validate and possibly convert image format
+  const result = await ensureSupportedImageFormat(rawBuffer);
+  if (!result) {
+    throw new Error(
+      "Unsupported image format. Supported formats: JPEG, PNG, GIF, WebP."
+    );
+  }
+
+  const photoPath = `${TEMP_DIR}/photo_${timestamp}_${random}${result.extension}`;
+  await Bun.write(photoPath, result.buffer);
 
   return photoPath;
 }
