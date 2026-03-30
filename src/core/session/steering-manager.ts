@@ -26,7 +26,7 @@ export class SteeringManager {
   }
 
   hasSteeringMessages(): boolean {
-    return this.steeringBuffer.length > 0;
+    return this.steeringBuffer.length > 0 || this.injectedSteeringDuringQuery.length > 0;
   }
 
   /** Total messages evicted since last reset. */

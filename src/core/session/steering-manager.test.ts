@@ -48,7 +48,8 @@ describe("SteeringManager.extractSteeringMessages", () => {
     mgr.consumeSteering(); // auto-continue consumes the buffer
 
     // At this point: steeringBuffer=[], injectedSteeringDuringQuery=[msg10,msg11]
-    expect(mgr.hasSteeringMessages()).toBe(false);
+    // hasSteeringMessages() now checks both stores (fix #32)
+    expect(mgr.hasSteeringMessages()).toBe(true);
 
     const extracted = mgr.extractSteeringMessages();
     expect(extracted).toHaveLength(2);
@@ -104,6 +105,29 @@ describe("SteeringManager.extractSteeringMessages", () => {
     const extracted = mgr.extractSteeringMessages();
     expect(extracted[0].content).toBe("first");
     expect(extracted[1].content).toBe("second");
+  });
+});
+
+describe("SteeringManager.hasSteeringMessages", () => {
+  test("returns true when only injectedSteeringDuringQuery has messages", () => {
+    const mgr = makeManager();
+    mgr.addSteering("injected", 60, "Bash");
+    mgr.trackBufferedMessagesForInjection();
+    mgr.consumeSteering(); // buffer empty, injected has 1
+
+    // Before fix: would return false (only checked steeringBuffer)
+    expect(mgr.hasSteeringMessages()).toBe(true);
+  });
+
+  test("returns false when both stores are empty", () => {
+    const mgr = makeManager();
+    expect(mgr.hasSteeringMessages()).toBe(false);
+  });
+
+  test("returns true when only steeringBuffer has messages", () => {
+    const mgr = makeManager();
+    mgr.addSteering("buffered", 61);
+    expect(mgr.hasSteeringMessages()).toBe(true);
   });
 });
 
