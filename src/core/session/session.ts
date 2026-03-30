@@ -610,9 +610,9 @@ export class ClaudeSession {
     return this.consumeSteering();
   }
 
-  async stop(): Promise<"stopped" | "pending" | false> {
+  async stop(userInitiated = false): Promise<"stopped" | "pending" | false> {
     if (this._queryState === "running" && this.abortController) {
-      this._wasStoppedByUser = true;
+      if (userInitiated) this._wasStoppedByUser = true;
       this.applyRuntimeState(
         requestStopDuringRunningTransition(this.getRuntimeState())
       );
@@ -635,7 +635,7 @@ export class ClaudeSession {
     }
 
     if (this._queryState === "preparing") {
-      this._wasStoppedByUser = true;
+      if (userInitiated) this._wasStoppedByUser = true;
       this.applyRuntimeState(
         requestStopDuringPreparingTransition(this.getRuntimeState())
       );
