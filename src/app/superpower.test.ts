@@ -32,7 +32,7 @@ function createFakeBot() {
 }
 
 function createFakeSession() {
-  let _nextQueryContext: string | null = null;
+  let _nextQueryContext: { userId: number; context: string } | null = null;
   return {
     isActive: false,
     sessionStartTime: null,
@@ -50,7 +50,7 @@ function createFakeSession() {
     get nextQueryContext() {
       return _nextQueryContext;
     },
-    set nextQueryContext(v: string | null) {
+    set nextQueryContext(v: { userId: number; context: string } | null) {
       _nextQueryContext = v;
     },
   };
@@ -246,8 +246,8 @@ describe("Superpower: autonomous deploy + verify (soma-86ew)", () => {
     // CRITICAL: should inject fix request into session context
     // So next Claude message will auto-trigger fix attempt
     expect(session.nextQueryContext).not.toBeNull();
-    expect(session.nextQueryContext).toContain("검증 실패");
-    expect(session.nextQueryContext).toContain("자동 수정");
+    expect(session.nextQueryContext!.context).toContain("검증 실패");
+    expect(session.nextQueryContext!.context).toContain("자동 수정");
   });
 
   test("RED: setVerificationTask is exposed on bootstrapped application", async () => {
