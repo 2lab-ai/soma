@@ -511,7 +511,7 @@ ${contentsStr}`;
         // Ignore deletion errors
       }
     } catch (error) {
-      console.error("Archive processing error:", error);
+      console.error("Archive processing error:", scrubBotToken(error, ctx.api.token));
       // Delete status message on error
       try {
         await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
@@ -652,7 +652,7 @@ async function processDocumentPaths(
       const content = await extractText(path);
       documents.push({ path, name, content });
     } catch (error) {
-      console.error("Failed to extract " + path + ":", error);
+      console.error("Failed to extract " + path + ":", scrubBotToken(error, ctx.api.token));
     }
   }
 
@@ -760,7 +760,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
   try {
     docPath = await downloadDocument(ctx);
   } catch (error) {
-    console.error("Failed to download document:", error);
+    console.error("Failed to download document:", scrubBotToken(error, ctx.api.token));
     await ctx.reply("❌ Failed to download document.");
     return;
   }
