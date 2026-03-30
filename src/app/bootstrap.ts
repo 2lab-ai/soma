@@ -45,7 +45,7 @@ interface SessionPort {
   getSteeringCount(): number;
   consumeSteering(): string | null;
   formatToolStats(): string;
-  nextQueryContext: string | null;
+  nextQueryContext: { userId: number; context: string } | null;
   sendMessageStreaming(
     prompt: string,
     statusCallback: (
@@ -334,7 +334,7 @@ export async function bootstrapApplication(
               `Output:\n${output}\n\n` +
               `이전 세션의 명령(make up, restart 등)은 이미 완료됨. 절대 재실행하지 마세요.\n` +
               `위 검증 실패를 분석하고 코드를 수정하세요.`;
-            session.nextQueryContext = fixPrompt;
+            session.nextQueryContext = { userId, context: fixPrompt };
 
             // Proactive: auto-start fix without waiting for user message
             try {
@@ -342,6 +342,8 @@ export async function bootstrapApplication(
               await session.sendMessageStreaming(
                 fixPrompt,
                 async () => {},
+                userId,
+                "general",
                 userId,
               );
             } catch (e) {
@@ -394,7 +396,7 @@ export async function bootstrapApplication(
             contextMsg += `\n\n크래시 에러:\n${crashError.slice(0, 1000)}`;
           }
 
-          session.nextQueryContext = contextMsg;
+          session.nextQueryContext = { userId, context: contextMsg };
 
           // Send Telegram notification to user about restart type
           try {
@@ -439,12 +441,14 @@ export async function bootstrapApplication(
 
         const errorStr = crashData.error ? `\n\n크래시 에러:\n${String(crashData.error).slice(0, 1000)}` : "";
 
-        session.nextQueryContext =
-          `[SYSTEM] 서비스가 비정상 종료 후 재시작되었습니다.\n` +
-          `종료 원인: ${reasonLabel}\n` +
-          `종료 시각: ${crashData.timestamp || "unknown"}` +
-          errorStr +
-          `\n\n이전 세션의 명령은 이미 완료되었습니다. 절대 재실행하지 마세요.`;
+        session.nextQueryContext = {
+          userId,
+          context: `[SYSTEM] 서비스가 비정상 종료 후 재시작되었습니다.\n` +
+            `종료 원인: ${reasonLabel}\n` +
+            `종료 시각: ${crashData.timestamp || "unknown"}` +
+            errorStr +
+            `\n\n이전 세션의 명령은 이미 완료되었습니다. 절대 재실행하지 마세요.`,
+        };
 
         // Send Telegram notification — OS-level crash (no SIGTERM caught)
         try {
@@ -475,11 +479,13 @@ export async function bootstrapApplication(
       const session = manager.getSession(userId);
       if (session.totalQueries > 0) {
         // Had previous session but no markers = OS-level kill (OOM, SIGKILL, reboot)
-        session.nextQueryContext =
-          `[SYSTEM] 서비스가 재시작되었습니다.\n` +
-          `재시작 원인: 🖥️ OS 재시작 또는 프로세스 강제 종료 (SIGKILL/OOM)\n` +
-          `마커 파일 없음 — SIGTERM이 캐치되지 않았으므로 OS 레벨 종료로 추정됩니다.\n` +
-          `이전 세션의 명령은 이미 완료되었습니다. 절대 재실행하지 마세요.`;
+        session.nextQueryContext = {
+          userId,
+          context: `[SYSTEM] 서비스가 재시작되었습니다.\n` +
+            `재시작 원인: 🖥️ OS 재시작 또는 프로세스 강제 종료 (SIGKILL/OOM)\n` +
+            `마커 파일 없음 — SIGTERM이 캐치되지 않았으므로 OS 레벨 종료로 추정됩니다.\n` +
+            `이전 세션의 명령은 이미 완료되었습니다. 절대 재실행하지 마세요.`,
+        };
 
         try {
           await bot.api.sendMessage(

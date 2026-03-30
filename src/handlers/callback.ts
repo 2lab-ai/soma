@@ -99,7 +99,9 @@ async function sendMessageToClaude(
     const response = await session.sendMessageStreaming(
       message,
       statusCallback,
-      chatId
+      chatId,
+      "general",
+      userId
     );
     await auditLog(userId, username, auditAction, message, response);
   } catch (error) {
@@ -519,7 +521,7 @@ async function handleLostMessageCallback(
   callbackData: string,
   chatId: number,
   threadId: number | undefined,
-  _userId: number,
+  userId: number,
   _username: string
 ): Promise<void> {
   const parts = callbackData.split(":");
@@ -593,7 +595,7 @@ async function handleLostMessageCallback(
           })
           .join("\n");
 
-        session.nextQueryContext = `[CONTEXT FROM PREVIOUS SESSION - 이전 세션에서 전달되지 않은 메시지입니다. 참고용으로 포함되었습니다.]\n${formattedContext}\n[END CONTEXT]`;
+        session.nextQueryContext = { userId, context: `[CONTEXT FROM PREVIOUS SESSION - 이전 세션에서 전달되지 않은 메시지입니다. 참고용으로 포함되었습니다.]\n${formattedContext}\n[END CONTEXT]` };
       }
       await ctx.editMessageText(
         `📋 ${messageCount}개 메시지가 다음 대화의 참고 컨텍스트로 저장되었습니다.`
@@ -655,7 +657,7 @@ async function handleLostMessageCallback(
         contextParts.push("[RECENT HISTORY: Chat history is disabled]");
       }
 
-      session.nextQueryContext = contextParts.join("\n\n") + "\n[END CONTEXT]";
+      session.nextQueryContext = { userId, context: contextParts.join("\n\n") + "\n[END CONTEXT]" };
 
       await ctx.editMessageText(
         `📜 ${messageCount}개 메시지 + 최근 대화 기록이 참고 컨텍스트로 저장되었습니다.`

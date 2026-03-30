@@ -211,27 +211,27 @@ describe("Scenario 5 — Error Path Steering Preservation", () => {
 
     // Simulate error path logic from query-flow.ts
     const lostCount = 1;
-    session.nextQueryContext = `[ERROR RECOVERY - ${lostCount} message(s)]\n${preserved}\n[END RECOVERY]`;
+    session.nextQueryContext = { userId: 1, context: `[ERROR RECOVERY - ${lostCount} message(s)]\n${preserved}\n[END RECOVERY]` };
 
-    expect(session.nextQueryContext).toContain("important msg");
-    expect(session.nextQueryContext).toContain("ERROR RECOVERY");
-    expect(session.nextQueryContext).toContain("END RECOVERY");
+    expect(session.nextQueryContext!.context).toContain("important msg");
+    expect(session.nextQueryContext!.context).toContain("ERROR RECOVERY");
+    expect(session.nextQueryContext!.context).toContain("END RECOVERY");
   });
 
   test("multiple error recoveries accumulate in nextQueryContext", () => {
     // First error
     session.addSteering("msg1", 301);
     const preserved1 = session.consumeSteering()!;
-    session.nextQueryContext = `[ERROR RECOVERY - 1 message(s)]\n${preserved1}\n[END RECOVERY]`;
+    session.nextQueryContext = { userId: 1, context: `[ERROR RECOVERY - 1 message(s)]\n${preserved1}\n[END RECOVERY]` };
 
-    // Second error
+    // Second error (same user — accumulate)
     session.addSteering("msg2", 302);
     const preserved2 = session.consumeSteering()!;
-    const existing = session.nextQueryContext;
-    session.nextQueryContext = `${existing}\n[ERROR RECOVERY - 1 message(s)]\n${preserved2}\n[END RECOVERY]`;
+    const existingCtx = session.nextQueryContext?.userId === 1 ? session.nextQueryContext.context : "";
+    session.nextQueryContext = { userId: 1, context: `${existingCtx}\n[ERROR RECOVERY - 1 message(s)]\n${preserved2}\n[END RECOVERY]` };
 
-    expect(session.nextQueryContext).toContain("msg1");
-    expect(session.nextQueryContext).toContain("msg2");
+    expect(session.nextQueryContext!.context).toContain("msg1");
+    expect(session.nextQueryContext!.context).toContain("msg2");
   });
 
   test("query-flow.ts error path wraps ctx.reply in try-catch", () => {
