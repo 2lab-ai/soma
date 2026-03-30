@@ -1,7 +1,9 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { mkdirSync, writeFileSync, symlinkSync, existsSync, rmSync } from "fs";
+import { mkdirSync, writeFileSync, symlinkSync, existsSync, rmSync, linkSync } from "fs";
+import { mkdtempSync } from "fs";
+import { tmpdir } from "os";
 import { resolve, join } from "path";
-import { isPathContained, isSymlink, sanitizeExtractedDir } from "./archive-safety";
+import { isPathContained, isSymlink, isHardlink, sanitizeExtractedDir, validateArchiveMembers } from "./archive-safety";
 
 const TEST_DIR = resolve("/tmp", `archive-safety-test-${Date.now()}`);
 
@@ -177,5 +179,155 @@ t.close()
 
     // Normal file should remain
     expect(existsSync(join(extractDir, "normal.txt"))).toBe(true);
+  });
+});
+
+describe("isHardlink", () => {
+  test("detects hardlink (nlink > 1)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hardlink-test-"));
+    const original = join(dir, "original.txt");
+    writeFileSync(original, "secret data");
+    const hardlink = join(dir, "link.txt");
+    linkSync(original, hardlink);
+
+    expect(isHardlink(hardlink)).toBe(true);
+    expect(isHardlink(original)).toBe(true); // both have nlink=2 now
+
+    rmSync(dir, { recursive: true });
+  });
+
+  test("regular file is not hardlink", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hardlink-test-"));
+    const file = join(dir, "normal.txt");
+    writeFileSync(file, "normal");
+
+    expect(isHardlink(file)).toBe(false);
+
+    rmSync(dir, { recursive: true });
+  });
+
+  test("directory is not hardlink even with nlink > 1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hardlink-test-"));
+    expect(isHardlink(dir)).toBe(false);
+    rmSync(dir, { recursive: true });
+  });
+
+  test("non-existent path returns false", () => {
+    expect(isHardlink("/tmp/nonexistent-hardlink-test-file")).toBe(false);
+  });
+});
+
+describe("sanitizeExtractedDir hardlink removal", () => {
+  test("removes hardlinks during sanitization", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sanitize-hardlink-"));
+    const original = join(dir, "original.txt");
+    writeFileSync(original, "data");
+    const hardlink = join(dir, "evil-link.txt");
+    linkSync(original, hardlink);
+
+    const removed = await sanitizeExtractedDir(dir);
+
+    // Both files have nlink=2, so both are detected as hardlinks
+    expect(removed.some(r => r.includes("hardlink"))).toBe(true);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("validateArchiveMembers", () => {
+  test("rejects tar with path traversal members", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "validate-tar-"));
+    const archivePath = join(dir, "evil.tar");
+
+    // Create a tar with a ../escape member using python3
+    await Bun.$`python3 -c "
+import tarfile, io
+t = tarfile.open('${archivePath}', 'w')
+info = tarfile.TarInfo(name='../../etc/passwd')
+info.size = 4
+t.addfile(info, io.BytesIO(b'evil'))
+t.close()
+"`.quiet();
+
+    await expect(validateArchiveMembers(archivePath, "evil.tar")).rejects.toThrow("path traversal");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  test("accepts clean tar", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "validate-tar-"));
+    const archivePath = join(dir, "clean.tar");
+    const contentDir = join(dir, "content");
+    mkdirSync(contentDir);
+    writeFileSync(join(contentDir, "file.txt"), "safe");
+
+    await Bun.$`tar -cf ${archivePath} -C ${contentDir} file.txt`.quiet();
+
+    await expect(validateArchiveMembers(archivePath, "clean.tar")).resolves.toBeUndefined();
+
+    rmSync(dir, { recursive: true });
+  });
+});
+
+describe("zip archive security", () => {
+  test("sanitizeExtractedDir handles clean zip extraction", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "zip-clean-"));
+    const archivePath = join(dir, "clean.zip");
+    const extractDir = join(dir, "extract");
+    mkdirSync(extractDir);
+
+    // Create a clean zip using python3
+    await Bun.$`python3 -c "
+import zipfile
+z = zipfile.ZipFile('${archivePath}', 'w')
+z.writestr('normal.txt', 'safe content')
+z.writestr('sub/nested.txt', 'nested content')
+z.close()
+"`.quiet();
+
+    await Bun.$`unzip -q -o ${archivePath} -d ${extractDir}`.quiet();
+    const removed = await sanitizeExtractedDir(extractDir);
+
+    // Normal zip should have no removals
+    expect(removed.length).toBe(0);
+    expect(existsSync(join(extractDir, "normal.txt"))).toBe(true);
+    expect(existsSync(join(extractDir, "sub", "nested.txt"))).toBe(true);
+
+    rmSync(dir, { recursive: true });
+  });
+
+  test("validateArchiveMembers rejects zip with path traversal", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "zip-traversal-"));
+    const archivePath = join(dir, "evil.zip");
+
+    // Create a zip with path traversal entry using python3
+    await Bun.$`python3 -c "
+import zipfile
+z = zipfile.ZipFile('${archivePath}', 'w')
+z.writestr('../../etc/evil.txt', 'malicious')
+z.writestr('safe.txt', 'ok')
+z.close()
+"`.quiet();
+
+    await expect(validateArchiveMembers(archivePath, "evil.zip")).rejects.toThrow("path traversal");
+
+    rmSync(dir, { recursive: true });
+  });
+
+  test("validateArchiveMembers accepts clean zip", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "zip-clean-validate-"));
+    const archivePath = join(dir, "clean.zip");
+
+    await Bun.$`python3 -c "
+import zipfile
+z = zipfile.ZipFile('${archivePath}', 'w')
+z.writestr('readme.txt', 'hello')
+z.writestr('src/main.ts', 'console.log(1)')
+z.close()
+"`.quiet();
+
+    await expect(validateArchiveMembers(archivePath, "clean.zip")).resolves.toBeUndefined();
+
+    rmSync(dir, { recursive: true });
   });
 });

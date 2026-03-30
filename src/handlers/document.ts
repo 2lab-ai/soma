@@ -24,7 +24,7 @@ import { Reactions } from "../constants/reactions";
 import { downloadTelegramFile } from "../utils/telegram-file";
 import { ensureSupportedImageFormat } from "../utils/image-format";
 import { resolve } from "path";
-import { sanitizeExtractedDir, isPathContained, isSymlink } from "../utils/archive-safety";
+import { sanitizeExtractedDir, isPathContained, isSymlink, isHardlink, validateArchiveMembers } from "../utils/archive-safety";
 
 // Supported text file extensions
 const TEXT_EXTENSIONS = [
@@ -319,6 +319,9 @@ async function extractArchive(archivePath: string, fileName: string): Promise<st
   const extractDir = `${TEMP_DIR}/archive_${Date.now()}`;
   await Bun.$`mkdir -p ${extractDir}`;
 
+  // Pre-extraction validation: check member names for path traversal
+  await validateArchiveMembers(archivePath, fileName);
+
   if (ext === ".zip") {
     await Bun.$`unzip -q -o ${archivePath} -d ${extractDir}`.quiet();
   } else if (ext === ".tar" || ext === ".tar.gz" || ext === ".tgz") {
@@ -365,6 +368,7 @@ async function extractArchiveContent(extractDir: string): Promise<{
     // Security: skip escaped paths and symlinks
     if (!isPathContained(extractDir, relativePath)) continue;
     if (isSymlink(fullPath)) continue;
+    if (isHardlink(fullPath)) continue;
 
     const stat = await Bun.file(fullPath).exists();
     if (!stat) continue;
