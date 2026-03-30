@@ -22,6 +22,7 @@ import { createMediaGroupBuffer, handleProcessingError } from "./media-group";
 import { botUsername } from "./text";
 import { Reactions } from "../constants/reactions";
 import { downloadTelegramFile } from "../utils/telegram-file";
+import { scrubBotToken } from "../utils/scrub-token";
 import { ensureSupportedImageFormat } from "../utils/image-format";
 import { resolve } from "path";
 import { sanitizeExtractedDir, isPathContained, isSymlink, isHardlink, validateArchiveMembers } from "../utils/archive-safety";
@@ -510,14 +511,14 @@ ${contentsStr}`;
         // Ignore deletion errors
       }
     } catch (error) {
-      console.error("Archive processing error:", error);
+      console.error("Archive processing error:", scrubBotToken(error, ctx.api.token));
       // Delete status message on error
       try {
         await ctx.api.deleteMessage(statusMsg.chat.id, statusMsg.message_id);
       } catch {
         // Ignore
       }
-      await ctx.reply(`❌ Failed to process archive: ${String(error).slice(0, 100)}`);
+      await ctx.reply(`❌ Failed to process archive: ${scrubBotToken(error, ctx.api.token).slice(0, 100)}`);
     } finally {
       if (extractDir) {
         try { await Bun.$`rm -rf ${extractDir}`.quiet(); } catch {}
@@ -651,7 +652,7 @@ async function processDocumentPaths(
       const content = await extractText(path);
       documents.push({ path, name, content });
     } catch (error) {
-      console.error("Failed to extract " + path + ":", error);
+      console.error("Failed to extract " + path + ":", scrubBotToken(error, ctx.api.token));
     }
   }
 
@@ -759,7 +760,7 @@ export async function handleDocument(ctx: Context): Promise<void> {
   try {
     docPath = await downloadDocument(ctx);
   } catch (error) {
-    console.error("Failed to download document:", error);
+    console.error("Failed to download document:", scrubBotToken(error, ctx.api.token));
     await ctx.reply("❌ Failed to download document.");
     return;
   }
@@ -826,8 +827,8 @@ export async function handleDocument(ctx: Context): Promise<void> {
         threadId
       );
     } catch (error) {
-      console.error("Failed to extract document:", error);
-      await ctx.reply("❌ Failed to process document: " + String(error).slice(0, 100));
+      console.error("Failed to extract document:", scrubBotToken(error, ctx.api.token));
+      await ctx.reply("❌ Failed to process document: " + scrubBotToken(error, ctx.api.token).slice(0, 100));
     }
     return;
   }

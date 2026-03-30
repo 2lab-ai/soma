@@ -26,6 +26,7 @@ import {
   handleGroupMembership,
 } from "../handlers";
 import { sessionManager } from "../core/session/session-manager";
+import { scrubBotToken } from "../utils/scrub-token";
 
 const TELEGRAM_COMMANDS = [
   { command: "skills", description: "Quick access to SuperClaude skills" },
@@ -146,16 +147,14 @@ export function registerBotHandlers(bot: Bot<Context>): void {
   bot.catch((err) => {
     const ts = new Date().toISOString();
     const errorObj = err.error ?? err;
-    const errorStr = errorObj instanceof Error
-      ? `${errorObj.name}: ${errorObj.message}`
-      : String(errorObj);
+    const token = bot.token;
 
-    console.error(`[${ts}] [BOT-CATCH] Unhandled bot error:`, errorObj);
+    console.error(`[${ts}] [BOT-CATCH] Unhandled bot error:`, scrubBotToken(errorObj, token));
 
     // Best-effort: send error to user via Telegram
     const chatId = err.ctx?.chat?.id;
     if (chatId) {
-      const truncated = errorStr.slice(0, 800);
+      const truncated = scrubBotToken(errorObj, token).slice(0, 800);
       err.ctx.reply(
         `⚠️ **Bot Error (unhandled)**\n\n` +
         `\`\`\`\n${truncated}\n\`\`\`\n\n` +

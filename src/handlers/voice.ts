@@ -13,6 +13,7 @@ import {
   shouldRespondInChat,
 } from "../security";
 import { auditLog, auditLogRateLimit } from "../utils/audit";
+import { scrubBotToken } from "../utils/scrub-token";
 import { addTimestamp } from "../utils/interrupt";
 import { startTypingIndicator } from "../utils/typing";
 import { transcribeVoice } from "../utils/voice";
@@ -141,7 +142,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       // Ignore reaction errors
     }
   } catch (error) {
-    console.error("Error processing voice:", error);
+    console.error("Error processing voice:", scrubBotToken(error, ctx.api.token));
 
     if (await handleAbortError(ctx, error, session)) {
       // Abort handled (reaction added by handleAbortError)
@@ -152,7 +153,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
       } catch {
         // Ignore reaction errors
       }
-      await ctx.reply(`❌ Error: ${String(error).slice(0, 200)}`);
+      await ctx.reply(`❌ Error: ${scrubBotToken(error, ctx.api.token).slice(0, 200)}`);
     }
   } finally {
     state.cleanup();
