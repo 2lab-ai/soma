@@ -76,25 +76,33 @@ export async function handleStop(ctx: Context): Promise<void> {
   }
 
   const session = sessionManager.getSession(chatId!, threadId);
+
+  // Always discard leftover steering on /stop — even when idle.
+  // Steering can remain from a previous query that hit max-rounds or errored out.
+  const discardedCount = session.getSteeringCount();
+  if (discardedCount > 0) {
+    const discardedContent = session.consumeSteering();
+    session.clearInjectedSteeringTracking();
+    console.log(
+      `[/stop] Discarded ${discardedCount} steering message(s): "${discardedContent?.slice(0, 200) ?? ""}"`
+    );
+    try {
+      await sendSystemMessage(
+        ctx,
+        `🛑 ${discardedCount}개 대기 메시지 폐기됨.`
+      );
+    } catch {}
+  }
+
   if (session.isProcessing) {
-    const result = await session.stop();
+    const result = await session.stop(true);
     if (result) {
-      // Discard steering AFTER stop() so wasStoppedByUser is already set,
-      // preventing any new messages arriving between cleanup and flag-set
-      const discardedCount = session.getSteeringCount();
-      if (discardedCount > 0) {
-        const discardedContent = session.consumeSteering();
+      // Discard any steering that arrived between the check above and stop() completing
+      if (session.hasSteeringMessages()) {
+        const lateCount = session.getSteeringCount();
+        session.consumeSteering();
         session.clearInjectedSteeringTracking();
-        console.log(
-          `[/stop] Discarded ${discardedCount} steering message(s): "${discardedContent?.slice(0, 200) ?? ""}"`
-        );
-        // Notify user that their pending messages were discarded
-        try {
-          await sendSystemMessage(
-            ctx,
-            `🛑 Stopped. ${discardedCount}개 대기 메시지 폐기됨.`
-          );
-        } catch {}
+        console.log(`[/stop] Discarded ${lateCount} late steering message(s)`);
       }
 
       await Bun.sleep(100);
