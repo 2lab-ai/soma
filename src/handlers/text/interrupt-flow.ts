@@ -195,12 +195,13 @@ export interface RecoveryParams {
   ctx: Context;
   session: ClaudeSession;
   chatId: number;
+  userId: number;
 }
 
 export async function resolvePendingRecoveryContext(
   params: RecoveryParams
 ): Promise<void> {
-  const { ctx, session, chatId } = params;
+  const { ctx, session, chatId, userId } = params;
   if (!session.hasPendingRecovery()) {
     return;
   }
@@ -223,7 +224,7 @@ export async function resolvePendingRecoveryContext(
         return `[${ts}] ${message.content}`;
       })
       .join("\n");
-    session.nextQueryContext = `[CONTEXT FROM INTERRUPTED SESSION - ${resolved.length} message(s)]\n${formattedContext}\n[END CONTEXT]`;
+    session.nextQueryContext = { userId, context: `[CONTEXT FROM INTERRUPTED SESSION - ${resolved.length} message(s)]\n${formattedContext}\n[END CONTEXT]` };
   }
 
   if (recovery.messageId) {
