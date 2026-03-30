@@ -26,16 +26,16 @@ describe("/stop command — Issue #24", () => {
       session.startProcessing();
       expect(session.isProcessing).toBe(true);
 
-      // Stop during preparing
-      const result = await session.stop();
+      // Stop during preparing (user-initiated)
+      const result = await session.stop(true);
       expect(result).toBe("pending");
       expect(session.wasStoppedByUser).toBe(true);
     });
 
     test("wasStoppedByUser is reset to false on next startProcessing()", async () => {
-      // Simulate stop
+      // Simulate user stop
       session.startProcessing();
-      await session.stop();
+      await session.stop(true);
       expect(session.wasStoppedByUser).toBe(true);
 
       // Simulate stopProcessing (from finally block)
@@ -64,8 +64,8 @@ describe("/stop command — Issue #24", () => {
       expect(session.hasSteeringMessages()).toBe(false);
       expect(session.getSteeringCount()).toBe(0);
 
-      // Then stop the query
-      const result = await session.stop();
+      // Then stop the query (user-initiated)
+      const result = await session.stop(true);
       expect(result).toBe("pending");
       expect(session.wasStoppedByUser).toBe(true);
 
@@ -79,8 +79,8 @@ describe("/stop command — Issue #24", () => {
       // User sends messages during processing
       session.addSteering("should be ignored", 201);
 
-      // Stop is called
-      await session.stop();
+      // User-initiated stop
+      await session.stop(true);
       expect(session.wasStoppedByUser).toBe(true);
 
       // Auto-continue loop checks wasStoppedByUser BEFORE checking steering
@@ -111,9 +111,16 @@ describe("/stop command — Issue #24", () => {
 
     test("stop() returns 'pending' during preparing state", async () => {
       session.startProcessing();
-      const result = await session.stop();
+      const result = await session.stop(true);
       expect(result).toBe("pending");
       expect(session.wasStoppedByUser).toBe(true);
+    });
+
+    test("stop() without userInitiated does NOT set wasStoppedByUser (interrupt case)", async () => {
+      session.startProcessing();
+      const result = await session.stop(); // no userInitiated — simulates ! interrupt
+      expect(result).toBe("pending");
+      expect(session.wasStoppedByUser).toBe(false); // interrupt must NOT trigger steering discard
     });
   });
 });

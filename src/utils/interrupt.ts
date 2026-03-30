@@ -16,7 +16,7 @@ interface InterruptableSession {
   isProcessing: boolean;
   isRunning: boolean;
   isInterrupting: boolean;
-  stop: () => Promise<"stopped" | "pending" | false>;
+  stop: (userInitiated?: boolean) => Promise<"stopped" | "pending" | false>;
   markInterrupt: () => void;
   clearStopRequested: () => void;
   startInterrupt: () => boolean;
