@@ -205,8 +205,12 @@ export const BLOCKED_PIPE_PATTERNS: RegExp[] = [
   /\|\s*(?:sh|bash|zsh|dash|ksh|csh|tcsh|fish)\b/i,
   // pipe output to script interpreters
   /\|\s*(?:python[23]?|perl|ruby|node|php)\b/i,
-  // curl/wget piped to anything — the intent is remote code execution
-  /(?:curl|wget)\b[^|]*\|/i,
+  // pipe to absolute-path or env-wrapped shell/interpreter
+  /\|\s*(?:\/(?:usr\/)?(?:local\/)?bin\/|env\s+)(?:sh|bash|zsh|dash|python[23]?|perl|ruby|node|php)\b/i,
+  // process substitution with curl/wget: bash <(curl ...) or sh <(wget ...)
+  /(?:sh|bash|zsh|dash)\s+<\(\s*(?:curl|wget)\b/i,
+  // xargs to shell/interpreter: | xargs sh -c, | xargs bash, etc.
+  /\|\s*xargs\s+(?:sh|bash|zsh|dash|python[23]?|perl|ruby|node|php)\b/i,
 ];
 
 const BASE_TRANSCRIPTION_PROMPT = `Transcribe this voice message accurately.
