@@ -42,4 +42,21 @@ describe("scrubBotToken", () => {
     const result = scrubBotToken("some error message without token", token);
     expect(result).toBe("some error message without token");
   });
+
+  it("scrubs multiple occurrences of the same token", () => {
+    const token = "123456:MULTI-TOKEN";
+    const input = `url1: https://api.telegram.org/bot${token}/send, url2: https://api.telegram.org/bot${token}/get`;
+    const result = scrubBotToken(input, token);
+    expect(result).not.toContain(token);
+    expect(result.match(/\[REDACTED\]/g)?.length).toBe(2);
+  });
+
+  it("scrubs token from Error.name", () => {
+    const token = "789012:NAME-TOKEN";
+    const err = new Error("some message");
+    err.name = `TelegramError_${token}`;
+    const result = scrubBotToken(err, token);
+    expect(result).not.toContain(token);
+    expect(result).toContain("[REDACTED]");
+  });
 });
