@@ -270,6 +270,8 @@ export function extractErrorDetails(error: unknown): ErrorDetails {
     }
   // Gemini/Node.js hints BEFORE generic EISDIR — real errors contain both,
   // and the root-cause hint (Node.js version) is more actionable than the symptom (EISDIR).
+  } else if (error.message.includes("prompt commands") && error.message.includes("streaming")) {
+    details.hint = "MCP prompt command not supported in current mode. Check MCP server configuration.";
   } else if (error.message.includes("Command failed") && error.message.includes("gemini")) {
     details.hint = "gemini CLI execution failed. Check Node.js version (v20+ required) and installation.";
   } else if (

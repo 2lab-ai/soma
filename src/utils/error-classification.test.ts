@@ -307,9 +307,10 @@ describe("formatErrorForUser", () => {
   });
 
   test("truncates long messages", () => {
-    const longMsg = "x".repeat(1500);
+    const longMsg = "x".repeat(3000);
     const msg = formatErrorForUser(new Error(longMsg));
-    expect(msg.length).toBeLessThan(1500);
+    // formatErrorForUser prepends "❌ Error\n" and slices message at 2000 chars
+    expect(msg.length).toBeLessThan(2100);
   });
 });
 
