@@ -22,6 +22,8 @@ const RATE_LIMIT_PATTERNS = [
   "exceeded",
   "usage limit",
   "token limit",
+  "out of extra usage",
+  "out of usage",
 ];
 
 export interface RateLimitInfo {
