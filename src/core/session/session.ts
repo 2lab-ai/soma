@@ -82,6 +82,7 @@ export class ClaudeSession {
   readonly chatCaptureService: ChatCaptureService | null = null;
 
   sessionId: string | null = null;
+  lastUsedModel: ModelId | null = null;
   lastActivity: Date | null = null;
   queryStarted: Date | null = null;
   currentTool: string | null = null;
@@ -738,6 +739,15 @@ export class ClaudeSession {
       );
     }
 
+    // Model switch detection: SDK sessions are bound to their creation model.
+    // Resuming a session with a different model silently ignores the model parameter.
+    if (this.sessionId && this.lastUsedModel && effectiveModel !== this.lastUsedModel) {
+      console.log(
+        `[MODEL-SWITCH] Model changed from ${MODEL_DISPLAY_NAMES[this.lastUsedModel] || this.lastUsedModel} to ${MODEL_DISPLAY_NAMES[effectiveModel] || effectiveModel} — forcing new session`
+      );
+      this.sessionId = null;
+    }
+
     if (this.sessionId && !isNewSession) {
       console.log(
         `RESUMING session ${this.sessionId.slice(0, 8)}... (thinking=${thinkingLabel})`
@@ -746,6 +756,8 @@ export class ClaudeSession {
       console.log(`STARTING new Claude session (thinking=${thinkingLabel})`);
       this.sessionId = null;
     }
+
+    this.lastUsedModel = effectiveModel;
 
     if (this.stopRequested) {
       console.log("Query cancelled before starting");
@@ -1065,6 +1077,7 @@ export class ClaudeSession {
 
     this.applyRuntimeState(finalizeQueryTransition(this.getRuntimeState()));
     this.sessionId = null;
+    this.lastUsedModel = null;
     this.lastActivity = null;
     this.sessionStartTime = null;
     this.totalInputTokens = 0;

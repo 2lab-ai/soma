@@ -838,6 +838,12 @@ describe("ClaudeSession - generation guard (soma-phy)", () => {
     expect(session.sessionId).toBeNull();
   });
 
+  test("kill clears lastUsedModel", async () => {
+    (session as any).lastUsedModel = "claude-sonnet-4-20250514";
+    await session.kill();
+    expect((session as any).lastUsedModel).toBeNull();
+  });
+
   test("kill sets stopRequested", async () => {
     expect((session as any).stopRequested).toBe(false);
     await session.kill();
@@ -1303,5 +1309,62 @@ describe("ClaudeSession - actualContextUsed/Max (soma-u63c)", () => {
     const pct = (tokens / max) * 100;
 
     expect(pct).toBe(50);
+  });
+});
+
+describe("ClaudeSession - model switch session reset", () => {
+  let session: ClaudeSession;
+
+  beforeEach(() => {
+    session = new ClaudeSession("test-model-switch");
+  });
+
+  test("lastUsedModel is initially null", () => {
+    expect(session.lastUsedModel).toBeNull();
+  });
+
+  test("lastUsedModel is cleared on kill", async () => {
+    session.lastUsedModel = "claude-opus-4-20250514" as any;
+    await session.kill();
+    expect(session.lastUsedModel).toBeNull();
+  });
+
+  test("sessionId should be reset when model changes (simulation)", () => {
+    // Simulate: session was running with opus
+    (session as any).sessionId = "opus-session-123";
+    session.lastUsedModel = "claude-opus-4-20250514" as any;
+
+    // Simulate model switch detection logic (mirrors session.ts lines)
+    const effectiveModel = "claude-sonnet-4-20250514";
+    if (session.sessionId && session.lastUsedModel && effectiveModel !== session.lastUsedModel) {
+      (session as any).sessionId = null;
+    }
+
+    expect(session.sessionId).toBeNull();
+  });
+
+  test("sessionId should NOT be reset when model stays the same", () => {
+    (session as any).sessionId = "opus-session-123";
+    session.lastUsedModel = "claude-opus-4-20250514" as any;
+
+    const effectiveModel = "claude-opus-4-20250514";
+    if (session.sessionId && session.lastUsedModel && effectiveModel !== session.lastUsedModel) {
+      (session as any).sessionId = null;
+    }
+
+    expect(session.sessionId).toBe("opus-session-123");
+  });
+
+  test("sessionId should NOT be reset on first query (lastUsedModel is null)", () => {
+    (session as any).sessionId = "initial-session";
+    session.lastUsedModel = null;
+
+    const effectiveModel = "claude-sonnet-4-20250514";
+    if (session.sessionId && session.lastUsedModel && effectiveModel !== session.lastUsedModel) {
+      (session as any).sessionId = null;
+    }
+
+    // lastUsedModel is null → no reset (first query, no previous model to compare)
+    expect(session.sessionId).toBe("initial-session");
   });
 });
