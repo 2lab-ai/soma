@@ -9,6 +9,8 @@ const RATE_LIMIT_PATTERNS = [
   "capacity",
   "quota",
   "usage limit",
+  "out of extra usage",
+  "out of usage",
 ];
 
 const AUTH_PATTERNS = ["401", "403", "unauthorized", "forbidden", "invalid api key"];

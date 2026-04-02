@@ -123,6 +123,9 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
         cacheReadInputTokens?: number;
         cacheCreationInputTokens?: number;
       } | null = null;
+      // Accumulate streamed text so we can include it in error context
+      // when SDK returns an error result with empty errors array.
+      let accumulatedText = "";
 
       for await (const event of queryInstance) {
         const timestamp = Date.now();
@@ -230,6 +233,7 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
               continue;
             }
             if (block.type === "text") {
+              accumulatedText += block.text;
               await onEvent({
                 providerId: this.providerId,
                 queryId: handle.queryId,
@@ -339,9 +343,19 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
           // Throw on error results so callers (query-flow.ts) can handle
           // through normal error pipeline (rate-limit, retry, etc.)
           if (isErrorResult) {
-            const errorMsg = resultErrors?.length
-              ? resultErrors.join("; ")
-              : `SDK result error: ${resultSubtype}`;
+            // Build error message with maximum context for downstream classification.
+            // When errors[] is empty (common with rate-limit results where subtype="success"
+            // but is_error=true), fall back to accumulated streamed text which often
+            // contains the actual error description (e.g. "You're out of extra usage").
+            let errorMsg: string;
+            if (resultErrors?.length) {
+              errorMsg = resultErrors.join("; ");
+            } else if (accumulatedText.trim()) {
+              const snippet = accumulatedText.trim().slice(-500);
+              errorMsg = `SDK result error (${resultSubtype}): ${snippet}`;
+            } else {
+              errorMsg = `SDK result error: ${resultSubtype}`;
+            }
             // Preserve SDK fields on the error object so extractErrorDetails
             // can pick them up downstream (not just a plain Error).
             const sdkError = Object.assign(new Error(errorMsg), {
