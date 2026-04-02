@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import type { Context } from "grammy";
 import { WORKING_DIR } from "../../config";
-import { MODEL_DISPLAY_NAMES } from "../../config/model";
+import { MODEL_DISPLAY_NAMES, getModelForContext } from "../../config/model";
 import type { ClaudeSession } from "../../core/session/session";
 import { Reactions } from "../../constants/reactions";
 import { fetchClaudeUsage } from "../../usage";
@@ -466,7 +466,13 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             break;
           }
 
-          if (!session.temporaryModelOverride && usage && isSonnetAvailable(usage)) {
+          // Only attempt Sonnet fallback if:
+          // 1. No temporary override is active
+          // 2. Sonnet quota is available
+          // 3. Current effective model is NOT already Sonnet (e.g. user switched via /model)
+          const currentEffectiveModel = session.temporaryModelOverride ?? getModelForContext("general");
+          const alreadyOnSonnet = currentEffectiveModel === "claude-sonnet-4-5-20250929";
+          if (!session.temporaryModelOverride && !alreadyOnSonnet && usage && isSonnetAvailable(usage)) {
             const sonnetModel = "claude-sonnet-4-5-20250929" as const;
             session.temporaryModelOverride = sonnetModel;
 

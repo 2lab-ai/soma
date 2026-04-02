@@ -824,10 +824,21 @@ export async function executeQueryRuntime(
       );
 
       if (isErrorResult) {
-        const errorMsg = resultErrors?.length
-          ? resultErrors.join("; ")
-          : `SDK execution error: ${resultSubtype}`;
-        console.error(`[SDK-RESULT-ERROR] subtype=${resultSubtype}, is_error=${resultIsError}, errors=${JSON.stringify(resultErrors ?? [])}`);
+        // Build error message with maximum context for downstream classification.
+        // When errors[] is empty (common with rate-limit results where subtype="success"
+        // but is_error=true), fall back to accumulated response text which often
+        // contains the actual error description (e.g. "You're out of extra usage").
+        const accumulatedText = responseParts.join("");
+        let errorMsg: string;
+        if (resultErrors?.length) {
+          errorMsg = resultErrors.join("; ");
+        } else if (accumulatedText.trim()) {
+          const snippet = accumulatedText.trim().slice(-500);
+          errorMsg = `SDK execution error (${resultSubtype}): ${snippet}`;
+        } else {
+          errorMsg = `SDK execution error: ${resultSubtype}`;
+        }
+        console.error(`[SDK-RESULT-ERROR] subtype=${resultSubtype}, is_error=${resultIsError}, errors=${JSON.stringify(resultErrors ?? [])}, accumulatedText=${accumulatedText.slice(-200)}`);
         queryCompleted = false;
         // Throw so session.ts catch block captures this as a real error
         throw new Error(errorMsg);
