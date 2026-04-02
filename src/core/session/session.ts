@@ -155,6 +155,11 @@ export class ClaudeSession {
   nextQueryContext: { userId: number; context: string } | null = null; // Context to prepend to next query (user-bound)
   private _activityState: ActivityState = initialRuntimeState.activityState;
 
+  // Track the model used by the current SDK session so we can detect
+  // model changes (via /model or temporaryModelOverride) and force a
+  // new session instead of resuming one bound to a different model.
+  private lastUsedModel: ModelId | null = null;
+
   // Rate limit fallback state
   temporaryModelOverride: ModelId | null = null;
   rateLimitState = {
@@ -738,6 +743,16 @@ export class ClaudeSession {
       );
     }
 
+    // Force new session when model changes — SDK sessions are bound to
+    // the model they were created with; resuming with a different model
+    // silently ignores the model parameter.
+    if (this.sessionId && this.lastUsedModel && effectiveModel !== this.lastUsedModel) {
+      console.log(
+        `[MODEL-SWITCH] Model changed: ${MODEL_DISPLAY_NAMES[this.lastUsedModel] || this.lastUsedModel} → ${MODEL_DISPLAY_NAMES[effectiveModel] || effectiveModel}. Resetting session.`
+      );
+      this.sessionId = null;
+    }
+
     if (this.sessionId && !isNewSession) {
       console.log(
         `RESUMING session ${this.sessionId.slice(0, 8)}... (thinking=${thinkingLabel})`
@@ -810,6 +825,9 @@ export class ClaudeSession {
       abortController: this.abortController,
       hooks: this.queryRuntimeHooks,
     });
+
+    // Record which model this query uses so future calls can detect changes
+    this.lastUsedModel = effectiveModel;
 
     this.applyRuntimeState(startQueryTransition(this.getRuntimeState()));
     this.setActivityState("working");
