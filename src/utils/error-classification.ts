@@ -155,6 +155,21 @@ export function isAbortError(error: unknown): boolean {
 }
 
 /**
+ * Check if an error is an SDK session resume failure (EISDIR, streaming mode mismatch).
+ * These occur when the Claude Code SDK tries to resume a session whose state
+ * is corrupted or references a directory instead of a file.
+ * Recoverable by clearing sessionId and retrying as a new session.
+ */
+export function isSdkResumeError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("eisdir") ||
+    lower.includes("only prompt commands are supported in streaming mode")
+  );
+}
+
+/**
  * Handle abort errors consistently across handlers
  * Checks if error is an abort, consumes interrupt flag, and optionally shows "Query stopped"
  * @returns true if error was handled as abort, false otherwise
