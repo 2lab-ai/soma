@@ -15,6 +15,7 @@ import {
   handleAbortError,
   isAbortError,
   isRateLimitError,
+  isSdkResumeError,
   isSonnetAvailable,
 } from "../../utils/error-classification";
 import { isReentrancyError } from "./query-flow-guard";
@@ -371,6 +372,19 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         // Auto-retry on expired session ID (soma-nok6)
         if (errorStr.includes("SESSION_EXPIRED") && attempt < MAX_RETRIES) {
           console.log(`[SESSION-RESUME] Session expired, auto-retrying as new session (attempt ${attempt + 1})`);
+          cleanupToolMessages(ctx, state.toolMessages);
+          state.cleanup();
+          state = new StreamingState();
+          statusCallback = await createStatusCallback(ctx, state, session);
+          continue;
+        }
+
+        // Auto-retry on SDK resume errors: EISDIR or streaming mode mismatch (soma-eisdir-resume)
+        // SDK sometimes fails during session resume when session state references a
+        // directory instead of a file. Fix: clear sessionId and retry as new session.
+        if (isSdkResumeError(error) && attempt < MAX_RETRIES) {
+          console.log(`[SESSION-RESUME] SDK resume error (EISDIR/streaming), resetting session and retrying as new (attempt ${attempt + 1})`);
+          session.sessionId = null;
           cleanupToolMessages(ctx, state.toolMessages);
           state.cleanup();
           state = new StreamingState();
