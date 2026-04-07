@@ -3,6 +3,7 @@ import {
   isRateLimitError,
   isSonnetAvailable,
   isAbortError,
+  isSdkResumeError,
   extractErrorDetails,
   formatErrorForUser,
   formatErrorForLog,
@@ -176,6 +177,34 @@ describe("isAbortError", () => {
       false
     );
     expect(isAbortError(err)).toBe(true);
+  });
+});
+
+describe("isSdkResumeError (soma-eisdir-resume)", () => {
+  test("detects EISDIR error", () => {
+    expect(isSdkResumeError(new Error("EISDIR: illegal operation on a directory, read"))).toBe(true);
+  });
+
+  test("detects streaming mode mismatch", () => {
+    expect(isSdkResumeError(new Error("only prompt commands are supported in streaming mode"))).toBe(true);
+  });
+
+  test("detects combined EISDIR + streaming mode error (real SDK error)", () => {
+    expect(isSdkResumeError(
+      new Error("only prompt commands are supported in streaming mode; Error: EISDIR: illegal operation on a directory, read")
+    )).toBe(true);
+  });
+
+  test("does not match unrelated errors", () => {
+    expect(isSdkResumeError(new Error("429 rate limit exceeded"))).toBe(false);
+    expect(isSdkResumeError(new Error("session expired"))).toBe(false);
+    expect(isSdkResumeError(new Error("exited with code 1"))).toBe(false);
+  });
+
+  test("handles non-Error values", () => {
+    expect(isSdkResumeError("EISDIR: some error")).toBe(true);
+    expect(isSdkResumeError("unrelated string")).toBe(false);
+    expect(isSdkResumeError(null)).toBe(false);
   });
 });
 
