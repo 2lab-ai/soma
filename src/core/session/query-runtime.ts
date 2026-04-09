@@ -124,7 +124,7 @@ export function buildQueryRuntimeOptions(
   const options: Options & { abortController: AbortController } = {
     model: input.model,
     cwd: input.cwd,
-    settingSources: ["user", "project"],
+    settingSources: ["project"],
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
