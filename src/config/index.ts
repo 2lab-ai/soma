@@ -19,6 +19,7 @@ export const RESPOND_WITHOUT_MENTION = parseEnvBool("RESPOND_WITHOUT_MENTION", f
 
 export const WORKING_DIR = resolveWorkingDir();
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+export const STT_URL = process.env.STT_URL || "http://localhost:8787/v1/audio/transcriptions";
 export const CLAUDE_CLI_PATH = findClaudeCli();
 
 let MCP_SERVERS: Record<string, McpServerConfig> = {};
@@ -272,7 +273,7 @@ const TRANSCRIPTION_CONTEXT = process.env.TRANSCRIPTION_CONTEXT || "";
 export const TRANSCRIPTION_PROMPT = TRANSCRIPTION_CONTEXT
   ? `${BASE_TRANSCRIPTION_PROMPT}\n\nAdditional context:\n${TRANSCRIPTION_CONTEXT}`
   : BASE_TRANSCRIPTION_PROMPT;
-export const TRANSCRIPTION_AVAILABLE = !!OPENAI_API_KEY;
+export const TRANSCRIPTION_AVAILABLE = !!STT_URL;
 
 export const DEFAULT_THINKING_TOKENS = Math.min(
   Math.max(0, parseEnvInt("DEFAULT_THINKING_TOKENS", 0)),
