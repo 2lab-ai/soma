@@ -108,12 +108,18 @@ export async function handleVoice(ctx: Context): Promise<void> {
     // 7. Transcribe
     const statusMsg = await ctx.reply("🎤 Transcribing...");
 
-    const transcript = await transcribeVoice(voicePath);
-    if (!transcript) {
+    let transcript: string;
+    try {
+      transcript = await transcribeVoice(voicePath);
+    } catch (transcriptionError) {
+      const reason = transcriptionError instanceof Error
+        ? transcriptionError.message
+        : String(transcriptionError);
+      console.error("Transcription failed:", transcriptionError);
       await ctx.api.editMessageText(
         chatId,
         statusMsg.message_id,
-        "❌ Transcription failed."
+        `❌ Transcription failed: ${reason.slice(0, 200)}`
       );
       stopProcessing();
       return;
