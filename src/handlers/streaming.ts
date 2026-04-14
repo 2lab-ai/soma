@@ -237,6 +237,8 @@ export class StreamingState {
   streamQueues = new Map<number, DeltaQueue>();
   streamPromises = new Map<number, Promise<Message[]>>();
   streamAbortControllers = new Map<number, AbortController>();
+  // For multi-message segments: track first message separately (header goes here)
+  streamFirstMessages = new Map<number, Message>();
 
   cleanup(): void {
     if (this.progressTimer) {
@@ -508,6 +510,10 @@ export async function createStatusCallback(
               // Store last message for footer/reaction in done handler
               const lastMsg = messages[messages.length - 1]!;
               state.textMessages.set(segmentId, lastMsg);
+              // Store first message for header placement
+              if (messages.length > 1) {
+                state.streamFirstMessages.set(segmentId, messages[0]!);
+              }
 
               // Re-edit each message with HTML formatting (streamed content was raw text)
               const formatted = convertMarkdownToHtml(displayContent);
@@ -676,8 +682,12 @@ export async function createStatusCallback(
 
         if (metadata?.modelDisplayName && state.textMessages.size > 0) {
           const firstSegmentId = Math.min(...state.textMessages.keys());
-          const firstMsg = state.textMessages.get(firstSegmentId);
-          const firstContent = state.lastContent.get(firstSegmentId);
+          // For multi-message native streams, header goes on the FIRST message (not last)
+          const firstMsg = state.streamFirstMessages.get(firstSegmentId)
+            ?? state.textMessages.get(firstSegmentId);
+          const firstContent = firstMsg
+            ? (firstMsg.text ?? state.lastContent.get(firstSegmentId))
+            : state.lastContent.get(firstSegmentId);
 
           if (firstMsg && firstContent) {
             const modelHeader = `<pre>${escapeHtml(metadata.modelDisplayName)}</pre>\n`;
