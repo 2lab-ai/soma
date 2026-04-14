@@ -1,90 +1,117 @@
-import OpenAI from "openai";
-import {
-  OPENAI_API_KEY,
-  TRANSCRIPTION_AVAILABLE,
-  TRANSCRIPTION_PROMPT,
-} from "../config";
+/**
+ * Voice transcription utility — local Cohere STT server.
+ * Converts Telegram OGG/Opus → WAV 16kHz mono via ffmpeg,
+ * then POSTs to the local Cohere Transcribe server.
+ */
 
-let openaiClient: OpenAI | null = null;
-if (OPENAI_API_KEY && TRANSCRIPTION_AVAILABLE) {
-  openaiClient = new OpenAI({ apiKey: OPENAI_API_KEY });
+import { spawn } from "child_process";
+import { unlinkSync } from "fs";
+import { STT_URL, TRANSCRIPTION_PROMPT } from "../config";
+
+/**
+ * Convert OGG/Opus to WAV 16kHz mono using ffmpeg.
+ * Returns path to the generated WAV file.
+ */
+function convertToWav(oggPath: string): Promise<string> {
+  const wavPath = oggPath.replace(/\.ogg$/, ".wav");
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      "ffmpeg",
+      ["-i", oggPath, "-ar", "16000", "-ac", "1", "-f", "wav", "-y", wavPath],
+      { timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] }
+    );
+
+    let stderr = "";
+    proc.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-300)}`));
+      } else {
+        resolve(wavPath);
+      }
+    });
+
+    proc.on("error", (err) => {
+      reject(new Error(`ffmpeg not found or failed to start: ${err.message}`));
+    });
+  });
 }
 
-const TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
-const FALLBACK_MODEL = "whisper-1";
-
-export async function transcribeVoice(filePath: string): Promise<string> {
-  if (!openaiClient) {
-    throw new Error("OpenAI client not configured");
+/**
+ * Transcribe a voice file using the local Cohere STT server.
+ * Flow: OGG → WAV (ffmpeg) → HTTP POST to STT server → text
+ */
+export async function transcribeVoice(oggPath: string): Promise<string> {
+  if (!STT_URL) {
+    throw new Error("STT_URL not configured");
   }
 
-  // H4 defense: explicit File conversion avoids BunFile lazy read edge cases
-  const bunFile = Bun.file(filePath);
-  const buffer = await bunFile.arrayBuffer();
-  const fileSize = buffer.byteLength;
-  const file = new File([buffer], "voice.ogg", { type: "audio/ogg" });
-
-  // Diagnostic log: capture pre-call state for post-mortem analysis
-  console.log(`[voice-transcribe] start: model=${TRANSCRIPTION_MODEL}, fileSize=${fileSize}, promptLen=${TRANSCRIPTION_PROMPT.length}`);
+  // 1. Convert OGG → WAV 16kHz mono
+  const wavPath = await convertToWav(oggPath);
 
   try {
-    const transcript = await openaiClient.audio.transcriptions.create({
-      model: TRANSCRIPTION_MODEL,
-      file: file,
-      prompt: TRANSCRIPTION_PROMPT,
-    });
+    // 2. Read WAV file
+    const wavFile = Bun.file(wavPath);
+    const wavBuffer = await wavFile.arrayBuffer();
 
-    // H1 defense: empty transcript is valid (silence/unclear audio), not an error
-    if (!transcript.text) {
-      console.warn(`[voice-transcribe] empty transcript: model=${TRANSCRIPTION_MODEL}, fileSize=${fileSize}`);
+    console.log(
+      `[voice-transcribe] start: url=${STT_URL}, wavSize=${wavBuffer.byteLength}`
+    );
+
+    // 3. POST to local Cohere STT server
+    const formData = new FormData();
+    formData.append(
+      "file",
+      new File([wavBuffer], "voice.wav", { type: "audio/wav" })
+    );
+    if (TRANSCRIPTION_PROMPT) {
+      formData.append("prompt", TRANSCRIPTION_PROMPT);
     }
 
-    return transcript.text;
-  } catch (error) {
-    // Structured diagnostic log for post-mortem (H2/H3 defense)
-    logTranscriptionError(TRANSCRIPTION_MODEL, fileSize, error);
+    const response = await fetch(STT_URL, {
+      method: "POST",
+      body: formData,
+      signal: AbortSignal.timeout(60_000),
+    });
 
-    // H3 defense: retry without prompt (prompt param may be rejected)
-    // Also serves as H2 partial defense: different model may still work
-    console.log(`[voice-transcribe] retrying with fallback: model=${FALLBACK_MODEL}, no prompt`);
+    if (!response.ok) {
+      const body = await response.text().catch(() => "(no body)");
+      throw new Error(
+        `STT server ${response.status}: ${body.slice(0, 300)}`
+      );
+    }
+
+    // 4. Parse response — expect { "text": "..." } or plain text
+    const contentType = response.headers.get("content-type") || "";
+    let text: string;
+
+    if (contentType.includes("application/json")) {
+      const json = (await response.json()) as Record<string, unknown>;
+      // Support common response shapes: { text }, { transcription }, { result }
+      text = String(json.text ?? json.transcription ?? json.result ?? "");
+      console.log(
+        `[voice-transcribe] response keys: ${Object.keys(json).join(",")}`
+      );
+    } else {
+      text = await response.text();
+    }
+
+    if (!text) {
+      console.warn(
+        `[voice-transcribe] empty transcript: wavSize=${wavBuffer.byteLength}`
+      );
+    }
+
+    return text;
+  } finally {
+    // Clean up WAV temp file
     try {
-      const retryFile = new File([buffer], "voice.ogg", { type: "audio/ogg" });
-      const fallback = await openaiClient.audio.transcriptions.create({
-        model: FALLBACK_MODEL,
-        file: retryFile,
-      });
-
-      if (!fallback.text) {
-        console.warn(`[voice-transcribe] empty transcript on fallback: model=${FALLBACK_MODEL}, fileSize=${fileSize}`);
-      }
-
-      return fallback.text;
-    } catch (fallbackError) {
-      logTranscriptionError(FALLBACK_MODEL, fileSize, fallbackError);
-      // Throw the original error — it's from the primary model and more informative
-      throw error;
+      unlinkSync(wavPath);
+    } catch {
+      // ignore
     }
-  }
-}
-
-function logTranscriptionError(model: string, fileSize: number, error: unknown): void {
-  const base = { model, fileSize, promptLen: TRANSCRIPTION_PROMPT.length };
-
-  if (error instanceof OpenAI.APIError) {
-    console.error(`[voice-transcribe] API error:`, {
-      ...base,
-      status: error.status,
-      code: error.code,
-      type: error.type,
-      param: error.param,
-      requestID: error.requestID,
-      message: error.message,
-    });
-  } else {
-    console.error(`[voice-transcribe] unexpected error:`, {
-      ...base,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
   }
 }
