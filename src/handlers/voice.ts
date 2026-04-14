@@ -115,11 +115,21 @@ export async function handleVoice(ctx: Context): Promise<void> {
       const reason = transcriptionError instanceof Error
         ? transcriptionError.message
         : String(transcriptionError);
-      console.error("Transcription failed:", transcriptionError);
       await ctx.api.editMessageText(
         chatId,
         statusMsg.message_id,
         `❌ Transcription failed: ${reason.slice(0, 200)}`
+      );
+      stopProcessing();
+      return;
+    }
+
+    // 7.5. Handle empty transcript (silence or unrecognizable audio)
+    if (!transcript) {
+      await ctx.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        "🎤 (No speech detected)"
       );
       stopProcessing();
       return;
