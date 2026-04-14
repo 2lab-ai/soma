@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
+import { streamApi } from "@grammyjs/stream";
 import { sessionManager } from "../core/session/session-manager";
 import type { QueryMetadata, StatusCallback } from "../types/runtime";
 import type { ClaudeSession } from "../core/session/session";
@@ -7,6 +8,7 @@ import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import { UserChoiceExtractor } from "../utils/user-choice-extractor";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import type { UserChoice, UserChoices } from "../types/user-choice";
+import { DeltaQueue } from "./stream-bridge";
 import {
   TELEGRAM_MESSAGE_LIMIT,
   TELEGRAM_SAFE_LIMIT,
@@ -19,6 +21,7 @@ import {
   SHOW_ANTHROPIC_USAGE,
   SHOW_CODEX_USAGE,
   SHOW_GEMINI_USAGE,
+  USE_NATIVE_STREAMING,
 } from "../config";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -229,6 +232,16 @@ export class StreamingState {
   mcpToolBaseContent: string | null = null;
   mcpProgressTimer: Timer | null = null;
 
+  // Native streaming (sendMessageDraft) state
+  isNativeStreaming = false;
+  streamQueues = new Map<number, DeltaQueue>();
+  streamPromises = new Map<number, Promise<Message[]>>();
+  streamAbortControllers = new Map<number, AbortController>();
+  // For multi-message segments: track first message separately (header goes here)
+  streamFirstMessages = new Map<number, Message>();
+  // HTML content of the first message in a multi-message segment (for header prepend)
+  streamFirstContents = new Map<number, string>();
+
   cleanup(): void {
     if (this.progressTimer) {
       clearInterval(this.progressTimer);
@@ -238,6 +251,26 @@ export class StreamingState {
       clearInterval(this.mcpProgressTimer);
       this.mcpProgressTimer = null;
     }
+    // Abort any active native streams and suppress unhandled rejections
+    for (const queue of this.streamQueues.values()) {
+      queue.abort();
+    }
+    for (const controller of this.streamAbortControllers.values()) {
+      controller.abort(); // idempotent per spec
+    }
+    for (const promise of this.streamPromises.values()) {
+      promise.catch((err) => {
+        const msg = String(err);
+        if (!msg.includes("abort") && !msg.includes("AbortError") && !msg.includes("cancel")) {
+          console.error("[NATIVE-STREAM] Unexpected stream rejection during cleanup:", err);
+        }
+      });
+    }
+    this.streamQueues.clear();
+    this.streamPromises.clear();
+    this.streamAbortControllers.clear();
+    this.streamFirstMessages.clear();
+    this.streamFirstContents.clear();
   }
 
   stopMcpProgress(): void {
@@ -292,6 +325,13 @@ export async function createStatusCallback(
       }
     }
   };
+
+  // Determine native streaming eligibility (private chats only)
+  const isPrivateChat = ctx.chat?.type === "private";
+  const chatId = ctx.chat?.id;
+  if (USE_NATIVE_STREAMING && isPrivateChat && chatId) {
+    state.isNativeStreaming = true;
+  }
 
   if (!state.startTime) {
     state.startTime = new Date();
@@ -385,6 +425,39 @@ export async function createStatusCallback(
 
       if (statusType === "text" && segmentId !== undefined) {
         state.stopMcpProgress(); // Stop any MCP progress timer
+
+        // Native streaming path (private chats via sendMessageDraft)
+        if (state.isNativeStreaming && chatId) {
+          if (!state.streamQueues.has(segmentId)) {
+            const queue = new DeltaQueue();
+            const abortController = new AbortController();
+            state.streamQueues.set(segmentId, queue);
+            state.streamAbortControllers.set(segmentId, abortController);
+
+            const updateId = (ctx as { update?: { update_id?: number } }).update?.update_id;
+            // Use multiplication (not << 8) to avoid signed 32-bit overflow on large update_ids
+            const draftIdOffset = ((updateId ?? Math.floor(Date.now() / 1000)) * 256) + segmentId;
+            const methods = streamApi(ctx.api.raw);
+            const promise = methods.streamMessage(
+              chatId,
+              draftIdOffset,
+              queue,
+              undefined,
+              undefined,
+              // @grammyjs/stream re-exports AbortSignal from abort-controller polyfill;
+              // native AbortSignal is runtime-compatible but types diverge — cast required
+              abortController.signal as never
+            );
+            // Attach immediate catch to prevent unhandled rejection if stream fails
+            // before segment_end awaits the promise. The actual error is handled in segment_end.
+            promise.catch(() => {});
+            state.streamPromises.set(segmentId, promise);
+          }
+          state.streamQueues.get(segmentId)!.pushCumulative(content);
+          return;
+        }
+
+        // Existing editMessageText path (groups, or native streaming disabled)
         const now = Date.now();
         const lastEdit = state.lastEditTimes.get(segmentId) || 0;
         const display = truncate(content, TELEGRAM_SAFE_LIMIT);
@@ -437,6 +510,111 @@ export async function createStatusCallback(
         }
 
         const displayContent = extracted.textWithoutChoice || content;
+
+        // Native streaming: finalize the stream and re-edit with HTML
+        if (state.isNativeStreaming && state.streamQueues.has(segmentId)) {
+          const queue = state.streamQueues.get(segmentId)!;
+          queue.pushCumulative(content); // Flush remaining — use full content to match streamed offsets
+          queue.end();
+
+          try {
+            const messages = await state.streamPromises.get(segmentId)!;
+
+            if (messages.length > 0) {
+              // Store last message for footer/reaction in done handler
+              const lastMsg = messages[messages.length - 1]!;
+              state.textMessages.set(segmentId, lastMsg);
+              // Store first message for header placement
+              if (messages.length > 1) {
+                state.streamFirstMessages.set(segmentId, messages[0]!);
+              }
+
+              // Re-edit each message with HTML formatting (streamed content was raw text)
+              const formatted = convertMarkdownToHtml(displayContent);
+
+              if (messages.length === 1 && formatted.length <= TELEGRAM_MESSAGE_LIMIT) {
+                // Single message, fits in limit: re-edit with full HTML
+                try {
+                  await ctx.api.editMessageText(
+                    lastMsg.chat.id,
+                    lastMsg.message_id,
+                    formatted,
+                    { parse_mode: "HTML" }
+                  );
+                  state.lastContent.set(segmentId, formatted);
+                } catch (editErr) {
+                  console.warn(`[NATIVE-STREAM] HTML re-edit failed for segment ${segmentId}:`, editErr);
+                  state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
+                }
+              } else if (messages.length > 1) {
+                // Multi-message: re-edit each chunk with HTML
+                // Use `content` (not displayContent) for offset calc since streams were fed content
+                let offset = 0;
+                let firstChunkHtml = "";
+                for (let i = 0; i < messages.length; i++) {
+                  const msg = messages[i]!;
+                  const rawLen = msg.text?.length ?? 0;
+                  let chunkText = content.slice(offset, offset + rawLen);
+                  offset += rawLen;
+                  if (!chunkText) continue;
+                  // Strip any choice JSON that may appear in the last chunk
+                  const chunkExtracted = UserChoiceExtractor.extractUserChoice(chunkText);
+                  if (chunkExtracted.textWithoutChoice) {
+                    chunkText = chunkExtracted.textWithoutChoice;
+                  }
+                  const chunkHtml = convertMarkdownToHtml(chunkText);
+                  if (i === 0) firstChunkHtml = chunkHtml;
+                  try {
+                    await ctx.api.editMessageText(
+                      msg.chat.id,
+                      msg.message_id,
+                      chunkHtml,
+                      { parse_mode: "HTML" }
+                    );
+                  } catch (chunkErr) {
+                    console.warn(`[NATIVE-STREAM] HTML re-edit failed for chunk ${i+1}/${messages.length}:`, chunkErr);
+                  }
+                }
+                // Store first chunk's HTML for header prepend in done handler
+                if (firstChunkHtml) {
+                  state.streamFirstContents.set(segmentId, firstChunkHtml);
+                }
+                // Store last chunk's HTML for footer append in done handler
+                const lastChunkText = displayContent.slice(
+                  displayContent.length - (lastMsg.text?.length ?? 0)
+                );
+                state.lastContent.set(segmentId, convertMarkdownToHtml(lastChunkText) || displayContent);
+              } else {
+                // Single message but content > limit: keep as-is
+                state.lastContent.set(segmentId, displayContent);
+              }
+            }
+          } catch (error) {
+            console.error("[NATIVE-STREAM] Stream finalization failed, falling back:", error);
+            // WARNING: streamMessage may have already sent partial messages to the user.
+            // This fallback reply may produce duplicate content — best-effort recovery.
+            console.warn("[NATIVE-STREAM] Partial content may have been delivered; fallback reply may cause duplicates");
+            const formatted = convertMarkdownToHtml(displayContent);
+            try {
+              const msg = await ctx.reply(formatted, { parse_mode: "HTML" });
+              state.textMessages.set(segmentId, msg);
+              state.lastContent.set(segmentId, formatted);
+            } catch (htmlErr) {
+              console.warn("[NATIVE-STREAM] Fallback HTML reply failed, sending raw:", htmlErr);
+              const msg = await ctx.reply(displayContent);
+              state.textMessages.set(segmentId, msg);
+              state.lastContent.set(segmentId, displayContent);
+            }
+          }
+
+          // Clean up stream resources for this segment
+          state.streamQueues.delete(segmentId);
+          state.streamPromises.delete(segmentId);
+          state.streamAbortControllers.delete(segmentId);
+          return;
+        }
+
+        // Existing editMessageText path (groups, or native streaming disabled)
         const formatted = convertMarkdownToHtml(displayContent);
 
         if (!state.textMessages.has(segmentId)) {
@@ -534,13 +712,21 @@ export async function createStatusCallback(
       }
 
       if (statusType === "done") {
+        // Capture stream-derived state before cleanup clears it
+        const savedFirstMessages = new Map(state.streamFirstMessages);
+        const savedFirstContents = new Map(state.streamFirstContents);
         state.cleanup();
         if (state.progressMessage) await deleteMessage(ctx, state.progressMessage);
 
         if (metadata?.modelDisplayName && state.textMessages.size > 0) {
           const firstSegmentId = Math.min(...state.textMessages.keys());
-          const firstMsg = state.textMessages.get(firstSegmentId);
-          const firstContent = state.lastContent.get(firstSegmentId);
+          // For multi-message native streams, header goes on the FIRST message (not last)
+          const firstMsg = savedFirstMessages.get(firstSegmentId)
+            ?? state.textMessages.get(firstSegmentId);
+          // For multi-message: use first chunk's HTML; for single: use lastContent (same msg)
+          const firstContent = savedFirstContents.get(firstSegmentId)
+            ?? state.lastContent.get(firstSegmentId)
+            ?? firstMsg?.text;
 
           if (firstMsg && firstContent) {
             const modelHeader = `<pre>${escapeHtml(metadata.modelDisplayName)}</pre>\n`;

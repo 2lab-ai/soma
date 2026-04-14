@@ -6,6 +6,8 @@ import {
   SAFETY_PROMPT,
   UI_ASKUSER_INSTRUCTIONS,
   WORKING_DIR,
+  USE_NATIVE_STREAMING,
+  NATIVE_STREAMING_THROTTLE_MS,
 } from "../../config";
 import {
   getModelForContext,
@@ -867,10 +869,20 @@ export class ClaudeSession {
           );
       }
 
+      // Reduce upstream throttle for native streaming in private chats.
+      // Note: chatId > 0 is a heuristic (channels also have positive IDs);
+      // streaming.ts uses ctx.chat.type === "private" for the authoritative check.
+      // A false positive here just reduces throttle without harm.
+      const isPrivateChat = chatId !== undefined && chatId > 0;
+      const streamingThrottleMs = USE_NATIVE_STREAMING && isPrivateChat
+        ? NATIVE_STREAMING_THROTTLE_MS
+        : undefined;
+
       runtimeResult = await executeQueryRuntime({
         prompt: messageToSend,
         options: runtimeOptions,
         statusCallback,
+        streamingThrottleMs,
         queryGeneration,
         getCurrentGeneration: () => this._generation,
         shouldStop: () => this.stopRequested,
