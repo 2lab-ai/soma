@@ -254,10 +254,15 @@ export class StreamingState {
       queue.abort();
     }
     for (const controller of this.streamAbortControllers.values()) {
-      try { controller.abort(); } catch { /* already aborted */ }
+      controller.abort(); // idempotent per spec
     }
     for (const promise of this.streamPromises.values()) {
-      promise.catch(() => { /* suppress rejection from aborted stream */ });
+      promise.catch((err) => {
+        const msg = String(err);
+        if (!msg.includes("abort") && !msg.includes("AbortError") && !msg.includes("cancel")) {
+          console.error("[NATIVE-STREAM] Unexpected stream rejection during cleanup:", err);
+        }
+      });
     }
     this.streamQueues.clear();
     this.streamPromises.clear();
@@ -531,8 +536,8 @@ export async function createStatusCallback(
                     { parse_mode: "HTML" }
                   );
                   state.lastContent.set(segmentId, formatted);
-                } catch {
-                  // HTML edit failed, keep raw text
+                } catch (editErr) {
+                  console.warn(`[NATIVE-STREAM] HTML re-edit failed for segment ${segmentId}:`, editErr);
                   state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
                 }
               } else if (messages.length > 1) {
@@ -557,7 +562,9 @@ export async function createStatusCallback(
                       chunkHtml,
                       { parse_mode: "HTML" }
                     );
-                  } catch { /* HTML edit failed for chunk, keep raw */ }
+                  } catch (chunkErr) {
+                    console.warn(`[NATIVE-STREAM] HTML re-edit failed for chunk ${messages.indexOf(msg)+1}/${messages.length}:`, chunkErr);
+                  }
                 }
                 state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
               } else {
@@ -567,14 +574,16 @@ export async function createStatusCallback(
             }
           } catch (error) {
             console.error("[NATIVE-STREAM] Stream finalization failed, falling back:", error);
-            // Fallback: existing messages may have been partially sent by the plugin.
-            // Send a fresh complete message as best-effort recovery.
+            // WARNING: streamMessage may have already sent partial messages to the user.
+            // This fallback reply may produce duplicate content — best-effort recovery.
+            console.warn("[NATIVE-STREAM] Partial content may have been delivered; fallback reply may cause duplicates");
             const formatted = convertMarkdownToHtml(displayContent);
             try {
               const msg = await ctx.reply(formatted, { parse_mode: "HTML" });
               state.textMessages.set(segmentId, msg);
               state.lastContent.set(segmentId, formatted);
-            } catch {
+            } catch (htmlErr) {
+              console.warn("[NATIVE-STREAM] Fallback HTML reply failed, sending raw:", htmlErr);
               const msg = await ctx.reply(displayContent);
               state.textMessages.set(segmentId, msg);
               state.lastContent.set(segmentId, displayContent);
@@ -696,9 +705,9 @@ export async function createStatusCallback(
           // For multi-message native streams, header goes on the FIRST message (not last)
           const firstMsg = savedFirstMessages.get(firstSegmentId)
             ?? state.textMessages.get(firstSegmentId);
-          const firstContent = firstMsg
-            ? (firstMsg.text ?? state.lastContent.get(firstSegmentId))
-            : state.lastContent.get(firstSegmentId);
+          // Prefer lastContent (HTML-formatted) over firstMsg.text (raw streamed text)
+          const firstContent = state.lastContent.get(firstSegmentId)
+            ?? firstMsg?.text;
 
           if (firstMsg && firstContent) {
             const modelHeader = `<pre>${escapeHtml(metadata.modelDisplayName)}</pre>\n`;
