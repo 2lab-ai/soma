@@ -7,6 +7,7 @@
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.1.76",
         "@grammyjs/runner": "^2.0.3",
+        "@grammyjs/stream": "^1.0.1",
         "@grammyjs/transformer-throttler": "^1.2.1",
         "@modelcontextprotocol/sdk": "^1.25.1",
         "croner": "^9.1.0",
@@ -50,6 +51,8 @@
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.4.1", "", { "dependencies": { "@eslint/core": "^0.17.0", "levn": "^0.4.1" } }, "sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA=="],
 
     "@grammyjs/runner": ["@grammyjs/runner@2.0.3", "", { "dependencies": { "abort-controller": "^3.0.0" }, "peerDependencies": { "grammy": "^1.13.1" } }, "sha512-nckmTs1dPWfVQteK9cxqxzE+0m1VRvluLWB8UgFzsjg62w3qthPJt0TYtJBEdG7OedvfQq4vnFAyE6iaMkR42A=="],
+
+    "@grammyjs/stream": ["@grammyjs/stream@1.0.1", "", { "dependencies": { "abort-controller": "^3.0.0" }, "peerDependencies": { "grammy": "^1.39.0" } }, "sha512-L1hKvKdI1odWa2mRzfcEP8TdZPjgzHaATE2t2SFpSyikXCViVIEzKjZcM6tDRZFce4uzqckkN5tRM8WPW/1BUg=="],
 
     "@grammyjs/transformer-throttler": ["@grammyjs/transformer-throttler@1.2.1", "", { "dependencies": { "bottleneck": "^2.0.0" }, "peerDependencies": { "grammy": "^1.0.0" } }, "sha512-CpWB0F3rJdUiKsq7826QhQsxbZi4wqfz1ccKX+fr+AOC+o8K7ZvS+wqX0suSu1QCsyUq2MDpNiKhyL2ZOJUS4w=="],
 

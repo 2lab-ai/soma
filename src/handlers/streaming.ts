@@ -1,5 +1,6 @@
 import type { Context } from "grammy";
 import type { Message } from "grammy/types";
+import { streamApi } from "@grammyjs/stream";
 import { sessionManager } from "../core/session/session-manager";
 import type { QueryMetadata, StatusCallback } from "../types/runtime";
 import type { ClaudeSession } from "../core/session/session";
@@ -7,6 +8,7 @@ import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import { UserChoiceExtractor } from "../utils/user-choice-extractor";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import type { UserChoice, UserChoices } from "../types/user-choice";
+import { DeltaQueue } from "./stream-bridge";
 import {
   TELEGRAM_MESSAGE_LIMIT,
   TELEGRAM_SAFE_LIMIT,
@@ -19,6 +21,7 @@ import {
   SHOW_ANTHROPIC_USAGE,
   SHOW_CODEX_USAGE,
   SHOW_GEMINI_USAGE,
+  USE_NATIVE_STREAMING,
 } from "../config";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -229,6 +232,12 @@ export class StreamingState {
   mcpToolBaseContent: string | null = null;
   mcpProgressTimer: Timer | null = null;
 
+  // Native streaming (sendMessageDraft) state
+  isNativeStreaming = false;
+  streamQueues = new Map<number, DeltaQueue>();
+  streamPromises = new Map<number, Promise<Message[]>>();
+  streamAbortControllers = new Map<number, AbortController>();
+
   cleanup(): void {
     if (this.progressTimer) {
       clearInterval(this.progressTimer);
@@ -238,6 +247,16 @@ export class StreamingState {
       clearInterval(this.mcpProgressTimer);
       this.mcpProgressTimer = null;
     }
+    // Abort any active native streams
+    for (const queue of this.streamQueues.values()) {
+      queue.abort();
+    }
+    for (const controller of this.streamAbortControllers.values()) {
+      try { controller.abort(); } catch { /* already aborted */ }
+    }
+    this.streamQueues.clear();
+    this.streamPromises.clear();
+    this.streamAbortControllers.clear();
   }
 
   stopMcpProgress(): void {
@@ -292,6 +311,13 @@ export async function createStatusCallback(
       }
     }
   };
+
+  // Determine native streaming eligibility (private chats only)
+  const isPrivateChat = ctx.chat?.type === "private";
+  const chatId = ctx.chat?.id;
+  if (USE_NATIVE_STREAMING && isPrivateChat && chatId) {
+    state.isNativeStreaming = true;
+  }
 
   if (!state.startTime) {
     state.startTime = new Date();
@@ -385,6 +411,33 @@ export async function createStatusCallback(
 
       if (statusType === "text" && segmentId !== undefined) {
         state.stopMcpProgress(); // Stop any MCP progress timer
+
+        // Native streaming path (private chats via sendMessageDraft)
+        if (state.isNativeStreaming && chatId) {
+          if (!state.streamQueues.has(segmentId)) {
+            const queue = new DeltaQueue();
+            const abortController = new AbortController();
+            state.streamQueues.set(segmentId, queue);
+            state.streamAbortControllers.set(segmentId, abortController);
+
+            const updateId = (ctx as { update?: { update_id?: number } }).update?.update_id;
+            const draftIdOffset = ((updateId ?? Math.floor(Date.now() / 1000)) << 8) + segmentId;
+            const methods = streamApi(ctx.api.raw);
+            const promise = methods.streamMessage(
+              chatId,
+              draftIdOffset,
+              queue,
+              undefined,
+              undefined,
+              abortController.signal as never
+            );
+            state.streamPromises.set(segmentId, promise);
+          }
+          state.streamQueues.get(segmentId)!.pushCumulative(content);
+          return;
+        }
+
+        // Existing editMessageText path (groups, or native streaming disabled)
         const now = Date.now();
         const lastEdit = state.lastEditTimes.get(segmentId) || 0;
         const display = truncate(content, TELEGRAM_SAFE_LIMIT);
@@ -437,6 +490,62 @@ export async function createStatusCallback(
         }
 
         const displayContent = extracted.textWithoutChoice || content;
+
+        // Native streaming: finalize the stream and re-edit with HTML
+        if (state.isNativeStreaming && state.streamQueues.has(segmentId)) {
+          const queue = state.streamQueues.get(segmentId)!;
+          queue.pushCumulative(content); // Flush any remaining text
+          queue.end();
+
+          try {
+            const messages = await state.streamPromises.get(segmentId)!;
+            const lastMsg = messages[messages.length - 1];
+            if (lastMsg) {
+              state.textMessages.set(segmentId, lastMsg);
+
+              // Re-edit with HTML formatting (streamed content was raw text)
+              const formatted = convertMarkdownToHtml(displayContent);
+              if (formatted.length <= TELEGRAM_MESSAGE_LIMIT) {
+                try {
+                  await ctx.api.editMessageText(
+                    lastMsg.chat.id,
+                    lastMsg.message_id,
+                    formatted,
+                    { parse_mode: "HTML" }
+                  );
+                  state.lastContent.set(segmentId, formatted);
+                } catch {
+                  // HTML edit failed, keep raw text
+                  state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
+                }
+              } else {
+                // Content too long for single edit; keep plugin-chunked messages as-is
+                state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
+              }
+            }
+          } catch (error) {
+            console.error("[NATIVE-STREAM] Stream finalization failed, falling back:", error);
+            // Fallback: send as regular message
+            const formatted = convertMarkdownToHtml(displayContent);
+            try {
+              const msg = await ctx.reply(formatted, { parse_mode: "HTML" });
+              state.textMessages.set(segmentId, msg);
+              state.lastContent.set(segmentId, formatted);
+            } catch {
+              const msg = await ctx.reply(displayContent);
+              state.textMessages.set(segmentId, msg);
+              state.lastContent.set(segmentId, displayContent);
+            }
+          }
+
+          // Clean up stream resources for this segment
+          state.streamQueues.delete(segmentId);
+          state.streamPromises.delete(segmentId);
+          state.streamAbortControllers.delete(segmentId);
+          return;
+        }
+
+        // Existing editMessageText path (groups, or native streaming disabled)
         const formatted = convertMarkdownToHtml(displayContent);
 
         if (!state.textMessages.has(segmentId)) {
