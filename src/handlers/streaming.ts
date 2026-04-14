@@ -239,6 +239,8 @@ export class StreamingState {
   streamAbortControllers = new Map<number, AbortController>();
   // For multi-message segments: track first message separately (header goes here)
   streamFirstMessages = new Map<number, Message>();
+  // HTML content of the first message in a multi-message segment (for header prepend)
+  streamFirstContents = new Map<number, string>();
 
   cleanup(): void {
     if (this.progressTimer) {
@@ -268,6 +270,7 @@ export class StreamingState {
     this.streamPromises.clear();
     this.streamAbortControllers.clear();
     this.streamFirstMessages.clear();
+    this.streamFirstContents.clear();
   }
 
   stopMcpProgress(): void {
@@ -445,6 +448,9 @@ export async function createStatusCallback(
               // native AbortSignal is runtime-compatible but types diverge — cast required
               abortController.signal as never
             );
+            // Attach immediate catch to prevent unhandled rejection if stream fails
+            // before segment_end awaits the promise. The actual error is handled in segment_end.
+            promise.catch(() => {});
             state.streamPromises.set(segmentId, promise);
           }
           state.streamQueues.get(segmentId)!.pushCumulative(content);
@@ -544,7 +550,9 @@ export async function createStatusCallback(
                 // Multi-message: re-edit each chunk with HTML
                 // Use `content` (not displayContent) for offset calc since streams were fed content
                 let offset = 0;
-                for (const msg of messages) {
+                let firstChunkHtml = "";
+                for (let i = 0; i < messages.length; i++) {
+                  const msg = messages[i]!;
                   const rawLen = msg.text?.length ?? 0;
                   let chunkText = content.slice(offset, offset + rawLen);
                   offset += rawLen;
@@ -555,6 +563,7 @@ export async function createStatusCallback(
                     chunkText = chunkExtracted.textWithoutChoice;
                   }
                   const chunkHtml = convertMarkdownToHtml(chunkText);
+                  if (i === 0) firstChunkHtml = chunkHtml;
                   try {
                     await ctx.api.editMessageText(
                       msg.chat.id,
@@ -563,13 +572,21 @@ export async function createStatusCallback(
                       { parse_mode: "HTML" }
                     );
                   } catch (chunkErr) {
-                    console.warn(`[NATIVE-STREAM] HTML re-edit failed for chunk ${messages.indexOf(msg)+1}/${messages.length}:`, chunkErr);
+                    console.warn(`[NATIVE-STREAM] HTML re-edit failed for chunk ${i+1}/${messages.length}:`, chunkErr);
                   }
                 }
-                state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
+                // Store first chunk's HTML for header prepend in done handler
+                if (firstChunkHtml) {
+                  state.streamFirstContents.set(segmentId, firstChunkHtml);
+                }
+                // Store last chunk's HTML for footer append in done handler
+                const lastChunkText = displayContent.slice(
+                  displayContent.length - (lastMsg.text?.length ?? 0)
+                );
+                state.lastContent.set(segmentId, convertMarkdownToHtml(lastChunkText) || displayContent);
               } else {
                 // Single message but content > limit: keep as-is
-                state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
+                state.lastContent.set(segmentId, displayContent);
               }
             }
           } catch (error) {
@@ -697,6 +714,7 @@ export async function createStatusCallback(
       if (statusType === "done") {
         // Capture stream-derived state before cleanup clears it
         const savedFirstMessages = new Map(state.streamFirstMessages);
+        const savedFirstContents = new Map(state.streamFirstContents);
         state.cleanup();
         if (state.progressMessage) await deleteMessage(ctx, state.progressMessage);
 
@@ -705,8 +723,9 @@ export async function createStatusCallback(
           // For multi-message native streams, header goes on the FIRST message (not last)
           const firstMsg = savedFirstMessages.get(firstSegmentId)
             ?? state.textMessages.get(firstSegmentId);
-          // Prefer lastContent (HTML-formatted) over firstMsg.text (raw streamed text)
-          const firstContent = state.lastContent.get(firstSegmentId)
+          // For multi-message: use first chunk's HTML; for single: use lastContent (same msg)
+          const firstContent = savedFirstContents.get(firstSegmentId)
+            ?? state.lastContent.get(firstSegmentId)
             ?? firstMsg?.text;
 
           if (firstMsg && firstContent) {
