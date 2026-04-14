@@ -302,6 +302,7 @@ export const TELEGRAM_MESSAGE_LIMIT = 4096;
 export const TELEGRAM_SAFE_LIMIT = 4000;
 export const STREAMING_THROTTLE_MS = 500;
 export const USE_NATIVE_STREAMING = parseEnvBool("USE_NATIVE_STREAMING", true);
+export const NATIVE_STREAMING_THROTTLE_MS = parseEnvInt("NATIVE_STREAMING_THROTTLE_MS", 100);
 export const BUTTON_LABEL_MAX_LENGTH = 30;
 
 export const AUDIT_LOG_PATH = process.env.AUDIT_LOG_PATH || "/tmp/soma-audit.log";

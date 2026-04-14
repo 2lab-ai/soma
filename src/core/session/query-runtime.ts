@@ -180,6 +180,9 @@ export interface QueryRuntimeExecutionInput {
   prompt: string;
   options: Options & { abortController: AbortController };
   statusCallback: StatusCallback;
+  /** Override upstream text throttle (default: STREAMING_THROTTLE_MS=500ms).
+   *  Set lower (e.g. 100ms) for native streaming to allow more frequent pushes. */
+  streamingThrottleMs?: number;
   queryGeneration: number;
   getCurrentGeneration: () => number;
   shouldStop: () => boolean;
@@ -527,8 +530,9 @@ async function executeProviderRuntime(
       currentSegmentText += event.delta;
 
       const now = Date.now();
+      const throttle = input.streamingThrottleMs ?? STREAMING_THROTTLE_MS;
       if (
-        now - lastTextUpdate > STREAMING_THROTTLE_MS &&
+        now - lastTextUpdate > throttle &&
         currentSegmentText.length > 20
       ) {
         await input.statusCallback("text", currentSegmentText, currentSegmentId);
@@ -792,8 +796,9 @@ export async function executeQueryRuntime(
           currentSegmentText += block.text;
 
           const now = Date.now();
+          const throttle = input.streamingThrottleMs ?? STREAMING_THROTTLE_MS;
           if (
-            now - lastTextUpdate > STREAMING_THROTTLE_MS &&
+            now - lastTextUpdate > throttle &&
             currentSegmentText.length > 20
           ) {
             await input.statusCallback("text", currentSegmentText, currentSegmentId);
