@@ -301,6 +301,7 @@ export const MEDIA_GROUP_TIMEOUT = 1000;
 export const TELEGRAM_MESSAGE_LIMIT = 4096;
 export const TELEGRAM_SAFE_LIMIT = 4000;
 export const STREAMING_THROTTLE_MS = 500;
+export const USE_NATIVE_STREAMING = parseEnvBool("USE_NATIVE_STREAMING", true);
 export const BUTTON_LABEL_MAX_LENGTH = 30;
 
 export const AUDIT_LOG_PATH = process.env.AUDIT_LOG_PATH || "/tmp/soma-audit.log";
