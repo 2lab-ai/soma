@@ -262,6 +262,7 @@ export class StreamingState {
     this.streamQueues.clear();
     this.streamPromises.clear();
     this.streamAbortControllers.clear();
+    this.streamFirstMessages.clear();
   }
 
   stopMcpProgress(): void {
@@ -435,6 +436,8 @@ export async function createStatusCallback(
               queue,
               undefined,
               undefined,
+              // @grammyjs/stream re-exports AbortSignal from abort-controller polyfill;
+              // native AbortSignal is runtime-compatible but types diverge — cast required
               abortController.signal as never
             );
             state.streamPromises.set(segmentId, promise);
@@ -500,7 +503,7 @@ export async function createStatusCallback(
         // Native streaming: finalize the stream and re-edit with HTML
         if (state.isNativeStreaming && state.streamQueues.has(segmentId)) {
           const queue = state.streamQueues.get(segmentId)!;
-          queue.pushCumulative(content); // Flush any remaining text
+          queue.pushCumulative(content); // Flush remaining — use full content to match streamed offsets
           queue.end();
 
           try {
@@ -534,12 +537,18 @@ export async function createStatusCallback(
                 }
               } else if (messages.length > 1) {
                 // Multi-message: re-edit each chunk with HTML
+                // Use `content` (not displayContent) for offset calc since streams were fed content
                 let offset = 0;
                 for (const msg of messages) {
                   const rawLen = msg.text?.length ?? 0;
-                  const chunkText = displayContent.slice(offset, offset + rawLen);
+                  let chunkText = content.slice(offset, offset + rawLen);
                   offset += rawLen;
                   if (!chunkText) continue;
+                  // Strip any choice JSON that may appear in the last chunk
+                  const chunkExtracted = UserChoiceExtractor.extractUserChoice(chunkText);
+                  if (chunkExtracted.textWithoutChoice) {
+                    chunkText = chunkExtracted.textWithoutChoice;
+                  }
                   const chunkHtml = convertMarkdownToHtml(chunkText);
                   try {
                     await ctx.api.editMessageText(
@@ -677,13 +686,15 @@ export async function createStatusCallback(
       }
 
       if (statusType === "done") {
+        // Capture stream-derived state before cleanup clears it
+        const savedFirstMessages = new Map(state.streamFirstMessages);
         state.cleanup();
         if (state.progressMessage) await deleteMessage(ctx, state.progressMessage);
 
         if (metadata?.modelDisplayName && state.textMessages.size > 0) {
           const firstSegmentId = Math.min(...state.textMessages.keys());
           // For multi-message native streams, header goes on the FIRST message (not last)
-          const firstMsg = state.streamFirstMessages.get(firstSegmentId)
+          const firstMsg = savedFirstMessages.get(firstSegmentId)
             ?? state.textMessages.get(firstSegmentId);
           const firstContent = firstMsg
             ? (firstMsg.text ?? state.lastContent.get(firstSegmentId))
