@@ -68,7 +68,7 @@ export async function handleVoice(ctx: Context): Promise<void> {
   // 2. Check if transcription is available
   if (!TRANSCRIPTION_AVAILABLE) {
     await ctx.reply(
-      "Voice transcription is not configured. Set OPENAI_API_KEY in .env"
+      "Voice transcription is not configured. Set STT_URL in .env"
     );
     return;
   }
@@ -108,12 +108,28 @@ export async function handleVoice(ctx: Context): Promise<void> {
     // 7. Transcribe
     const statusMsg = await ctx.reply("🎤 Transcribing...");
 
-    const transcript = await transcribeVoice(voicePath);
+    let transcript: string;
+    try {
+      transcript = await transcribeVoice(voicePath);
+    } catch (transcriptionError) {
+      const reason = transcriptionError instanceof Error
+        ? transcriptionError.message
+        : String(transcriptionError);
+      await ctx.api.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        `❌ Transcription failed: ${reason.slice(0, 200)}`
+      );
+      stopProcessing();
+      return;
+    }
+
+    // 7.5. Handle empty transcript (silence or unrecognizable audio)
     if (!transcript) {
       await ctx.api.editMessageText(
         chatId,
         statusMsg.message_id,
-        "❌ Transcription failed."
+        "🎤 (No speech detected)"
       );
       stopProcessing();
       return;
