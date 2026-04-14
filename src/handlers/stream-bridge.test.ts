@@ -90,6 +90,26 @@ describe("DeltaQueue", () => {
     expect(collected).toEqual(["Hello"]);
   });
 
+  it("splits large deltas into ≤4096-char chunks", async () => {
+    const queue = new DeltaQueue();
+    const collected: string[] = [];
+
+    // Push a 10000-char cumulative text
+    const bigText = "x".repeat(10000);
+    queue.pushCumulative(bigText);
+    queue.end();
+
+    for await (const chunk of queue) {
+      collected.push(chunk);
+      // Every chunk must be ≤ 4096
+      expect(chunk.length).toBeLessThanOrEqual(4096);
+    }
+
+    // All chunks together should equal the full text
+    expect(collected.join("")).toBe(bigText);
+    expect(collected.length).toBe(3); // 4096 + 4096 + 1808
+  });
+
   it("handles segment_end flush pattern", async () => {
     const queue = new DeltaQueue();
     const collected: string[] = [];

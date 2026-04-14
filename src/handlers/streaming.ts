@@ -247,12 +247,15 @@ export class StreamingState {
       clearInterval(this.mcpProgressTimer);
       this.mcpProgressTimer = null;
     }
-    // Abort any active native streams
+    // Abort any active native streams and suppress unhandled rejections
     for (const queue of this.streamQueues.values()) {
       queue.abort();
     }
     for (const controller of this.streamAbortControllers.values()) {
       try { controller.abort(); } catch { /* already aborted */ }
+    }
+    for (const promise of this.streamPromises.values()) {
+      promise.catch(() => { /* suppress rejection from aborted stream */ });
     }
     this.streamQueues.clear();
     this.streamPromises.clear();
@@ -421,7 +424,8 @@ export async function createStatusCallback(
             state.streamAbortControllers.set(segmentId, abortController);
 
             const updateId = (ctx as { update?: { update_id?: number } }).update?.update_id;
-            const draftIdOffset = ((updateId ?? Math.floor(Date.now() / 1000)) << 8) + segmentId;
+            // Use multiplication (not << 8) to avoid signed 32-bit overflow on large update_ids
+            const draftIdOffset = ((updateId ?? Math.floor(Date.now() / 1000)) * 256) + segmentId;
             const methods = streamApi(ctx.api.raw);
             const promise = methods.streamMessage(
               chatId,
@@ -499,13 +503,17 @@ export async function createStatusCallback(
 
           try {
             const messages = await state.streamPromises.get(segmentId)!;
-            const lastMsg = messages[messages.length - 1];
-            if (lastMsg) {
+
+            if (messages.length > 0) {
+              // Store last message for footer/reaction in done handler
+              const lastMsg = messages[messages.length - 1]!;
               state.textMessages.set(segmentId, lastMsg);
 
-              // Re-edit with HTML formatting (streamed content was raw text)
+              // Re-edit each message with HTML formatting (streamed content was raw text)
               const formatted = convertMarkdownToHtml(displayContent);
-              if (formatted.length <= TELEGRAM_MESSAGE_LIMIT) {
+
+              if (messages.length === 1 && formatted.length <= TELEGRAM_MESSAGE_LIMIT) {
+                // Single message, fits in limit: re-edit with full HTML
                 try {
                   await ctx.api.editMessageText(
                     lastMsg.chat.id,
@@ -518,14 +526,34 @@ export async function createStatusCallback(
                   // HTML edit failed, keep raw text
                   state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
                 }
+              } else if (messages.length > 1) {
+                // Multi-message: re-edit each chunk with HTML
+                let offset = 0;
+                for (const msg of messages) {
+                  const rawLen = msg.text?.length ?? 0;
+                  const chunkText = displayContent.slice(offset, offset + rawLen);
+                  offset += rawLen;
+                  if (!chunkText) continue;
+                  const chunkHtml = convertMarkdownToHtml(chunkText);
+                  try {
+                    await ctx.api.editMessageText(
+                      msg.chat.id,
+                      msg.message_id,
+                      chunkHtml,
+                      { parse_mode: "HTML" }
+                    );
+                  } catch { /* HTML edit failed for chunk, keep raw */ }
+                }
+                state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
               } else {
-                // Content too long for single edit; keep plugin-chunked messages as-is
+                // Single message but content > limit: keep as-is
                 state.lastContent.set(segmentId, lastMsg.text ?? displayContent);
               }
             }
           } catch (error) {
             console.error("[NATIVE-STREAM] Stream finalization failed, falling back:", error);
-            // Fallback: send as regular message
+            // Fallback: existing messages may have been partially sent by the plugin.
+            // Send a fresh complete message as best-effort recovery.
             const formatted = convertMarkdownToHtml(displayContent);
             try {
               const msg = await ctx.reply(formatted, { parse_mode: "HTML" });
