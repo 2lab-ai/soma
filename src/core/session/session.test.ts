@@ -99,12 +99,12 @@ describe("model switch forces new session (model-switch-session-reset)", () => {
 
     // Simulate a completed query with Opus
     (session as any).sessionId = "fake-opus-session-id";
-    (session as any).lastUsedModel = "claude-opus-4-6" as ModelId;
+    (session as any).lastUsedModel = "claude-opus-4-7" as ModelId;
     (session as any)._isActive = true;
 
     // Access the private field to verify initial state
     expect((session as any).sessionId).toBe("fake-opus-session-id");
-    expect((session as any).lastUsedModel).toBe("claude-opus-4-6");
+    expect((session as any).lastUsedModel).toBe("claude-opus-4-7");
 
     // Simulate what sendMessageStreaming does when model changes:
     // effectiveModel would be Sonnet (from /model command)
@@ -123,9 +123,9 @@ describe("model switch forces new session (model-switch-session-reset)", () => {
     const session = new ClaudeSession("test:model-same");
 
     (session as any).sessionId = "fake-opus-session-id";
-    (session as any).lastUsedModel = "claude-opus-4-6" as ModelId;
+    (session as any).lastUsedModel = "claude-opus-4-7" as ModelId;
 
-    const effectiveModel: ModelId = "claude-opus-4-6";
+    const effectiveModel: ModelId = "claude-opus-4-7";
     const lastUsedModel = (session as any).lastUsedModel as ModelId | null;
 
     if ((session as any).sessionId && lastUsedModel && effectiveModel !== lastUsedModel) {
@@ -157,11 +157,11 @@ describe("model switch forces new session (model-switch-session-reset)", () => {
     const session = new ClaudeSession("test:model-override");
 
     (session as any).sessionId = "fake-opus-session-id";
-    (session as any).lastUsedModel = "claude-opus-4-6" as ModelId;
+    (session as any).lastUsedModel = "claude-opus-4-7" as ModelId;
 
     // Simulate rate limit fallback setting temporaryModelOverride
     session.temporaryModelOverride = "claude-sonnet-4-5-20250929";
-    const effectiveModel: ModelId = session.temporaryModelOverride ?? "claude-opus-4-6";
+    const effectiveModel: ModelId = session.temporaryModelOverride ?? "claude-opus-4-7";
     const lastUsedModel = (session as any).lastUsedModel as ModelId | null;
 
     if ((session as any).sessionId && lastUsedModel && effectiveModel !== lastUsedModel) {

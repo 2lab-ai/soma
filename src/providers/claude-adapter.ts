@@ -8,6 +8,7 @@ import type {
   ProviderResumeResult,
 } from "./types.models";
 import { NormalizedProviderError, normalizeProviderError } from "./error-normalizer";
+import { applyModelSpecificOverrides } from "./claude-options";
 import { resolveContextWindowSize } from "../core/session/session-helpers";
 
 type ClaudeQueryFactory = (payload: {
@@ -53,7 +54,7 @@ function toClaudeOptions(
   const permissionMode =
     input.permissionMode === "bypass" ? "bypassPermissions" : undefined;
 
-  return {
+  const base: Options & { abortController: AbortController } = {
     model: input.modelId,
     cwd: input.workingDirectory,
     systemPrompt: input.systemPrompt,
@@ -69,6 +70,7 @@ function toClaudeOptions(
     pathToClaudeCodeExecutable: input.pathToClaudeCodeExecutable,
     abortController,
   };
+  return applyModelSpecificOverrides(input.modelId ?? "", base);
 }
 
 export class ClaudeProviderAdapter implements ProviderBoundary {
