@@ -471,7 +471,7 @@ describe("query-runtime options", () => {
     });
 
     const options = buildQueryRuntimeOptions({
-      model: "claude-opus-4-6",
+      model: "claude-opus-4-7",
       cwd: "/tmp",
       systemPrompt: "system",
       mcpServers: {},
@@ -483,12 +483,72 @@ describe("query-runtime options", () => {
       hooks,
     });
 
-    expect(options.model).toBe("claude-opus-4-6");
+    expect(options.model).toBe("claude-opus-4-7");
     expect(options.resume).toBe("session-1");
     expect(options.abortController).toBe(abortController);
     expect(options.pathToClaudeCodeExecutable).toBe("/usr/local/bin/claude");
     expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
     expect(options.hooks?.PostToolUse?.[0]?.hooks).toHaveLength(1);
+  });
+
+  test("Opus 4.7 strips maxThinkingTokens and applies adaptive + xhigh", () => {
+    const abortController = new AbortController();
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const options = buildQueryRuntimeOptions({
+      model: "claude-opus-4-7",
+      cwd: "/tmp",
+      systemPrompt: "system",
+      mcpServers: {},
+      maxThinkingTokens: 50000,
+      additionalDirectories: ["/tmp"],
+      resumeSessionId: null,
+      abortController,
+      hooks,
+    });
+
+    expect((options as { maxThinkingTokens?: number }).maxThinkingTokens).toBeUndefined();
+    expect((options as { thinking?: { type: string } }).thinking).toEqual({
+      type: "adaptive",
+    });
+    expect((options as { effort?: string }).effort).toBe("xhigh");
+    // Untouched fields must survive the rewrite
+    expect(options.model).toBe("claude-opus-4-7");
+    expect(options.cwd).toBe("/tmp");
+    expect(options.abortController).toBe(abortController);
+  });
+
+  test("Sonnet 4.5 keeps maxThinkingTokens (helper passthrough)", () => {
+    const abortController = new AbortController();
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const options = buildQueryRuntimeOptions({
+      model: "claude-sonnet-4-5-20250929",
+      cwd: "/tmp",
+      systemPrompt: "system",
+      mcpServers: {},
+      maxThinkingTokens: 50000,
+      additionalDirectories: [],
+      resumeSessionId: null,
+      abortController,
+      hooks,
+    });
+
+    expect((options as { maxThinkingTokens?: number }).maxThinkingTokens).toBe(50000);
+    expect((options as { thinking?: unknown }).thinking).toBeUndefined();
+    expect((options as { effort?: unknown }).effort).toBeUndefined();
   });
 });
 
@@ -534,7 +594,7 @@ describe("query-runtime execution", () => {
     const result = await executeQueryRuntime({
       prompt: "hello",
       options: {
-        model: "claude-opus-4-6",
+        model: "claude-opus-4-7",
         cwd: "/tmp",
         abortController: new AbortController(),
       },
@@ -616,7 +676,7 @@ describe("query-runtime execution", () => {
     const result = await executeQueryRuntime({
       prompt: "hello",
       options: {
-        model: "claude-opus-4-6",
+        model: "claude-opus-4-7",
         cwd: "/tmp",
         abortController: new AbortController(),
       },
@@ -661,7 +721,7 @@ describe("query-runtime execution", () => {
     const result = await executeQueryRuntime({
       prompt: "hello",
       options: {
-        model: "claude-opus-4-6",
+        model: "claude-opus-4-7",
         cwd: "/tmp",
         abortController: new AbortController(),
       },
@@ -744,7 +804,7 @@ describe("query-runtime execution", () => {
     const result = await executeQueryRuntime({
       prompt: "hello from orchestrator runtime",
       options: {
-        model: "claude-opus-4-6",
+        model: "claude-opus-4-7",
         cwd: "/tmp",
         abortController: new AbortController(),
       },
@@ -871,7 +931,7 @@ describe("query-runtime execution", () => {
     const result = await executeQueryRuntime({
       prompt: "hello from anthropic provider runtime",
       options: {
-        model: "claude-opus-4-6",
+        model: "claude-opus-4-7",
         cwd: "/tmp",
         abortController: new AbortController(),
       },

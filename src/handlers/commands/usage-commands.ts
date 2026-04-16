@@ -5,6 +5,8 @@ import {
   getCurrentConfig,
   MODEL_DISPLAY_NAMES,
   REASONING_TOKENS,
+  type ModelId,
+  type ReasoningLevel,
 } from "../../config/model";
 import { type ChatType, isAuthorizedForChat } from "../../security";
 import { sessionManager } from "../../core/session/session-manager";
@@ -299,12 +301,18 @@ export async function handleModel(ctx: Context): Promise<void> {
     const cronModel = config.contexts.cron?.model || config.defaults.model;
     const cronReasoning = config.contexts.cron?.reasoning || config.defaults.reasoning;
 
+    // Opus 4.7 ignores per-context reasoning (always adaptive + xhigh).
+    const reasoningSummary = (model: ModelId, reasoning: ReasoningLevel): string =>
+      model === "claude-opus-4-7"
+        ? `adaptive + xhigh (fixed)`
+        : `${reasoning}, ${REASONING_TOKENS[reasoning]} tokens`;
+
     await ctx.reply(
       `🤖 <b>Model Configuration</b>\n\n` +
         `<b>Current Settings:</b>\n\n` +
-        `💬 <b>Chat:</b> ${MODEL_DISPLAY_NAMES[generalModel]} (${generalReasoning}, ${REASONING_TOKENS[generalReasoning]} tokens)\n` +
-        `📝 <b>Summary:</b> ${MODEL_DISPLAY_NAMES[summaryModel]} (${summaryReasoning}, ${REASONING_TOKENS[summaryReasoning]} tokens)\n` +
-        `⏰ <b>Cron:</b> ${MODEL_DISPLAY_NAMES[cronModel]} (${cronReasoning}, ${REASONING_TOKENS[cronReasoning]} tokens)\n\n` +
+        `💬 <b>Chat:</b> ${MODEL_DISPLAY_NAMES[generalModel]} (${reasoningSummary(generalModel, generalReasoning)})\n` +
+        `📝 <b>Summary:</b> ${MODEL_DISPLAY_NAMES[summaryModel]} (${reasoningSummary(summaryModel, summaryReasoning)})\n` +
+        `⏰ <b>Cron:</b> ${MODEL_DISPLAY_NAMES[cronModel]} (${reasoningSummary(cronModel, cronReasoning)})\n\n` +
         `Select which context to configure:`,
       {
         parse_mode: "HTML",
