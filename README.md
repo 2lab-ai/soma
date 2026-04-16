@@ -27,7 +27,7 @@ To achieve this, I set up a folder with a CLAUDE.md that teaches Claude about me
 - 📄 **Documents**: PDFs, text files, and archives (ZIP, TAR) are extracted and analyzed
 - 🔄 **Session persistence**: Conversations continue across messages
 - 📨 **Message queuing**: Send multiple messages while Claude works - they queue up automatically. Prefix with `!` or use `/stop` to interrupt and send immediately
-- 🧠 **Extended thinking**: Trigger Claude's reasoning by using words like "think" or "reason" - you'll see its thought process as it works (configurable via `THINKING_TRIGGER_KEYWORDS`)
+- 🧠 **Extended thinking**: Trigger Claude's reasoning by using words like "think" or "reason" - you'll see its thought process as it works (configurable via `THINKING_TRIGGER_KEYWORDS`). The default chat model is **Claude Opus 4.7**, which always runs adaptive thinking with `xhigh` effort and ignores these keyword controls; Sonnet 4.5 / Haiku 4.5 still honor them.
 - 🔘 **Interactive buttons**: Claude can present options as tappable inline buttons via UIAskUserQuestion (JSON choice format)
 
 ## Quick Start

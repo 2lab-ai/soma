@@ -10,7 +10,7 @@ import { parse, stringify } from "yaml";
 
 export const AVAILABLE_MODELS = [
   "claude-sonnet-4-5-20250929",
-  "claude-opus-4-6",
+  "claude-opus-4-7",
   "claude-haiku-4-5-20251001",
 ] as const;
 
@@ -18,11 +18,19 @@ export type ModelId = (typeof AVAILABLE_MODELS)[number];
 
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
   "claude-sonnet-4-5-20250929": "Sonnet 4.5",
-  "claude-opus-4-6": "Opus 4.6",
+  "claude-opus-4-7": "Opus 4.7",
   "claude-haiku-4-5-20251001": "Haiku 4.5",
 };
 
-export const DEFAULT_MODEL: ModelId = "claude-opus-4-6";
+export const DEFAULT_MODEL: ModelId = "claude-opus-4-7";
+
+/**
+ * Maps deprecated/legacy model IDs to their replacement.
+ * Used by `normalizeConfig` to auto-upgrade persisted yaml on load.
+ */
+const MODEL_MIGRATIONS: Record<string, ModelId> = {
+  "claude-opus-4-6": "claude-opus-4-7",
+};
 
 export type ReasoningLevel = "none" | "minimal" | "medium" | "high" | "xhigh";
 
@@ -74,7 +82,7 @@ function getDefaultConfig(): ModelConfig {
     },
     contexts: {
       general: {
-        model: "claude-opus-4-6",
+        model: "claude-opus-4-7",
         reasoning: "high",
       },
       summary: {
@@ -89,6 +97,59 @@ function getDefaultConfig(): ModelConfig {
   };
 }
 
+/**
+ * Walks `defaults.model` and every `contexts.*.model`, upgrading any model ID
+ * present in `MODEL_MIGRATIONS` to its replacement. For any context that
+ * resolves to `claude-opus-4-7`, coerces `reasoning` to `"xhigh"` (Opus 4.7
+ * uses adaptive thinking + xhigh effort; per-context reasoning is ignored at
+ * the SDK layer, so persist a value that matches actual behavior).
+ *
+ * Returns `changed: true` if any field was modified so callers can persist.
+ */
+export function normalizeConfig(config: ModelConfig): {
+  config: ModelConfig;
+  changed: boolean;
+} {
+  let changed = false;
+  const next: ModelConfig = {
+    ...config,
+    defaults: { ...config.defaults },
+    contexts: { ...config.contexts },
+  };
+
+  const migratedDefault = MODEL_MIGRATIONS[next.defaults.model as string];
+  if (migratedDefault) {
+    next.defaults.model = migratedDefault;
+    changed = true;
+  }
+
+  const ctxKeys: ConfigContext[] = ["general", "summary", "cron"];
+  for (const key of ctxKeys) {
+    const ctx = next.contexts[key];
+    if (!ctx) continue;
+    const updated = { ...ctx };
+    let touched = false;
+    if (updated.model) {
+      const migrated = MODEL_MIGRATIONS[updated.model as string];
+      if (migrated) {
+        updated.model = migrated;
+        touched = true;
+      }
+    }
+    const resolved = updated.model ?? next.defaults.model;
+    if (resolved === "claude-opus-4-7" && updated.reasoning !== "xhigh") {
+      updated.reasoning = "xhigh";
+      touched = true;
+    }
+    if (touched) {
+      next.contexts[key] = updated;
+      changed = true;
+    }
+  }
+
+  return { config: next, changed };
+}
+
 function loadConfig(): ModelConfig {
   try {
     const content = readFileSync(CONFIG_PATH, "utf-8");
@@ -97,7 +158,13 @@ function loadConfig(): ModelConfig {
       console.warn("[ModelConfig] Invalid structure, using defaults");
       return getDefaultConfig();
     }
-    return parsed;
+    const { config: normalized, changed } = normalizeConfig(parsed);
+    if (changed) {
+      console.log("[ModelConfig] Normalized legacy config, persisting...");
+      // Fire-and-forget; saveConfig writes synchronously under the hood.
+      void saveConfig(normalized);
+    }
+    return normalized;
   } catch {
     return getDefaultConfig();
   }

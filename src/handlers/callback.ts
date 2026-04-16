@@ -23,6 +23,7 @@ import {
   AVAILABLE_MODELS,
   REASONING_TOKENS,
   type ConfigContext,
+  type ModelId,
   type ReasoningLevel,
 } from "../config/model";
 import { skillsRegistry } from "../services/skills-registry";
@@ -309,36 +310,61 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
         config.contexts[context]?.reasoning || config.defaults.reasoning;
 
       const keyboard = new InlineKeyboard();
-      const reasoningLevels: ReasoningLevel[] = [
-        "none",
-        "minimal",
-        "medium",
-        "high",
-        "xhigh",
-      ];
-      for (const level of reasoningLevels) {
-        const tokens = REASONING_TOKENS[level];
-        const current = level === currentReasoning ? " ✓" : "";
-        const display =
-          level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+
+      // Opus 4.7 ignores per-context reasoning: it always runs adaptive
+      // thinking + xhigh effort. Persist xhigh and skip the chooser.
+      if (modelId === "claude-opus-4-7") {
         keyboard
           .text(
-            `${display} (${tokens.toLocaleString()} tokens)${current}`,
-            `model:save:${context}:${modelShort}:${level}`
+            "Save (xhigh)",
+            `model:save:${context}:${modelShort}:xhigh`
           )
           .row();
-      }
-      keyboard.text("« Back", `model:context:${context}`);
+        keyboard.text("« Back", `model:context:${context}`);
 
-      await ctx.editMessageText(
-        `🧠 <b>Select Reasoning Budget</b>\n\n` +
-          `Model: ${MODEL_DISPLAY_NAMES[modelId]}\n` +
-          `Context: ${context.charAt(0).toUpperCase() + context.slice(1)}`,
-        {
-          parse_mode: "HTML",
-          reply_markup: keyboard,
+        await ctx.editMessageText(
+          `🧠 <b>Reasoning Budget</b>\n\n` +
+            `Model: ${MODEL_DISPLAY_NAMES[modelId]}\n` +
+            `Context: ${context.charAt(0).toUpperCase() + context.slice(1)}\n\n` +
+            `ℹ️ Opus 4.7 uses adaptive thinking + xhigh effort. ` +
+            `This setting is ignored.`,
+          {
+            parse_mode: "HTML",
+            reply_markup: keyboard,
+          }
+        );
+      } else {
+        const reasoningLevels: ReasoningLevel[] = [
+          "none",
+          "minimal",
+          "medium",
+          "high",
+          "xhigh",
+        ];
+        for (const level of reasoningLevels) {
+          const tokens = REASONING_TOKENS[level];
+          const current = level === currentReasoning ? " ✓" : "";
+          const display =
+            level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+          keyboard
+            .text(
+              `${display} (${tokens.toLocaleString()} tokens)${current}`,
+              `model:save:${context}:${modelShort}:${level}`
+            )
+            .row();
         }
-      );
+        keyboard.text("« Back", `model:context:${context}`);
+
+        await ctx.editMessageText(
+          `🧠 <b>Select Reasoning Budget</b>\n\n` +
+            `Model: ${MODEL_DISPLAY_NAMES[modelId]}\n` +
+            `Context: ${context.charAt(0).toUpperCase() + context.slice(1)}`,
+          {
+            parse_mode: "HTML",
+            reply_markup: keyboard,
+          }
+        );
+      }
     } else if (action === "save") {
       // Save configuration
       const context = parts[2] as ConfigContext;
@@ -376,12 +402,20 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       const cronReasoning =
         config.contexts.cron?.reasoning || config.defaults.reasoning;
 
+      // Opus 4.7 always runs adaptive thinking + xhigh effort regardless of
+      // the persisted reasoning level. Render that fact instead of a token
+      // budget so the UI matches actual SDK behavior.
+      const reasoningSummary = (model: ModelId, reasoning: ReasoningLevel): string =>
+        model === "claude-opus-4-7"
+          ? `adaptive + xhigh (fixed)`
+          : `${reasoning}, ${REASONING_TOKENS[reasoning]} tokens`;
+
       await ctx.editMessageText(
         `🤖 <b>Model Configuration</b>\n\n` +
           `<b>Current Settings:</b>\n\n` +
-          `💬 <b>Chat:</b> ${MODEL_DISPLAY_NAMES[generalModel]} (${generalReasoning}, ${REASONING_TOKENS[generalReasoning]} tokens)\n` +
-          `📝 <b>Summary:</b> ${MODEL_DISPLAY_NAMES[summaryModel]} (${summaryReasoning}, ${REASONING_TOKENS[summaryReasoning]} tokens)\n` +
-          `⏰ <b>Cron:</b> ${MODEL_DISPLAY_NAMES[cronModel]} (${cronReasoning}, ${REASONING_TOKENS[cronReasoning]} tokens)\n\n` +
+          `💬 <b>Chat:</b> ${MODEL_DISPLAY_NAMES[generalModel]} (${reasoningSummary(generalModel, generalReasoning)})\n` +
+          `📝 <b>Summary:</b> ${MODEL_DISPLAY_NAMES[summaryModel]} (${reasoningSummary(summaryModel, summaryReasoning)})\n` +
+          `⏰ <b>Cron:</b> ${MODEL_DISPLAY_NAMES[cronModel]} (${reasoningSummary(cronModel, cronReasoning)})\n\n` +
           `Select which context to configure:`,
         {
           parse_mode: "HTML",

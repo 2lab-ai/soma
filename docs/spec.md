@@ -32,9 +32,13 @@ SOMA is a Telegram-first AI agent runtime that:
 
 | Context | Model | Reasoning |
 |---|---|---|
-| `general` | Opus 4.6 | `high` |
+| `general` | Opus 4.7 | adaptive + `xhigh` (fixed) |
 | `summary` | Sonnet 4.5 | `minimal` |
 | `cron` | Haiku 4.5 | `none` |
+
+Note: Claude Opus 4.7 always runs adaptive thinking with `xhigh` effort. The
+configured `reasoning` level and `THINKING_KEYWORDS`/`THINKING_DEEP_KEYWORDS`
+inputs are ignored for the Opus path; Sonnet 4.5 / Haiku 4.5 still honor them.
 
 Source: `/Users/icedac/2lab.ai/soma/src/config/model.ts`
 

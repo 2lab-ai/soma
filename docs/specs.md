@@ -134,13 +134,18 @@ Model config source:
 
 Default context mapping:
 
-- `general` -> `claude-opus-4-6` + `high`
+- `general` -> `claude-opus-4-7` + adaptive thinking + `xhigh` effort (fixed)
 - `summary` -> `claude-sonnet-4-5-20250929` + `minimal`
 - `cron` -> `claude-haiku-4-5-20251001` + `none`
 
 Reasoning budget levels:
 
 - `none`, `minimal`, `medium`, `high`, `xhigh` mapped to token budgets.
+- Opus 4.7 ignores per-context reasoning levels and the
+  `THINKING_KEYWORDS`/`THINKING_DEEP_KEYWORDS` mechanism; the SDK is always
+  invoked with `thinking: {type: 'adaptive'}` and `effort: 'xhigh'`.
+- Persisted `model-config.yaml` is auto-normalized on load: legacy
+  `claude-opus-4-6` entries are upgraded to `claude-opus-4-7` and re-saved.
 
 ## 6. Runtime Data Model and Persistence
 
