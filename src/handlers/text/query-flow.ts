@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import type { Context } from "grammy";
 import { WORKING_DIR } from "../../config";
 import { MODEL_DISPLAY_NAMES, getModelForContext } from "../../config/model";
 import type { ClaudeSession } from "../../core/session/session";
+import { getSessionFilePath, saveSession } from "../../core/session/session-store";
 import { Reactions } from "../../constants/reactions";
 import { fetchClaudeUsage } from "../../usage";
 import { auditLog } from "../../utils/audit";
@@ -17,6 +18,7 @@ import {
   isRateLimitError,
   isSdkResumeError,
   isSonnetAvailable,
+  isToolUseInvariantError,
 } from "../../utils/error-classification";
 import { isReentrancyError } from "./query-flow-guard";
 import { sendSystemMessage } from "../../utils/system-message";
@@ -40,6 +42,59 @@ export interface QueryFlowParams {
 // Marker returned by interrupt-flow when steering messages remain in buffer.
 // When detected, skip the initial Claude query and go straight to auto-continue.
 const INTERRUPT_STEERING_MARKER = "[시스템: 인터럽트 후 대기 메시지 처리]";
+
+/**
+ * Predicate for the tool-use invariant recovery branch (issue #61).
+ *
+ * Recovery fires ONLY when ALL four conditions hold:
+ *  1. The error matches the tool-use invariant signature.
+ *  2. The failing call was a resume (sessionIdAtStart !== null) — fresh
+ *     sessions can't produce stale tool_use blocks.
+ *  3. Nothing was streamed to the user yet (no text or tool messages).
+ *     Mid-stream PreToolUse-block ordering issues are intentionally excluded.
+ *  4. We still have retry budget left.
+ *
+ * Extracted to a pure function so regression tests can exercise each
+ * false-positive guard independently without simulating the full query path.
+ */
+export function shouldRecoverFromToolInvariantError(
+  error: unknown,
+  sessionIdAtStart: string | null,
+  state: Pick<StreamingState, "textMessages" | "toolMessages">,
+  attempt: number,
+  maxRetries: number
+): boolean {
+  if (!isToolUseInvariantError(error)) return false;
+  if (sessionIdAtStart === null) return false;
+  if (state.textMessages.size !== 0) return false;
+  if (state.toolMessages.length !== 0) return false;
+  if (attempt >= maxRetries) return false;
+  return true;
+}
+
+/**
+ * Disk + in-memory cleanup for the tool-use invariant recovery branch.
+ *
+ * - Deletes the on-disk session file via `unlinkSync` (ENOENT is silent —
+ *   see R2 recovery taxonomy: missing file is not an error).
+ * - Clears the in-memory sessionId so the next attempt starts fresh.
+ *
+ * Extracted to a pure function so regression tests can verify disk cleanup
+ * and sessionId reset without driving the whole query flow.
+ */
+export function performToolInvariantRecovery(
+  session: ClaudeSession,
+  transcriptPath: string
+): void {
+  try {
+    unlinkSync(transcriptPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn("[TOOL-INVARIANT-RECOVERY] unlink failed:", err);
+    }
+  }
+  session.sessionId = null;
+}
 
 export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
   const { ctx, session, message, chatId, userId, username, deliverInboundReaction } =
@@ -67,8 +122,34 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
       console.log("[QUERY-FLOW] Interrupt drain mode: skipping initial query, entering auto-continue");
     }
 
+    let recoveryNoticePending = false;
+
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      // Capture sessionId BEFORE the query so the tool-use-invariant recovery
+      // branch can tell whether the failing call was a resume vs. a fresh session.
+      const sessionIdAtStart = session.sessionId;
+
+      // Persist the model bound to the current sessionId before the query runs.
+      // Without this, a bot restart after a model change (e.g. Opus 4.6 → 4.7)
+      // resumes a sessionId whose persisted model no longer matches the
+      // configured effective model, causing SDK invariant 400s (issue #61).
+      const effectiveModel =
+        session.temporaryModelOverride ?? getModelForContext("general");
+      if (session.getLastUsedModel() !== effectiveModel) {
+        session.setLastUsedModel(effectiveModel);
+        saveSession(session.sessionKey, session);
+      }
+
       try {
+        // Notify user once that the previous turn was auto-recovered, just before
+        // the retry stream begins (first text message of the new attempt).
+        if (recoveryNoticePending) {
+          recoveryNoticePending = false;
+          try {
+            await sendSystemMessage(ctx, "🔄 세션 자동 복구됨");
+          } catch (e) { console.warn("[TOOL-INVARIANT-RECOVERY] notice failed:", e); }
+        }
+
         if (!isInterruptDrain) {
           const response = await session.sendMessageStreaming(
             messageWithTimestamp,
@@ -389,6 +470,39 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           state.cleanup();
           state = new StreamingState();
           statusCallback = await createStatusCallback(ctx, state, session);
+          continue;
+        }
+
+        // Auto-recover from tool-use invariant violations on resume (issue #61).
+        // See shouldRecoverFromToolInvariantError for the 4-AND guard rationale
+        // and performToolInvariantRecovery for the disk+memory cleanup.
+        if (
+          shouldRecoverFromToolInvariantError(
+            error,
+            sessionIdAtStart,
+            state,
+            attempt,
+            MAX_RETRIES
+          )
+        ) {
+          const transcriptPath = getSessionFilePath(session.sessionKey);
+          console.error("[TOOL-INVARIANT-RECOVERY]", {
+            sessionId: sessionIdAtStart,
+            resumeWasUsed: true,
+            noOutputBeforeError: true,
+            textMessageCount: state.textMessages.size,
+            toolMessageCount: state.toolMessages.length,
+            transcriptPath,
+            lastUsedModel: (session as unknown as { lastUsedModel?: string | null })
+              .lastUsedModel,
+            rawError: errorStr.slice(0, 500),
+          });
+          performToolInvariantRecovery(session, transcriptPath);
+          cleanupToolMessages(ctx, state.toolMessages);
+          state.cleanup();
+          state = new StreamingState();
+          statusCallback = await createStatusCallback(ctx, state, session);
+          recoveryNoticePending = true;
           continue;
         }
 
