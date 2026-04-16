@@ -64,6 +64,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
         `/stats - Token usage & cost statistics\n` +
         `/context - Context window usage (200K limit)\n` +
         `/model - Configure model & reasoning settings\n` +
+        `   <i>Note: Opus 4.7 ignores thinking-keyword controls.</i>\n` +
         `/skills - Quick access to SuperClaude skills\n` +
         `/help - Show this command list\n\n` +
         `<b>Utilities:</b>\n` +
@@ -73,6 +74,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
         `• Prefix with <code>!</code> to interrupt current query\n` +
         `• Use "think" keyword for extended reasoning (10K tokens)\n` +
         `• Use "ultrathink" for deep analysis (50K tokens)\n` +
+        `   <i>Note: Opus 4.7 ignores thinking-keyword controls.</i>\n` +
         `• Send photos, voice messages, or documents\n` +
         `• Multiple photos = album (auto-grouped)`,
       { parse_mode: "HTML" }

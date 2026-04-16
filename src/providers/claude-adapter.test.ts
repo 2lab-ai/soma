@@ -22,7 +22,7 @@ function createInput(queryId: string) {
       threadId: "thread-1",
     }),
     prompt: "hello",
-    modelId: "claude-opus-4-6",
+    modelId: "claude-opus-4-7",
     workingDirectory: "/tmp",
   };
 }
@@ -232,6 +232,83 @@ describe("ClaudeProviderAdapter", () => {
     expect(doneEvent).toBeDefined();
     expect(doneEvent!.reason).toBe("completed");
     expect((doneEvent as any).errorMessage).toBeUndefined();
+  });
+
+  test("Opus 4.7: forwards SDK options without maxThinkingTokens (adaptive + xhigh)", async () => {
+    const recorded: Array<{ prompt: string; options: unknown }> = [];
+
+    const queryFactory = (payload: { prompt: string; options: unknown }) => {
+      recorded.push(payload);
+      return toAsyncGenerator([
+        {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "ok",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          num_turns: 1,
+          total_cost_usd: 0,
+          usage: { inputTokens: 0, outputTokens: 0 },
+          modelUsage: {},
+          permission_denials: [],
+          session_id: "s",
+        } as unknown as SDKMessage,
+      ]);
+    };
+
+    const adapter = new ClaudeProviderAdapter(queryFactory as any);
+    const handle = await adapter.startQuery({
+      ...createInput("opus-4-7-wiring"),
+      modelId: "claude-opus-4-7",
+      maxThinkingTokens: 50000,
+    } as any);
+    await adapter.streamEvents(handle, () => {});
+
+    expect(recorded.length).toBe(1);
+    const opts = recorded[0]!.options as Record<string, unknown>;
+    expect(opts.model).toBe("claude-opus-4-7");
+    expect(opts.maxThinkingTokens).toBeUndefined();
+    expect(opts.thinking).toEqual({ type: "adaptive" });
+    expect(opts.effort).toBe("xhigh");
+  });
+
+  test("Sonnet 4.5: forwards maxThinkingTokens without adaptive override", async () => {
+    const recorded: Array<{ prompt: string; options: unknown }> = [];
+
+    const queryFactory = (payload: { prompt: string; options: unknown }) => {
+      recorded.push(payload);
+      return toAsyncGenerator([
+        {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "ok",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          num_turns: 1,
+          total_cost_usd: 0,
+          usage: { inputTokens: 0, outputTokens: 0 },
+          modelUsage: {},
+          permission_denials: [],
+          session_id: "s",
+        } as unknown as SDKMessage,
+      ]);
+    };
+
+    const adapter = new ClaudeProviderAdapter(queryFactory as any);
+    const handle = await adapter.startQuery({
+      ...createInput("sonnet-passthrough"),
+      modelId: "claude-sonnet-4-5-20250929",
+      maxThinkingTokens: 50000,
+    } as any);
+    await adapter.streamEvents(handle, () => {});
+
+    const opts = recorded[0]!.options as Record<string, unknown>;
+    expect(opts.model).toBe("claude-sonnet-4-5-20250929");
+    expect(opts.maxThinkingTokens).toBe(50000);
+    expect(opts.thinking).toBeUndefined();
+    expect(opts.effort).toBeUndefined();
   });
 
   test("emits normalized rate-limit and failed done events on provider error", async () => {
