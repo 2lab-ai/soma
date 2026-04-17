@@ -1,3 +1,5 @@
+import type { ModelId } from "../config/model";
+
 // Session persistence data
 export interface SessionData {
   session_id: string;
@@ -16,6 +18,9 @@ export interface SessionData {
   totalOutputTokens?: number;
   totalQueries?: number;
   sessionStartTime?: string;
+  // Model the persisted sessionId was created with — used to detect cross-model
+  // resume after bot restart (SDK invariant violation, issue #61).
+  lastUsedModel?: ModelId;
 }
 
 // Token usage from Claude

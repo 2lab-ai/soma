@@ -8,6 +8,7 @@ import {
 } from "fs";
 import type { SessionData } from "../../types/session";
 import type { ClaudeSession } from "./session";
+import { serializeSessionData } from "./session-serialize";
 
 export const SESSIONS_DIR = "/tmp/soma-sessions";
 
@@ -48,17 +49,7 @@ export function saveSession(
 
   try {
     ensureSessionsDir(sessionsDir);
-    const data: SessionData = {
-      session_id: session.sessionId,
-      saved_at: new Date().toISOString(),
-      working_dir: session.workingDir,
-      contextWindowUsage: session.contextWindowUsage,
-      contextWindowSize: session.contextWindowSize,
-      totalInputTokens: session.totalInputTokens,
-      totalOutputTokens: session.totalOutputTokens,
-      totalQueries: session.totalQueries,
-      sessionStartTime: session.sessionStartTime?.toISOString(),
-    };
+    const data = serializeSessionData(session);
     writeFileSync(getSessionFilePath(key, sessionsDir), JSON.stringify(data), "utf-8");
   } catch (error) {
     console.warn(`[SessionStore] Failed to save session ${key}: ${error}`);
@@ -75,7 +66,16 @@ export function loadSession(
   }
 
   try {
-    return JSON.parse(readFileSync(filePath, "utf-8")) as SessionData;
+    const data = JSON.parse(readFileSync(filePath, "utf-8")) as SessionData;
+    // Pre-v2 sessions were saved without lastUsedModel. Warn once per load so
+    // operators can see how many legacy sessions are still in the wild after
+    // PR #60 (Opus 4.6 → 4.7). Harmless — model is set on first query.
+    if (data.lastUsedModel === undefined) {
+      console.warn(
+        `[SESSION-MIGRATION] pre-v2 session loaded for ${key} — model field absent, will be set on first query`
+      );
+    }
+    return data;
   } catch (error) {
     console.warn(`[SessionStore] Failed to load session ${key}: ${error}`);
     return null;
