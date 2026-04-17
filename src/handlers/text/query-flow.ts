@@ -493,8 +493,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             textMessageCount: state.textMessages.size,
             toolMessageCount: state.toolMessages.length,
             transcriptPath,
-            lastUsedModel: (session as unknown as { lastUsedModel?: string | null })
-              .lastUsedModel,
+            lastUsedModel: session.getLastUsedModel(),
             rawError: errorStr.slice(0, 500),
           });
           performToolInvariantRecovery(session, transcriptPath);
