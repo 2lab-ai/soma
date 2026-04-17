@@ -10,6 +10,7 @@ import {
   NATIVE_STREAMING_THROTTLE_MS,
 } from "../../config";
 import {
+  AVAILABLE_MODELS,
   getModelForContext,
   MODEL_DISPLAY_NAMES,
   type ConfigContext,
@@ -71,12 +72,21 @@ import {
   createQueryRuntimeHooks,
   executeQueryRuntime,
 } from "./query-runtime";
+import { serializeSessionData } from "./session-serialize";
 import type { McpServerConfig, McpStdioConfig } from "../../types";
 
 export type { ActivityState, QueryState } from "./state-machine";
 
 const initialRuntimeState = createInitialSessionRuntimeState();
 const SESSIONS_DIR = "/tmp/soma-sessions";
+
+// Validate persisted lastUsedModel — drop unknown or migrated-away IDs rather
+// than resuming an SDK session bound to a model we no longer recognize.
+function parseLastUsedModel(raw: unknown): ModelId | null {
+  if (typeof raw !== "string") return null;
+  if (!(AVAILABLE_MODELS as readonly string[]).includes(raw)) return null;
+  return raw as ModelId;
+}
 
 export class ClaudeSession {
   readonly sessionKey: string;
@@ -161,6 +171,14 @@ export class ClaudeSession {
   // model changes (via /model or temporaryModelOverride) and force a
   // new session instead of resuming one bound to a different model.
   private lastUsedModel: ModelId | null = null;
+
+  public setLastUsedModel(model: ModelId): void {
+    this.lastUsedModel = model;
+  }
+
+  public getLastUsedModel(): ModelId | null {
+    return this.lastUsedModel;
+  }
 
   // Rate limit fallback state
   temporaryModelOverride: ModelId | null = null;
@@ -1150,6 +1168,7 @@ export class ClaudeSession {
     // These must come fresh from SDK context events to prevent stale % calculations.
     this.actualContextUsed = null;
     this.actualContextMax = null;
+    this.lastUsedModel = parseLastUsedModel(data.lastUsedModel);
     return { count: lostMessages.length, messages: lostMessages };
   }
 
@@ -1257,17 +1276,7 @@ export class ClaudeSession {
     if (!this.sessionId) return;
 
     try {
-      const data: SessionData = {
-        session_id: this.sessionId,
-        saved_at: new Date().toISOString(),
-        working_dir: this.workingDir,
-        contextWindowUsage: this.contextWindowUsage,
-        contextWindowSize: this.contextWindowSize,
-        totalInputTokens: this.totalInputTokens,
-        totalOutputTokens: this.totalOutputTokens,
-        totalQueries: this.totalQueries,
-        sessionStartTime: this.sessionStartTime?.toISOString(),
-      };
+      const data = serializeSessionData(this);
 
       if (!existsSync(SESSIONS_DIR)) {
         mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -1309,6 +1318,7 @@ export class ClaudeSession {
       // Do NOT restore actualContextUsed/Max — must come fresh from SDK
       this.actualContextUsed = null;
       this.actualContextMax = null;
+      this.lastUsedModel = parseLastUsedModel(data.lastUsedModel);
 
       const contextTokens = this.totalInputTokens + this.totalOutputTokens;
       console.log(

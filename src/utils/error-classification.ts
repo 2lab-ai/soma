@@ -170,6 +170,22 @@ export function isSdkResumeError(error: unknown): boolean {
 }
 
 /**
+ * Check if an error is a tool-use invariant violation from a broken transcript on resume.
+ * Kept separate from isSdkResumeError so the recovery branch only fires on the
+ * narrow "resume found stale tool_use without matching tool_result" case and
+ * not on PreToolUse-block ordering issues that share no recovery path.
+ */
+export function isToolUseInvariantError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("tool use concurrency") ||
+    lower.includes("tool_use ids were found without tool_result") ||
+    (lower.includes("tool_use_id") && lower.includes("tool_result"))
+  );
+}
+
+/**
  * Handle abort errors consistently across handlers
  * Checks if error is an abort, consumes interrupt flag, and optionally shows "Query stopped"
  * @returns true if error was handled as abort, false otherwise

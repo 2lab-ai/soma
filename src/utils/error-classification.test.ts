@@ -4,6 +4,7 @@ import {
   isSonnetAvailable,
   isAbortError,
   isSdkResumeError,
+  isToolUseInvariantError,
   extractErrorDetails,
   formatErrorForUser,
   formatErrorForLog,
@@ -205,6 +206,51 @@ describe("isSdkResumeError (soma-eisdir-resume)", () => {
     expect(isSdkResumeError("EISDIR: some error")).toBe(true);
     expect(isSdkResumeError("unrelated string")).toBe(false);
     expect(isSdkResumeError(null)).toBe(false);
+  });
+});
+
+describe("isToolUseInvariantError (issue #61)", () => {
+  test("detects 'tool use concurrency'", () => {
+    expect(
+      isToolUseInvariantError(
+        new Error("API Error: 400 due to tool use concurrency issues. Retryable: false")
+      )
+    ).toBe(true);
+  });
+
+  test("detects 'tool_use ids were found without tool_result'", () => {
+    expect(
+      isToolUseInvariantError(
+        new Error("messages: tool_use ids were found without tool_result blocks")
+      )
+    ).toBe(true);
+  });
+
+  test("detects co-occurrence of tool_use_id and tool_result", () => {
+    expect(
+      isToolUseInvariantError(
+        new Error("Each tool_use_id must have a matching tool_result")
+      )
+    ).toBe(true);
+  });
+
+  test("does not match tool_use_id alone", () => {
+    expect(isToolUseInvariantError(new Error("invalid tool_use_id format"))).toBe(false);
+  });
+
+  test("does not match tool_result alone", () => {
+    expect(isToolUseInvariantError(new Error("missing tool_result content"))).toBe(false);
+  });
+
+  test("does not match unrelated errors", () => {
+    expect(isToolUseInvariantError(new Error("429 rate limit exceeded"))).toBe(false);
+    expect(isToolUseInvariantError(new Error("EISDIR: directory error"))).toBe(false);
+  });
+
+  test("handles non-Error values", () => {
+    expect(isToolUseInvariantError("tool use concurrency detected")).toBe(true);
+    expect(isToolUseInvariantError("unrelated string")).toBe(false);
+    expect(isToolUseInvariantError(null)).toBe(false);
   });
 });
 
