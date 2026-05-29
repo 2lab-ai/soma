@@ -18,6 +18,7 @@ import {
 } from "../core/session/choice-flow";
 import {
   getCurrentConfig,
+  isOpusFamily,
   updateContextModel,
   MODEL_DISPLAY_NAMES,
   AVAILABLE_MODELS,
@@ -311,9 +312,9 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
 
       const keyboard = new InlineKeyboard();
 
-      // Opus 4.7 ignores per-context reasoning: it always runs adaptive
+      // Opus 4.x ignores per-context reasoning: it always runs adaptive
       // thinking + xhigh effort. Persist xhigh and skip the chooser.
-      if (modelId === "claude-opus-4-7") {
+      if (isOpusFamily(modelId)) {
         keyboard
           .text(
             "Save (xhigh)",
@@ -402,11 +403,11 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       const cronReasoning =
         config.contexts.cron?.reasoning || config.defaults.reasoning;
 
-      // Opus 4.7 always runs adaptive thinking + xhigh effort regardless of
+      // Opus 4.x always runs adaptive thinking + xhigh effort regardless of
       // the persisted reasoning level. Render that fact instead of a token
       // budget so the UI matches actual SDK behavior.
       const reasoningSummary = (model: ModelId, reasoning: ReasoningLevel): string =>
-        model === "claude-opus-4-7"
+        isOpusFamily(model)
           ? `adaptive + xhigh (fixed)`
           : `${reasoning}, ${REASONING_TOKENS[reasoning]} tokens`;
 
