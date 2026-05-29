@@ -3,6 +3,7 @@ import { InlineKeyboard } from "grammy";
 import {
   ensureConfigExists,
   getCurrentConfig,
+  isOpusFamily,
   MODEL_DISPLAY_NAMES,
   REASONING_TOKENS,
   type ModelId,
@@ -301,9 +302,9 @@ export async function handleModel(ctx: Context): Promise<void> {
     const cronModel = config.contexts.cron?.model || config.defaults.model;
     const cronReasoning = config.contexts.cron?.reasoning || config.defaults.reasoning;
 
-    // Opus 4.7 ignores per-context reasoning (always adaptive + xhigh).
+    // Opus 4.x ignores per-context reasoning (always adaptive + xhigh).
     const reasoningSummary = (model: ModelId, reasoning: ReasoningLevel): string =>
-      model === "claude-opus-4-7"
+      isOpusFamily(model)
         ? `adaptive + xhigh (fixed)`
         : `${reasoning}, ${REASONING_TOKENS[reasoning]} tokens`;
 
