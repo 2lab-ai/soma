@@ -33,8 +33,11 @@ describe("opus-4.8 — release wiring", () => {
     expect(AVAILABLE_MODELS as readonly string[]).toContain("claude-opus-4-8");
   });
 
-  test("DEFAULT_MODEL is claude-opus-4-8 (latest opus)", () => {
-    expect(DEFAULT_MODEL).toBe("claude-opus-4-8");
+  test("DEFAULT_MODEL is the latest opus (1M variant — see opus-4-8-1m.test.ts)", () => {
+    // The exact literal lives in opus-4-8-1m.test.ts. Here we only assert
+    // the default is *some* claude-opus-4-* id so the "latest opus" contract
+    // survives every future generation bump without editing this file.
+    expect(isOpusFamily(DEFAULT_MODEL)).toBe(true);
   });
 
   test("MODEL_DISPLAY_NAMES carries an Opus 4.8 label", () => {

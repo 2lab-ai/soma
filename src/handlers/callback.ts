@@ -27,6 +27,7 @@ import {
   type ModelId,
   type ReasoningLevel,
 } from "../config/model";
+import { decodeModelId, encodeModelId } from "./model-callback-id";
 import { skillsRegistry } from "../services/skills-registry";
 import { ChatSearchService } from "../services/chat-search-service";
 import { FileChatStorage } from "../storage/chat-storage";
@@ -287,7 +288,7 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
         keyboard
           .text(
             `${displayName}${current}`,
-            `model:model:${context}:${modelId.split("-")[1]}`
+            `model:model:${context}:${encodeModelId(modelId)}`
           )
           .row();
       }
@@ -304,8 +305,14 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
     } else if (action === "model") {
       // Model selection - show reasoning selection
       const context = parts[2] as ConfigContext;
-      const modelShort = parts[3] || ""; // "opus", "sonnet", "haiku"
-      const modelId = AVAILABLE_MODELS.find((m) => m.includes(modelShort))!;
+      const modelShort = parts[3] || "";
+      const modelId = decodeModelId(modelShort);
+      if (!modelId) {
+        await ctx.answerCallbackQuery({
+          text: "This selection is no longer valid (the menu may have been replaced). Re-open /model.",
+        });
+        return;
+      }
       const config = getCurrentConfig();
       const currentReasoning =
         config.contexts[context]?.reasoning || config.defaults.reasoning;
@@ -371,7 +378,13 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       const context = parts[2] as ConfigContext;
       const modelShort = parts[3] || "";
       const reasoning = parts[4] as ReasoningLevel;
-      const modelId = AVAILABLE_MODELS.find((m) => m.includes(modelShort))!;
+      const modelId = decodeModelId(modelShort);
+      if (!modelId) {
+        await ctx.answerCallbackQuery({
+          text: "This selection is no longer valid (the menu may have been replaced). Re-open /model.",
+        });
+        return;
+      }
 
       await updateContextModel(context, modelId, reasoning);
 

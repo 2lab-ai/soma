@@ -10,6 +10,7 @@ import { parse, stringify } from "yaml";
 
 export const AVAILABLE_MODELS = [
   "claude-sonnet-4-5-20250929",
+  "claude-opus-4-8[1m]",
   "claude-opus-4-8",
   "claude-opus-4-7",
   "claude-haiku-4-5-20251001",
@@ -19,15 +20,19 @@ export type ModelId = (typeof AVAILABLE_MODELS)[number];
 
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
   "claude-sonnet-4-5-20250929": "Sonnet 4.5",
+  "claude-opus-4-8[1m]": "Opus 4.8 (1M)",
   "claude-opus-4-8": "Opus 4.8",
   "claude-opus-4-7": "Opus 4.7",
   "claude-haiku-4-5-20251001": "Haiku 4.5",
 };
 
-// DEFAULT_MODEL follows "latest opus" — when a new opus generation lands,
+// DEFAULT_MODEL follows "latest opus + 1M". When a new opus generation lands,
 // add it to AVAILABLE_MODELS + MODEL_DISPLAY_NAMES and flip this constant.
-// 4.7 stays in AVAILABLE_MODELS so users who chose 4.7 explicitly keep it.
-export const DEFAULT_MODEL: ModelId = "claude-opus-4-8";
+// The `[1m]` suffix is stripped by claude-agent-sdk before the API call and
+// signalled to the server via the `context-1m-2025-08-07` beta header; the
+// suffix-bearing id stays the user-facing convention so the Telegram model
+// menu can offer 1M as a distinct selectable variant.
+export const DEFAULT_MODEL: ModelId = "claude-opus-4-8[1m]";
 
 /**
  * Predicate for the Claude Opus 4.x family. Captures the contract that
