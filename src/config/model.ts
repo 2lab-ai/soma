@@ -10,6 +10,7 @@ import { parse, stringify } from "yaml";
 
 export const AVAILABLE_MODELS = [
   "claude-sonnet-4-5-20250929",
+  "claude-opus-4-8",
   "claude-opus-4-7",
   "claude-haiku-4-5-20251001",
 ] as const;
@@ -18,15 +19,35 @@ export type ModelId = (typeof AVAILABLE_MODELS)[number];
 
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
   "claude-sonnet-4-5-20250929": "Sonnet 4.5",
+  "claude-opus-4-8": "Opus 4.8",
   "claude-opus-4-7": "Opus 4.7",
   "claude-haiku-4-5-20251001": "Haiku 4.5",
 };
 
-export const DEFAULT_MODEL: ModelId = "claude-opus-4-7";
+// DEFAULT_MODEL follows "latest opus" — when a new opus generation lands,
+// add it to AVAILABLE_MODELS + MODEL_DISPLAY_NAMES and flip this constant.
+// 4.7 stays in AVAILABLE_MODELS so users who chose 4.7 explicitly keep it.
+export const DEFAULT_MODEL: ModelId = "claude-opus-4-8";
+
+/**
+ * Predicate for the Claude Opus 4.x family. Captures the contract that
+ * any opus-4.x model uses adaptive thinking + xhigh effort and ignores
+ * the per-context reasoning-token budget at the SDK layer. Single source
+ * of truth for the branch logic that was previously inlined as
+ * `=== "claude-opus-4-7"` at four call sites (claude-options,
+ * normalizeConfig, callback.ts ×2, usage-commands).
+ */
+export function isOpusFamily(model: string): boolean {
+  return model.startsWith("claude-opus-4-");
+}
 
 /**
  * Maps deprecated/legacy model IDs to their replacement.
  * Used by `normalizeConfig` to auto-upgrade persisted yaml on load.
+ *
+ * 4.7 → 4.8 is NOT migrated here: an explicit Opus 4.7 selection is a
+ * user choice and we don't silently roll it forward. Only the default
+ * (DEFAULT_MODEL above) follows "latest opus".
  */
 const MODEL_MIGRATIONS: Record<string, ModelId> = {
   "claude-opus-4-6": "claude-opus-4-7",
@@ -82,7 +103,7 @@ function getDefaultConfig(): ModelConfig {
     },
     contexts: {
       general: {
-        model: "claude-opus-4-7",
+        model: DEFAULT_MODEL,
         reasoning: "high",
       },
       summary: {
@@ -100,9 +121,10 @@ function getDefaultConfig(): ModelConfig {
 /**
  * Walks `defaults.model` and every `contexts.*.model`, upgrading any model ID
  * present in `MODEL_MIGRATIONS` to its replacement. For any context that
- * resolves to `claude-opus-4-7`, coerces `reasoning` to `"xhigh"` (Opus 4.7
- * uses adaptive thinking + xhigh effort; per-context reasoning is ignored at
- * the SDK layer, so persist a value that matches actual behavior).
+ * resolves to an Opus 4.x model (4.7 / 4.8 / …), coerces `reasoning` to
+ * `"xhigh"` — that family uses adaptive thinking + xhigh effort and ignores
+ * the per-context reasoning-token budget at the SDK layer, so we persist a
+ * value that matches actual behavior.
  *
  * Returns `changed: true` if any field was modified so callers can persist.
  */
@@ -137,7 +159,7 @@ export function normalizeConfig(config: ModelConfig): {
       }
     }
     const resolved = updated.model ?? next.defaults.model;
-    if (resolved === "claude-opus-4-7" && updated.reasoning !== "xhigh") {
+    if (isOpusFamily(resolved) && updated.reasoning !== "xhigh") {
       updated.reasoning = "xhigh";
       touched = true;
     }
