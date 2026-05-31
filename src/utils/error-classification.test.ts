@@ -5,6 +5,7 @@ import {
   isAbortError,
   isSdkResumeError,
   isToolUseInvariantError,
+  isThinkingBlockInvariantError,
   extractErrorDetails,
   formatErrorForUser,
   formatErrorForLog,
@@ -251,6 +252,73 @@ describe("isToolUseInvariantError (issue #61)", () => {
     expect(isToolUseInvariantError("tool use concurrency detected")).toBe(true);
     expect(isToolUseInvariantError("unrelated string")).toBe(false);
     expect(isToolUseInvariantError(null)).toBe(false);
+  });
+
+  test("does NOT match thinking-block invariant (separate predicate)", () => {
+    expect(
+      isToolUseInvariantError(
+        new Error(
+          "messages.1.content.23: `thinking` or `redacted_thinking` blocks must be the first content block"
+        )
+      )
+    ).toBe(false);
+  });
+});
+
+describe("isThinkingBlockInvariantError (poisoned-resume on model flip)", () => {
+  test("detects the real Anthropic 400 ordering error (Found `text`)", () => {
+    expect(
+      isThinkingBlockInvariantError(
+        new Error(
+          'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.23: `thinking` or `redacted_thinking` blocks must be the first content block. Found `text`."}}'
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("detects the modification variant (cannot be modified)", () => {
+    expect(
+      isThinkingBlockInvariantError(
+        new Error(
+          "`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified. These blocks must remain as they were in the original response."
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("detects when wrapped in NormalizedProviderError-style message", () => {
+    expect(
+      isThinkingBlockInvariantError(
+        new Error(
+          "NormalizedProviderError: SDK result error (success): API Error: 400 ... messages.1.content.23: `thinking` or `redacted_thinking` blocks ..."
+        )
+      )
+    ).toBe(true);
+  });
+
+  test("does NOT match tool-use invariant errors", () => {
+    expect(
+      isThinkingBlockInvariantError(
+        new Error("messages: tool_use ids were found without tool_result blocks")
+      )
+    ).toBe(false);
+  });
+
+  test("does NOT match unrelated errors", () => {
+    expect(isThinkingBlockInvariantError(new Error("429 rate limit exceeded"))).toBe(false);
+    expect(isThinkingBlockInvariantError(new Error("EISDIR: directory error"))).toBe(false);
+    // Bare "thinking" mention without redacted_thinking must not false-positive.
+    expect(
+      isThinkingBlockInvariantError(new Error("the model is still thinking, please wait"))
+    ).toBe(false);
+  });
+
+  test("handles non-Error values", () => {
+    expect(
+      isThinkingBlockInvariantError("`redacted_thinking` blocks must be first")
+    ).toBe(true);
+    expect(isThinkingBlockInvariantError("unrelated string")).toBe(false);
+    expect(isThinkingBlockInvariantError(null)).toBe(false);
   });
 });
 

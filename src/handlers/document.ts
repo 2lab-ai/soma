@@ -7,6 +7,7 @@
 
 import type { Context } from "grammy";
 import { sessionManager } from "../core/session/session-manager";
+import { withPoisonedResumeRecovery } from "./shared/poisoned-resume";
 import { TEMP_DIR } from "../config";
 import {
   type ChatType,
@@ -200,10 +201,14 @@ async function processImageDocuments(
     const statusCallback = await createStatusCallback(ctx, state, session);
 
     try {
-      const response = await session.sendMessageStreaming(
-        addTimestamp(prompt),
-        statusCallback,
-        chatId
+      const response = await withPoisonedResumeRecovery(
+        session,
+        () => session.sendMessageStreaming(addTimestamp(prompt), statusCallback, chatId),
+        {
+          label: "document",
+          canRecover: () =>
+            state.textMessages.size === 0 && state.toolMessages.length === 0,
+        }
       );
 
       await auditLog(userId, username, "DOCUMENT_IMAGE", prompt, response);
@@ -269,10 +274,14 @@ async function processMixedDocumentInputs(
     const statusCallback = await createStatusCallback(ctx, state, session);
 
     try {
-      const response = await session.sendMessageStreaming(
-        addTimestamp(prompt),
-        statusCallback,
-        chatId
+      const response = await withPoisonedResumeRecovery(
+        session,
+        () => session.sendMessageStreaming(addTimestamp(prompt), statusCallback, chatId),
+        {
+          label: "document",
+          canRecover: () =>
+            state.textMessages.size === 0 && state.toolMessages.length === 0,
+        }
       );
 
       await auditLog(userId, username, "DOCUMENT_MIXED", prompt, response);
@@ -483,10 +492,14 @@ ${contentsStr}`;
       // Create streaming callback
       const statusCallback = await createStatusCallback(ctx, state, session);
 
-      const response = await session.sendMessageStreaming(
-        addTimestamp(prompt),
-        statusCallback,
-        chatId
+      const response = await withPoisonedResumeRecovery(
+        session,
+        () => session.sendMessageStreaming(addTimestamp(prompt), statusCallback, chatId),
+        {
+          label: "document",
+          canRecover: () =>
+            state.textMessages.size === 0 && state.toolMessages.length === 0,
+        }
       );
 
       await auditLog(
@@ -600,10 +613,14 @@ ${docList}`;
     const statusCallback = await createStatusCallback(ctx, state);
 
     try {
-      const response = await session.sendMessageStreaming(
-        addTimestamp(prompt),
-        statusCallback,
-        chatId
+      const response = await withPoisonedResumeRecovery(
+        session,
+        () => session.sendMessageStreaming(addTimestamp(prompt), statusCallback, chatId),
+        {
+          label: "document",
+          canRecover: () =>
+            state.textMessages.size === 0 && state.toolMessages.length === 0,
+        }
       );
 
       await auditLog(
