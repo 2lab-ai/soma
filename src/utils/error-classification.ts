@@ -186,6 +186,36 @@ export function isToolUseInvariantError(error: unknown): boolean {
 }
 
 /**
+ * Check if an error is a `thinking`/`redacted_thinking` block invariant
+ * violation from a broken transcript on resume.
+ *
+ * Anthropic's Messages API rejects (400 invalid_request_error) a resumed
+ * assistant turn when a `thinking`/`redacted_thinking` block is not the first
+ * content block, or when a previously-returned thinking block was modified.
+ * It surfaces as e.g. `messages.1.content.23: ` + "`thinking` or " +
+ * "`redacted_thinking` blocks ...".
+ *
+ * This poisons resume the same way isToolUseInvariantError does: it fires
+ * during request validation, before any output streams, so the user is
+ * permanently blocked until the transcript is discarded. Typically appears
+ * after a model flip changes the thinking config (e.g. budget_tokens →
+ * adaptive) under a sessionId whose transcript was written by the old config.
+ *
+ * Kept separate from isToolUseInvariantError so each predicate stays
+ * single-purpose; both funnel into the same poisoned-resume recovery branch.
+ */
+export function isThinkingBlockInvariantError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  const lower = msg.toLowerCase();
+  // `redacted_thinking` is an Anthropic-internal content-block type that never
+  // appears in unrelated prose, so matching it alone is sufficient and stays
+  // robust if Anthropic rewords the message. Deliberately do NOT match the bare
+  // word "thinking" (too common). False-negatives here re-poison the user, so
+  // we favour the broadest reliable signal over extra qualifiers.
+  return lower.includes("redacted_thinking");
+}
+
+/**
  * Handle abort errors consistently across handlers
  * Checks if error is an abort, consumes interrupt flag, and optionally shows "Query stopped"
  * @returns true if error was handled as abort, false otherwise

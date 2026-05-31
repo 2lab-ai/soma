@@ -18,6 +18,7 @@ import {
   isRateLimitError,
   isSdkResumeError,
   isSonnetAvailable,
+  isThinkingBlockInvariantError,
   isToolUseInvariantError,
 } from "../../utils/error-classification";
 import { isReentrancyError } from "./query-flow-guard";
@@ -44,12 +45,22 @@ export interface QueryFlowParams {
 const INTERRUPT_STEERING_MARKER = "[시스템: 인터럽트 후 대기 메시지 처리]";
 
 /**
- * Predicate for the tool-use invariant recovery branch (issue #61).
+ * Predicate for the poisoned-resume recovery branch.
+ *
+ * A "poisoned resume" is a resumed session whose on-disk transcript makes
+ * Anthropic reject the request at validation time (400), before any output
+ * streams — permanently blocking the user until the transcript is discarded.
+ * Two distinct error families share this exact failure + recovery shape:
+ *  - tool-use invariant (issue #61): stale tool_use without matching
+ *    tool_result, typically after a model flip.
+ *  - thinking-block invariant: `thinking`/`redacted_thinking` block not first
+ *    or modified, typically after a flip that changes the thinking config
+ *    (budget_tokens → adaptive) under an old sessionId.
  *
  * Recovery fires ONLY when ALL four conditions hold:
- *  1. The error matches the tool-use invariant signature.
+ *  1. The error matches one of the poisoned-resume signatures.
  *  2. The failing call was a resume (sessionIdAtStart !== null) — fresh
- *     sessions can't produce stale tool_use blocks.
+ *     sessions can't produce a stale transcript.
  *  3. Nothing was streamed to the user yet (no text or tool messages).
  *     Mid-stream PreToolUse-block ordering issues are intentionally excluded.
  *  4. We still have retry budget left.
@@ -57,14 +68,15 @@ const INTERRUPT_STEERING_MARKER = "[시스템: 인터럽트 후 대기 메시지
  * Extracted to a pure function so regression tests can exercise each
  * false-positive guard independently without simulating the full query path.
  */
-export function shouldRecoverFromToolInvariantError(
+export function shouldRecoverFromPoisonedResumeError(
   error: unknown,
   sessionIdAtStart: string | null,
   state: Pick<StreamingState, "textMessages" | "toolMessages">,
   attempt: number,
   maxRetries: number
 ): boolean {
-  if (!isToolUseInvariantError(error)) return false;
+  if (!isToolUseInvariantError(error) && !isThinkingBlockInvariantError(error))
+    return false;
   if (sessionIdAtStart === null) return false;
   if (state.textMessages.size !== 0) return false;
   if (state.toolMessages.length !== 0) return false;
@@ -73,7 +85,7 @@ export function shouldRecoverFromToolInvariantError(
 }
 
 /**
- * Disk + in-memory cleanup for the tool-use invariant recovery branch.
+ * Disk + in-memory cleanup for the poisoned-resume recovery branch.
  *
  * - Deletes the on-disk session file via `unlinkSync` (ENOENT is silent —
  *   see R2 recovery taxonomy: missing file is not an error).
@@ -82,7 +94,7 @@ export function shouldRecoverFromToolInvariantError(
  * Extracted to a pure function so regression tests can verify disk cleanup
  * and sessionId reset without driving the whole query flow.
  */
-export function performToolInvariantRecovery(
+export function performPoisonedResumeRecovery(
   session: ClaudeSession,
   transcriptPath: string
 ): void {
@@ -90,7 +102,7 @@ export function performToolInvariantRecovery(
     unlinkSync(transcriptPath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.warn("[TOOL-INVARIANT-RECOVERY] unlink failed:", err);
+      console.warn("[POISONED-RESUME-RECOVERY] unlink failed:", err);
     }
   }
   session.sessionId = null;
@@ -125,7 +137,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
     let recoveryNoticePending = false;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      // Capture sessionId BEFORE the query so the tool-use-invariant recovery
+      // Capture sessionId BEFORE the query so the poisoned-resume recovery
       // branch can tell whether the failing call was a resume vs. a fresh session.
       const sessionIdAtStart = session.sessionId;
 
@@ -147,7 +159,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           recoveryNoticePending = false;
           try {
             await sendSystemMessage(ctx, "🔄 세션 자동 복구됨");
-          } catch (e) { console.warn("[TOOL-INVARIANT-RECOVERY] notice failed:", e); }
+          } catch (e) { console.warn("[POISONED-RESUME-RECOVERY] notice failed:", e); }
         }
 
         if (!isInterruptDrain) {
@@ -473,11 +485,14 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           continue;
         }
 
-        // Auto-recover from tool-use invariant violations on resume (issue #61).
-        // See shouldRecoverFromToolInvariantError for the 4-AND guard rationale
-        // and performToolInvariantRecovery for the disk+memory cleanup.
+        // Auto-recover from poisoned-resume 400s: a resumed transcript that
+        // Anthropic rejects at validation time before any output. Covers both
+        // the tool-use invariant (issue #61) and the thinking/redacted_thinking
+        // block invariant. See shouldRecoverFromPoisonedResumeError for the
+        // 4-AND guard and performPoisonedResumeRecovery for the disk+memory
+        // cleanup.
         if (
-          shouldRecoverFromToolInvariantError(
+          shouldRecoverFromPoisonedResumeError(
             error,
             sessionIdAtStart,
             state,
@@ -486,17 +501,19 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           )
         ) {
           const transcriptPath = getSessionFilePath(session.sessionKey);
-          console.error("[TOOL-INVARIANT-RECOVERY]", {
+          console.error("[POISONED-RESUME-RECOVERY]", {
             sessionId: sessionIdAtStart,
             resumeWasUsed: true,
             noOutputBeforeError: true,
+            isToolUseInvariant: isToolUseInvariantError(error),
+            isThinkingBlockInvariant: isThinkingBlockInvariantError(error),
             textMessageCount: state.textMessages.size,
             toolMessageCount: state.toolMessages.length,
             transcriptPath,
             lastUsedModel: session.getLastUsedModel(),
             rawError: errorStr.slice(0, 500),
           });
-          performToolInvariantRecovery(session, transcriptPath);
+          performPoisonedResumeRecovery(session, transcriptPath);
           cleanupToolMessages(ctx, state.toolMessages);
           state.cleanup();
           state = new StreamingState();

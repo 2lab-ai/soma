@@ -1,6 +1,7 @@
 /**
- * P3-B + P3-C regression tests for the tool-use-invariant recovery branch
- * (issue #61).
+ * P3-B + P3-C regression tests for the poisoned-resume recovery branch.
+ * Covers two error families that share the branch: the tool-use invariant
+ * (issue #61) and the thinking/redacted_thinking block invariant.
  *
  * P3-B: false-positive guards — each arm of the 4-AND predicate must
  *       reject recovery independently.
@@ -8,9 +9,9 @@
  *       tolerate ENOENT silently.
  *
  * The recovery logic is refactored into two exported pure functions:
- *  - shouldRecoverFromToolInvariantError(error, sessionIdAtStart, state,
+ *  - shouldRecoverFromPoisonedResumeError(error, sessionIdAtStart, state,
  *      attempt, maxRetries) — the 4-AND predicate.
- *  - performToolInvariantRecovery(session, transcriptPath) — disk + memory
+ *  - performPoisonedResumeRecovery(session, transcriptPath) — disk + memory
  *      cleanup (unlink + sessionId = null).
  *
  * Both are called from the single production branch in runQueryFlow, so
@@ -25,8 +26,8 @@ import { ClaudeSession } from "../../core/session/session";
 import { getSessionFilePath } from "../../core/session/session-store";
 import { StreamingState } from "../streaming";
 import {
-  performToolInvariantRecovery,
-  shouldRecoverFromToolInvariantError,
+  performPoisonedResumeRecovery,
+  shouldRecoverFromPoisonedResumeError,
 } from "./query-flow";
 
 const MAX_RETRIES = 1;
@@ -36,6 +37,23 @@ const TOOL_USE_INVARIANT_ERRORS: readonly Error[] = [
   new Error("API Error: 400 due to tool use concurrency issues. Retryable: false"),
   new Error("messages: tool_use ids were found without tool_result blocks"),
   new Error("Each tool_use_id must have a matching tool_result"),
+];
+
+// Realistic thinking/redacted_thinking block invariant 400s seen after a model
+// flip changes the thinking config under an old sessionId — the second
+// poisoned-resume family that shares the tool-use recovery path.
+const THINKING_BLOCK_INVARIANT_ERRORS: readonly Error[] = [
+  new Error(
+    'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.23: `thinking` or `redacted_thinking` blocks must be the first content block. Found `text`."}}'
+  ),
+  new Error(
+    "`thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified."
+  ),
+];
+
+const POISONED_RESUME_ERRORS: readonly Error[] = [
+  ...TOOL_USE_INVARIANT_ERRORS,
+  ...THINKING_BLOCK_INVARIANT_ERRORS,
 ];
 
 const FAKE_RESUMED_SESSION_ID = "fake-resumed-session-id";
@@ -60,12 +78,12 @@ function makeEmptyState(): StreamingState {
 
 // ─── P3-B: false-positive guards ──────────────────────────────────────
 
-describe("P3-B: shouldRecoverFromToolInvariantError false-positive guards (issue #61)", () => {
+describe("P3-B: shouldRecoverFromPoisonedResumeError false-positive guards (issue #61)", () => {
   test("happy path: all 4 conditions met → returns true", () => {
     const state = makeEmptyState();
-    for (const error of TOOL_USE_INVARIANT_ERRORS) {
+    for (const error of POISONED_RESUME_ERRORS) {
       expect(
-        shouldRecoverFromToolInvariantError(
+        shouldRecoverFromPoisonedResumeError(
           error,
           FAKE_RESUMED_SESSION_ID,
           state,
@@ -78,9 +96,9 @@ describe("P3-B: shouldRecoverFromToolInvariantError false-positive guards (issue
 
   test("Test 1: sessionIdAtStart === null → recovery must NOT fire", () => {
     const state = makeEmptyState();
-    for (const error of TOOL_USE_INVARIANT_ERRORS) {
+    for (const error of POISONED_RESUME_ERRORS) {
       expect(
-        shouldRecoverFromToolInvariantError(
+        shouldRecoverFromPoisonedResumeError(
           error,
           null, // R1: fresh session, not a resume → can't be stale tool_use from disk
           state,
@@ -97,9 +115,9 @@ describe("P3-B: shouldRecoverFromToolInvariantError false-positive guards (issue
     state.textMessages.set(1, { message_id: 42 } as never);
     expect(state.textMessages.size).toBeGreaterThan(0);
 
-    for (const error of TOOL_USE_INVARIANT_ERRORS) {
+    for (const error of POISONED_RESUME_ERRORS) {
       expect(
-        shouldRecoverFromToolInvariantError(
+        shouldRecoverFromPoisonedResumeError(
           error,
           FAKE_RESUMED_SESSION_ID,
           state,
@@ -115,9 +133,9 @@ describe("P3-B: shouldRecoverFromToolInvariantError false-positive guards (issue
     state.toolMessages.push({ message_id: 100 } as never);
     expect(state.toolMessages.length).toBeGreaterThan(0);
 
-    for (const error of TOOL_USE_INVARIANT_ERRORS) {
+    for (const error of POISONED_RESUME_ERRORS) {
       expect(
-        shouldRecoverFromToolInvariantError(
+        shouldRecoverFromPoisonedResumeError(
           error,
           FAKE_RESUMED_SESSION_ID,
           state,
@@ -131,7 +149,7 @@ describe("P3-B: shouldRecoverFromToolInvariantError false-positive guards (issue
   test("retry budget exhausted (attempt >= maxRetries) → recovery must NOT fire", () => {
     const state = makeEmptyState();
     expect(
-      shouldRecoverFromToolInvariantError(
+      shouldRecoverFromPoisonedResumeError(
         TOOL_USE_INVARIANT_ERRORS[0]!,
         FAKE_RESUMED_SESSION_ID,
         state,
@@ -141,17 +159,19 @@ describe("P3-B: shouldRecoverFromToolInvariantError false-positive guards (issue
     ).toBe(false);
   });
 
-  test("error that is not a tool-use invariant → recovery must NOT fire", () => {
+  test("error that is not a poisoned-resume invariant → recovery must NOT fire", () => {
     const state = makeEmptyState();
     const unrelatedErrors: Error[] = [
       new Error("429 rate limit exceeded"),
       new Error("EISDIR: directory error"),
       new Error("exited with code 1"),
       new Error("operation aborted"),
+      // Bare "thinking" mention without redacted_thinking must not fire.
+      new Error("the model is still thinking, please wait"),
     ];
     for (const error of unrelatedErrors) {
       expect(
-        shouldRecoverFromToolInvariantError(
+        shouldRecoverFromPoisonedResumeError(
           error,
           FAKE_RESUMED_SESSION_ID,
           state,
@@ -165,7 +185,7 @@ describe("P3-B: shouldRecoverFromToolInvariantError false-positive guards (issue
 
 // ─── P3-C: disk cleanup ───────────────────────────────────────────────
 
-describe("P3-C: performToolInvariantRecovery disk cleanup (issue #61)", () => {
+describe("P3-C: performPoisonedResumeRecovery disk cleanup (issue #61)", () => {
   test("Test 1: existing transcript .json is unlinked + sessionId cleared", async () => {
     const dir = await createTempDir();
     const sessionKey = "default:980000300:p3c-exists";
@@ -183,7 +203,7 @@ describe("P3-C: performToolInvariantRecovery disk cleanup (issue #61)", () => {
     const session = new ClaudeSession(sessionKey);
     session.sessionId = FAKE_RESUMED_SESSION_ID;
 
-    performToolInvariantRecovery(session, transcriptPath);
+    performPoisonedResumeRecovery(session, transcriptPath);
 
     expect(existsSync(transcriptPath)).toBe(false);
     expect(session.sessionId).toBeNull();
@@ -201,14 +221,14 @@ describe("P3-C: performToolInvariantRecovery disk cleanup (issue #61)", () => {
     session.sessionId = FAKE_RESUMED_SESSION_ID;
 
     // Must not throw on ENOENT.
-    expect(() => performToolInvariantRecovery(session, transcriptPath)).not.toThrow();
+    expect(() => performPoisonedResumeRecovery(session, transcriptPath)).not.toThrow();
 
     // In-memory reset still happens.
     expect(session.sessionId).toBeNull();
     expect(existsSync(transcriptPath)).toBe(false);
   });
 
-  test("performToolInvariantRecovery is idempotent — second call is a no-op on fs", async () => {
+  test("performPoisonedResumeRecovery is idempotent — second call is a no-op on fs", async () => {
     const dir = await createTempDir();
     const sessionKey = "default:980000302:p3c-idempotent";
     const transcriptPath = getSessionFilePath(sessionKey, dir);
@@ -222,13 +242,13 @@ describe("P3-C: performToolInvariantRecovery disk cleanup (issue #61)", () => {
     const session = new ClaudeSession(sessionKey);
     session.sessionId = FAKE_RESUMED_SESSION_ID;
 
-    performToolInvariantRecovery(session, transcriptPath);
+    performPoisonedResumeRecovery(session, transcriptPath);
     expect(existsSync(transcriptPath)).toBe(false);
     expect(session.sessionId).toBeNull();
 
     // Restore a sessionId to mimic a fresh-session handshake, then call again.
     session.sessionId = "new-session-after-recovery";
-    expect(() => performToolInvariantRecovery(session, transcriptPath)).not.toThrow();
+    expect(() => performPoisonedResumeRecovery(session, transcriptPath)).not.toThrow();
     expect(session.sessionId).toBeNull();
   });
 });
