@@ -107,6 +107,12 @@ function validateCronConfig(
     if (entry.notify !== undefined && typeof entry.notify !== "boolean") {
       return false;
     }
+    if (
+      entry.freshSession !== undefined &&
+      typeof entry.freshSession !== "boolean"
+    ) {
+      return false;
+    }
 
     if (entry.prompt.length > maxPromptLength) {
       logger.error(
@@ -278,7 +284,7 @@ export function createSchedulerService(
   }
 
   async function executeScheduledPrompt(schedule: CronSchedule): Promise<void> {
-    const { name, prompt, notify } = schedule;
+    const { name, prompt, notify, freshSession } = schedule;
     const cronModel = dependencies.getModelForContext("cron");
     const runtime = dependencies.getRuntime();
     dependencies.logger.log(
@@ -324,6 +330,7 @@ export function createSchedulerService(
         userId,
         statusCallback,
         modelContext: "cron",
+        freshSession,
       });
 
       dependencies.logger.log(`[CRON] Job ${name} completed`);

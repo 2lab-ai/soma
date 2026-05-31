@@ -1,7 +1,10 @@
 import type { Api } from "grammy";
 import type { ConfigContext } from "../config/model";
 import type { StatusCallback } from "../types/runtime";
-import { configureSchedulerRuntime } from "../scheduler/runtime-boundary";
+import {
+  configureSchedulerRuntime,
+  type SchedulerExecutionRequest,
+} from "../scheduler/runtime-boundary";
 import { initScheduler, startScheduler, stopScheduler } from "../scheduler/service";
 
 interface SchedulerSession {
@@ -19,9 +22,38 @@ interface SchedulerSessionManager {
   };
   getSession(userId: number): SchedulerSession;
   getSessionByKey(sessionKey: string): SchedulerSession;
+  resetSessionByKey(sessionKey: string): void;
 }
 
 const SCHEDULER_SESSION_KEY_PREFIX = "cron:";
+
+/**
+ * Build the scheduler execute() implementation bound to a session manager.
+ *
+ * Routes each cron job to its dedicated session key (cron:scheduler:jobname)
+ * so cron and user sessions never block each other. When the request asks for
+ * a fresh session, the persistent session is reset first so the run starts a
+ * brand-new SDK session (no resume chain) — this keeps stateless daily jobs
+ * from accumulating context across runs and overflowing the model window.
+ */
+export function createSchedulerExecute(
+  manager: SchedulerSessionManager
+): (request: SchedulerExecutionRequest) => Promise<string> {
+  return async ({
+    prompt,
+    sessionKey,
+    userId,
+    statusCallback,
+    modelContext,
+    freshSession,
+  }) => {
+    if (freshSession) {
+      manager.resetSessionByKey(sessionKey);
+    }
+    const session = manager.getSessionByKey(sessionKey);
+    return session.sendMessageStreaming(prompt, statusCallback, userId, modelContext);
+  };
+}
 
 export function configureAndStartScheduler(
   botApi: Api,
@@ -39,13 +71,7 @@ export function configureAndStartScheduler(
           session.sessionKey.startsWith(SCHEDULER_SESSION_KEY_PREFIX)
       );
     },
-    execute: async ({ prompt, sessionKey, userId, statusCallback, modelContext }) => {
-      // Use the scheduler's dedicated session key (cron:scheduler:jobname)
-      // instead of the user's session. This prevents cron jobs from
-      // blocking user messages and vice versa.
-      const session = manager.getSessionByKey(sessionKey);
-      return session.sendMessageStreaming(prompt, statusCallback, userId, modelContext);
-    },
+    execute: createSchedulerExecute(manager),
   });
 
   initScheduler(botApi);

@@ -155,6 +155,43 @@ describe("SessionManager", () => {
     });
   });
 
+  describe("resetSessionByKey — fresh cron sessions", () => {
+    test("drops in-memory session and deletes persisted file", () => {
+      const store = createInMemorySessionStore();
+      const manager = createTestManager(store);
+      const key = "cron:scheduler:daily-es-generate";
+
+      manager.getSessionByKey(key); // create in-memory
+      store.saved.set(key, { session_id: "abc" }); // simulate persisted file
+      expect(manager.sessionCount).toBe(1);
+      expect(store.sessionFileExists(key)).toBe(true);
+
+      manager.resetSessionByKey(key);
+
+      expect(manager.sessionCount).toBe(0);
+      expect(store.sessionFileExists(key)).toBe(false);
+    });
+
+    test("next getSessionByKey returns a fresh instance with no resume", () => {
+      const store = createInMemorySessionStore();
+      const manager = createTestManager(store);
+      const key = "cron:scheduler:daily-es-send";
+
+      const first = manager.getSessionByKey(key);
+      manager.resetSessionByKey(key);
+      const second = manager.getSessionByKey(key);
+
+      expect(second).not.toBe(first);
+      expect(second.isActive).toBe(false);
+    });
+
+    test("resetting a non-existent key is safe", () => {
+      const manager = createTestManager();
+      expect(() => manager.resetSessionByKey("cron:scheduler:nope")).not.toThrow();
+      expect(manager.sessionCount).toBe(0);
+    });
+  });
+
   describe("cleanup — TTL expiry", () => {
     test("removes sessions older than TTL", () => {
       const manager = createTestManager();
