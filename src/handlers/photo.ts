@@ -6,6 +6,7 @@
 
 import type { Context } from "grammy";
 import { sessionManager } from "../core/session/session-manager";
+import { withPoisonedResumeRecovery } from "./shared/poisoned-resume";
 import { TEMP_DIR } from "../config";
 import {
   type ChatType,
@@ -116,10 +117,14 @@ ${pathsList}`;
     const statusCallback = await createStatusCallback(ctx, state, session);
 
     try {
-      const response = await session.sendMessageStreaming(
-        addTimestamp(prompt),
-        statusCallback,
-        chatId
+      const response = await withPoisonedResumeRecovery(
+        session,
+        () => session.sendMessageStreaming(addTimestamp(prompt), statusCallback, chatId),
+        {
+          label: "photo",
+          canRecover: () =>
+            state.textMessages.size === 0 && state.toolMessages.length === 0,
+        }
       );
 
       await auditLog(userId, username, "PHOTO", prompt, response);

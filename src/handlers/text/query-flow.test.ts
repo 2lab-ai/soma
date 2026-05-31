@@ -25,10 +25,8 @@ import { tmpdir } from "os";
 import { ClaudeSession } from "../../core/session/session";
 import { getSessionFilePath } from "../../core/session/session-store";
 import { StreamingState } from "../streaming";
-import {
-  performPoisonedResumeRecovery,
-  shouldRecoverFromPoisonedResumeError,
-} from "./query-flow";
+import { shouldRecoverFromPoisonedResumeError } from "./query-flow";
+import { performPoisonedResumeRecovery } from "../shared/poisoned-resume";
 
 const MAX_RETRIES = 1;
 

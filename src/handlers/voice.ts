@@ -5,6 +5,7 @@
 import type { Context } from "grammy";
 import { unlinkSync } from "fs";
 import { sessionManager } from "../core/session/session-manager";
+import { withPoisonedResumeRecovery } from "./shared/poisoned-resume";
 import { TEMP_DIR, TRANSCRIPTION_AVAILABLE } from "../config";
 import {
   type ChatType,
@@ -142,10 +143,14 @@ export async function handleVoice(ctx: Context): Promise<void> {
     const statusCallback = await createStatusCallback(ctx, state, session);
 
     // 10. Send to Claude (with timestamp)
-    const claudeResponse = await session.sendMessageStreaming(
-      addTimestamp(transcript),
-      statusCallback,
-      chatId
+    const claudeResponse = await withPoisonedResumeRecovery(
+      session,
+      () => session.sendMessageStreaming(addTimestamp(transcript), statusCallback, chatId),
+      {
+        label: "voice",
+        canRecover: () =>
+          state.textMessages.size === 0 && state.toolMessages.length === 0,
+      }
     );
 
     // 11. Audit log

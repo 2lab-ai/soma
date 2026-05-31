@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import type { Context } from "grammy";
 import { WORKING_DIR } from "../../config";
 import { MODEL_DISPLAY_NAMES, getModelForContext } from "../../config/model";
@@ -22,6 +22,10 @@ import {
   isToolUseInvariantError,
 } from "../../utils/error-classification";
 import { isReentrancyError } from "./query-flow-guard";
+import {
+  isPoisonedResumeError,
+  performPoisonedResumeRecovery,
+} from "../shared/poisoned-resume";
 import { sendSystemMessage } from "../../utils/system-message";
 import { formatSteeringMessages } from "../../core/session/session-helpers";
 import {
@@ -75,37 +79,12 @@ export function shouldRecoverFromPoisonedResumeError(
   attempt: number,
   maxRetries: number
 ): boolean {
-  if (!isToolUseInvariantError(error) && !isThinkingBlockInvariantError(error))
-    return false;
+  if (!isPoisonedResumeError(error)) return false;
   if (sessionIdAtStart === null) return false;
   if (state.textMessages.size !== 0) return false;
   if (state.toolMessages.length !== 0) return false;
   if (attempt >= maxRetries) return false;
   return true;
-}
-
-/**
- * Disk + in-memory cleanup for the poisoned-resume recovery branch.
- *
- * - Deletes the on-disk session file via `unlinkSync` (ENOENT is silent —
- *   see R2 recovery taxonomy: missing file is not an error).
- * - Clears the in-memory sessionId so the next attempt starts fresh.
- *
- * Extracted to a pure function so regression tests can verify disk cleanup
- * and sessionId reset without driving the whole query flow.
- */
-export function performPoisonedResumeRecovery(
-  session: ClaudeSession,
-  transcriptPath: string
-): void {
-  try {
-    unlinkSync(transcriptPath);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.warn("[POISONED-RESUME-RECOVERY] unlink failed:", err);
-    }
-  }
-  session.sessionId = null;
 }
 
 export async function runQueryFlow(params: QueryFlowParams): Promise<void> {

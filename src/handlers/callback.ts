@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { sessionManager } from "../core/session/session-manager";
+import { withPoisonedResumeRecovery } from "./shared/poisoned-resume";
 import type { ClaudeSession } from "../core/session/session";
 import { type ChatType, isAuthorizedForChat } from "../security";
 import { pendingGroupStore } from "../core/pending-group-store";
@@ -99,12 +100,15 @@ async function sendMessageToClaude(
   const statusCallback = await createStatusCallback(ctx, state, session);
 
   try {
-    const response = await session.sendMessageStreaming(
-      message,
-      statusCallback,
-      chatId,
-      "general",
-      userId
+    const response = await withPoisonedResumeRecovery(
+      session,
+      () =>
+        session.sendMessageStreaming(message, statusCallback, chatId, "general", userId),
+      {
+        label: "callback",
+        canRecover: () =>
+          state.textMessages.size === 0 && state.toolMessages.length === 0,
+      }
     );
     await auditLog(userId, username, auditAction, message, response);
   } catch (error) {
