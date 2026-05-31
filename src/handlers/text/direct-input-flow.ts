@@ -11,6 +11,7 @@ import {
   cleanupToolMessages,
   createStatusCallback,
 } from "../streaming";
+import { withPoisonedResumeRecovery } from "../shared/poisoned-resume";
 import { auditLog, auditLogRateLimit } from "../../utils/audit";
 import { startTypingIndicator } from "../../utils/typing";
 import {
@@ -111,10 +112,14 @@ async function sendDirectInputToClaude(
   const statusCallback = await createStatusCallback(ctx, state, session);
 
   try {
-    const response = await session.sendMessageStreaming(
-      selectedLabel,
-      statusCallback,
-      chatId
+    const response = await withPoisonedResumeRecovery(
+      session,
+      () => session.sendMessageStreaming(selectedLabel, statusCallback, chatId),
+      {
+        label: "direct-input",
+        canRecover: () =>
+          state.textMessages.size === 0 && state.toolMessages.length === 0,
+      }
     );
     await auditLog(userId, username, "DIRECT_INPUT", originalMessage, response);
   } catch (error) {
