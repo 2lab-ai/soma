@@ -6,6 +6,9 @@ export interface SchedulerExecutionRequest {
   readonly userId: number;
   readonly statusCallback: StatusCallback;
   readonly modelContext: "cron";
+  // When true, reset the session before execution so the run starts fresh
+  // with no SDK resume chain (prevents unbounded context accumulation).
+  readonly freshSession?: boolean;
 }
 
 export interface SchedulerRuntimeBoundary {

@@ -149,6 +149,24 @@ export class SessionManager {
   }
 
   /**
+   * Reset a session by raw session key: drop the in-memory instance and delete
+   * its persisted file so the next getSessionByKey() starts a brand-new session
+   * with no SDK resume chain.
+   *
+   * Used by scheduler fresh-session cron jobs to prevent the resumed transcript
+   * from accumulating across daily runs and overflowing the model's context
+   * window (which surfaces as "Prompt is too long"). Safe to call for keys with
+   * no in-memory session or persisted file. Cron execution is serialized via the
+   * scheduler's cronExecutionLock, so no concurrent run can resurrect the key
+   * between reset and the following getSessionByKey().
+   */
+  resetSessionByKey(sessionKey: string): void {
+    this.sessions.delete(sessionKey);
+    this.sessionStore.deleteSessionFile(sessionKey);
+    console.log(`[SessionManager] Reset session by key: ${sessionKey}`);
+  }
+
+  /**
    * Check if a session exists for the given chat/thread.
    */
   hasSession(chatId: number, threadId?: number): boolean {

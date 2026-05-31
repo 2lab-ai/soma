@@ -67,6 +67,7 @@ function createFakeManager(session: ReturnType<typeof createFakeSession>) {
     }),
     getSession: () => session,
     getSessionByKey: () => session,
+    resetSessionByKey: () => {},
     saveAllSessions: mock(() => {}),
   };
 }

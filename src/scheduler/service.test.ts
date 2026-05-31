@@ -11,6 +11,7 @@ interface SchedulerTestHarness {
     sessionKey: string;
     userId: number;
     modelContext: "cron";
+    freshSession?: boolean;
   }>;
   setRuntimeBusy: (busy: boolean) => void;
   setConfig: (config: CronConfig | null) => void;
@@ -39,6 +40,7 @@ function createHarness(initialConfig: CronConfig | null): SchedulerTestHarness {
     sessionKey: string;
     userId: number;
     modelContext: "cron";
+    freshSession?: boolean;
   }> = [];
   const queueSetInterval = ((
     _: Parameters<typeof setInterval>[0],
@@ -87,6 +89,7 @@ function createHarness(initialConfig: CronConfig | null): SchedulerTestHarness {
           sessionKey: request.sessionKey,
           userId: request.userId,
           modelContext: request.modelContext,
+          freshSession: request.freshSession,
         });
         return "ok";
       },
@@ -180,9 +183,33 @@ describe("scheduler service", () => {
         sessionKey: "cron:scheduler:queue-job",
         userId: 4242,
         modelContext: "cron",
+        freshSession: undefined,
       },
     ]);
     expect(harness.service.getSchedulerStatus()).not.toContain("Queued Jobs");
+  });
+
+  test("threads freshSession from schedule into runtime execute request", async () => {
+    const harness = createHarness({
+      schedules: [
+        buildSchedule("daily-es-generate", { freshSession: true }),
+        buildSchedule("heartbeat"),
+      ],
+    });
+
+    harness.service.startScheduler();
+    await harness.scheduledTicks[0]!();
+    await harness.scheduledTicks[1]!();
+
+    const fresh = harness.executeCalls.find(
+      (call) => call.sessionKey === "cron:scheduler:daily-es-generate"
+    );
+    const resumed = harness.executeCalls.find(
+      (call) => call.sessionKey === "cron:scheduler:heartbeat"
+    );
+
+    expect(fresh?.freshSession).toBe(true);
+    expect(resumed?.freshSession).toBeUndefined();
   });
 
   test("is executable in tests without initScheduler or bot startup", async () => {

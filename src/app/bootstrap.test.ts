@@ -66,6 +66,7 @@ describe("bootstrapApplication", () => {
         sendMessageStreaming: mock(async () => "ok"),
         nextQueryContext: null,
       }),
+      resetSessionByKey: () => {},
       saveAllSessions,
     };
 
