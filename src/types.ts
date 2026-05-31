@@ -47,6 +47,11 @@ export interface CronSchedule {
   prompt: string;
   enabled?: boolean;
   notify?: boolean; // Send result to Telegram (default: false)
+  // Start a brand-new session on every run instead of resuming the persistent
+  // cron:scheduler:<name> session (default: false). Use for stateless daily
+  // generators (e.g. ES) so the resumed transcript never accumulates past the
+  // model's context window → avoids "Prompt is too long".
+  freshSession?: boolean;
 }
 
 export interface CronConfig {
