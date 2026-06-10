@@ -9,23 +9,24 @@
  * buildQueryRuntimeOptions()`) consistent.
  */
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
-import { isOpusFamily } from "../config/model";
+import { usesAdaptiveThinking } from "../config/model";
 
 /**
  * Applies model-specific transformations to an SDK `Options` object.
  *
- * - **Opus 4.x (4.7, 4.8, …)**: drops `maxThinkingTokens`, sets
- *   `thinking: {type:'adaptive'}` and `effort: 'xhigh'`. The keyword-driven
- *   thinking-token budget mechanism (Sonnet/Haiku) is incompatible with
- *   adaptive thinking on the Opus 4.x family, so the field is stripped to
- *   avoid SDK 400s. The family check (`isOpusFamily`) is the single source
- *   of truth — when a future generation lands, no edit is needed here.
+ * - **Adaptive-thinking models (Opus 4.x, Fable 5, …)**: drops
+ *   `maxThinkingTokens`, sets `thinking: {type:'adaptive'}` and
+ *   `effort: 'xhigh'`. The keyword-driven thinking-token budget mechanism
+ *   (Sonnet/Haiku) is incompatible with adaptive thinking on these models, so
+ *   the field is stripped to avoid SDK 400s. The `usesAdaptiveThinking` check
+ *   is the single source of truth — when a future adaptive family lands, no
+ *   edit is needed here.
  * - **All other models**: passthrough.
  */
 export function applyModelSpecificOverrides<
   T extends Options & { abortController?: AbortController }
 >(model: string, opts: T): T {
-  if (isOpusFamily(model)) {
+  if (usesAdaptiveThinking(model)) {
     const { maxThinkingTokens: _ignored, ...rest } = opts as T & {
       maxThinkingTokens?: number;
     };
