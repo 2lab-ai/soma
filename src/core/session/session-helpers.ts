@@ -68,8 +68,15 @@ export function lookupContextWindowSize(
   model: string | undefined,
   betas: readonly string[] | null | undefined
 ): number {
-  const baseWindow =
-    typeof model === "string" && model.startsWith("claude-")
+  // Fable 5 serves a 1M context window natively on the bare id — no `[1m]`
+  // suffix and no `context-1m-2025-08-07` beta header (unlike opus, where 1M is
+  // a beta opt-in carried by the suffix). Recognise it directly so a Fable
+  // session reports the correct window even without the beta in `betas`.
+  const isNativeOneM =
+    typeof model === "string" && model.startsWith("claude-fable-");
+  const baseWindow = isNativeOneM
+    ? 1_000_000
+    : typeof model === "string" && model.startsWith("claude-")
       ? DEFAULT_CONTEXT_WINDOW_SIZE
       : 0;
   const betaWindow = betas?.includes(CONTEXT_1M_BETA) ? 1_000_000 : 0;
