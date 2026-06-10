@@ -9,6 +9,7 @@ import { resolve } from "path";
 import { parse, stringify } from "yaml";
 
 export const AVAILABLE_MODELS = [
+  "claude-fable-5",
   "claude-sonnet-4-5-20250929",
   "claude-opus-4-8[1m]",
   "claude-opus-4-8",
@@ -19,6 +20,9 @@ export const AVAILABLE_MODELS = [
 export type ModelId = (typeof AVAILABLE_MODELS)[number];
 
 export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
+  // Fable 5 serves 1M context on the bare id (no `[1m]` suffix, no beta header
+  // — see lookupContextWindowSize); the "(1M)" label communicates that window.
+  "claude-fable-5": "Fable 5 (1M)",
   "claude-sonnet-4-5-20250929": "Sonnet 4.5",
   "claude-opus-4-8[1m]": "Opus 4.8 (1M)",
   "claude-opus-4-8": "Opus 4.8",
@@ -44,6 +48,22 @@ export const DEFAULT_MODEL: ModelId = "claude-opus-4-8[1m]";
  */
 export function isOpusFamily(model: string): boolean {
   return model.startsWith("claude-opus-4-");
+}
+
+/**
+ * Predicate for the "adaptive-thinking" contract: models that always run
+ * adaptive thinking + `xhigh` effort and REJECT a `budget_tokens` thinking
+ * budget at the SDK layer (400). Opus 4.x AND Fable 5 share this contract
+ * (Fable 5: adaptive thinking always-on, extended thinking unsupported).
+ *
+ * This is the single source of truth for the four call sites that previously
+ * keyed off `isOpusFamily` directly (claude-options, normalizeConfig,
+ * callback.ts ×2, usage-commands). `isOpusFamily` stays as the literal opus
+ * membership check; use THIS one wherever the adaptive-thinking behavior
+ * matters so new non-opus families (fable, …) are covered automatically.
+ */
+export function usesAdaptiveThinking(model: string): boolean {
+  return isOpusFamily(model) || model.startsWith("claude-fable-");
 }
 
 /**
@@ -126,10 +146,10 @@ function getDefaultConfig(): ModelConfig {
 /**
  * Walks `defaults.model` and every `contexts.*.model`, upgrading any model ID
  * present in `MODEL_MIGRATIONS` to its replacement. For any context that
- * resolves to an Opus 4.x model (4.7 / 4.8 / …), coerces `reasoning` to
- * `"xhigh"` — that family uses adaptive thinking + xhigh effort and ignores
- * the per-context reasoning-token budget at the SDK layer, so we persist a
- * value that matches actual behavior.
+ * resolves to an adaptive-thinking model (Opus 4.x, Fable 5, …), coerces
+ * `reasoning` to `"xhigh"` — those models use adaptive thinking + xhigh effort
+ * and ignore the per-context reasoning-token budget at the SDK layer, so we
+ * persist a value that matches actual behavior.
  *
  * Returns `changed: true` if any field was modified so callers can persist.
  */
@@ -164,7 +184,7 @@ export function normalizeConfig(config: ModelConfig): {
       }
     }
     const resolved = updated.model ?? next.defaults.model;
-    if (isOpusFamily(resolved) && updated.reasoning !== "xhigh") {
+    if (usesAdaptiveThinking(resolved) && updated.reasoning !== "xhigh") {
       updated.reasoning = "xhigh";
       touched = true;
     }
