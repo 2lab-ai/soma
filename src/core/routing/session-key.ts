@@ -5,6 +5,15 @@ const DISALLOWED_IDENTITY_CHARS = /[:/\\]/;
 export const SESSION_KEY_FORMAT = "tenant:channel:thread";
 export const STORAGE_PARTITION_FORMAT = "tenant/channel/thread";
 
+/**
+ * Tenant id used for cron/scheduler-originated sessions.
+ *
+ * Scheduler sessions carry a literal `channelId` ("scheduler") that is not a
+ * real chat, so they must be detected explicitly when resolving a delivery
+ * target (see {@link resolveSendFileChatId}).
+ */
+export const SCHEDULER_TENANT_ID = "cron";
+
 declare const tenantIdBrand: unique symbol;
 declare const channelIdBrand: unique symbol;
 declare const threadIdBrand: unique symbol;
@@ -152,6 +161,50 @@ export function parseStoragePartitionKey(storagePartitionKey: string): SessionId
     "storagePartitionKey"
   );
   return createSessionIdentity({ tenantId, channelId, threadId });
+}
+
+/**
+ * Resolve the Telegram chat id that the `send-file` MCP should target for a
+ * given query.
+ *
+ * The chat id is injected per query into the `send-file` MCP env. There are two
+ * kinds of sessions:
+ *
+ * - **User sessions** — the handler passes the originating chat id as the query
+ *   `chatId`, which equals the session's `channelId`. Either source works.
+ * - **Cron/scheduler sessions** — the session `channelId` is a literal label
+ *   ("scheduler"), NOT a chat. Injecting it makes `send_photo`/`send_document`
+ *   fail with Telegram `Bad Request: chat not found`. The scheduler instead
+ *   passes the owner's numeric chat id (`ALLOWED_USERS[0]`) as the query
+ *   `chatId`.
+ *
+ * Strategy: always prefer the query `chatId` when present; only fall back to the
+ * session `channelId` for non-scheduler sessions. Returns `null` when there is
+ * no usable chat id (e.g. a scheduler session with no query chat id), so the
+ * caller can skip injection rather than send to an invalid target.
+ */
+export function resolveSendFileChatId(
+  sessionKey: string,
+  queryChatId: number | string | null | undefined
+): string | null {
+  if (
+    queryChatId !== null &&
+    queryChatId !== undefined &&
+    String(queryChatId) !== ""
+  ) {
+    return String(queryChatId);
+  }
+
+  try {
+    const identity = parseSessionKey(sessionKey);
+    if (identity.tenantId === SCHEDULER_TENANT_ID) {
+      // Scheduler channelId ("scheduler") is a label, not a chat — unusable.
+      return null;
+    }
+    return identity.channelId;
+  } catch {
+    return null;
+  }
 }
 
 export interface SessionKeyContract {

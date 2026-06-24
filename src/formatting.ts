@@ -41,6 +41,11 @@ export function convertMarkdownToHtml(text: string): string {
   // Escape HTML entities in the remaining text
   text = escapeHtml(text);
 
+  // Markdown tables -> <pre> monospace block (Telegram has no table rendering,
+  // and raw "| a | b |" / "|---|" markdown is unreadable). Done before inline
+  // styling so emphasis inside cells is normalized rather than left dangling.
+  text = convertTables(text);
+
   // Headers: ## Header -> <b>Header</b>
   text = text.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>\n");
 
@@ -121,6 +126,124 @@ function convertBlockquotes(text: string): string {
   }
 
   return result.join("\n");
+}
+
+// ============== Markdown Table Conversion ==============
+
+/**
+ * Approximate monospace display width. CJK / Hangul / fullwidth / emoji code
+ * points render roughly two cells wide; everything else counts as one. Used to
+ * pad table columns so they line up inside a Telegram <pre> block. Alignment is
+ * best-effort — Telegram's CJK metrics vary by client.
+ */
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code === 0xfe0f) {
+      // Variation selector-16 (emoji presentation) adds no visible width.
+      continue;
+    }
+    const isWide =
+      (code >= 0x1100 && code <= 0x115f) || // Hangul Jamo
+      (code >= 0x2600 && code <= 0x27bf) || // Misc symbols + Dingbats
+      (code >= 0x2b00 && code <= 0x2bff) || // Misc symbols and arrows
+      (code >= 0x2e80 && code <= 0xa4cf) || // CJK radicals .. Yi
+      (code >= 0xac00 && code <= 0xd7a3) || // Hangul Syllables
+      (code >= 0xf900 && code <= 0xfaff) || // CJK Compatibility Ideographs
+      (code >= 0xfe30 && code <= 0xfe4f) || // CJK Compatibility Forms
+      (code >= 0xff00 && code <= 0xff60) || // Fullwidth Forms
+      (code >= 0xffe0 && code <= 0xffe6) ||
+      (code >= 0x1f000 && code <= 0x1faff); // Emoji / pictographs
+    width += isWide ? 2 : 1;
+  }
+  return width;
+}
+
+/** Strip markdown emphasis markers from a (already HTML-escaped) table cell. */
+function stripCellEmphasis(cell: string): string {
+  return cell
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "$1")
+    .replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, "$1")
+    .trim();
+}
+
+/** True when a line is a markdown table separator row, e.g. `|---|:--:|`. */
+function isTableSeparatorLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed.includes("-") || !trimmed.includes("|")) return false;
+  return /^\|?[\s:|-]+\|?$/.test(trimmed);
+}
+
+/** Split a markdown table row into trimmed, emphasis-stripped cells. */
+function parseTableRow(line: string): string[] {
+  let trimmed = line.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  return trimmed.split("|").map((cell) => stripCellEmphasis(cell.trim()));
+}
+
+/**
+ * Convert GitHub-flavored markdown tables into aligned monospace <pre> blocks.
+ *
+ * Operates on already HTML-escaped text. A table is a row containing `|`
+ * immediately followed by a separator row; contiguous `|` rows after it are
+ * body rows. Non-table text is passed through untouched.
+ */
+function convertTables(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i]!;
+    const next = lines[i + 1];
+
+    if (line.includes("|") && next !== undefined && isTableSeparatorLine(next)) {
+      const rows: string[][] = [parseTableRow(line)];
+      i += 2; // consume header + separator
+      while (
+        i < lines.length &&
+        lines[i]!.includes("|") &&
+        lines[i]!.trim() !== "" &&
+        !isTableSeparatorLine(lines[i]!)
+      ) {
+        rows.push(parseTableRow(lines[i]!));
+        i += 1;
+      }
+
+      const columnCount = Math.max(...rows.map((row) => row.length));
+      const widths: number[] = [];
+      for (let c = 0; c < columnCount; c++) {
+        widths[c] = Math.max(
+          0,
+          ...rows.map((row) => displayWidth(row[c] ?? ""))
+        );
+      }
+
+      const rendered = rows
+        .map((row) =>
+          Array.from({ length: columnCount }, (_, c) => {
+            const cell = row[c] ?? "";
+            const pad = widths[c]! - displayWidth(cell);
+            return cell + " ".repeat(pad > 0 ? pad : 0);
+          })
+            .join("  ")
+            .replace(/\s+$/, "")
+        )
+        .join("\n");
+
+      out.push(`<pre>${rendered}</pre>`);
+      continue;
+    }
+
+    out.push(line);
+    i += 1;
+  }
+
+  return out.join("\n");
 }
 
 // ============== Tool Status Formatting ==============
