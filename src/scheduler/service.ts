@@ -5,7 +5,7 @@ import { resolve } from "path";
 import { parse as parseYaml } from "yaml";
 import { ALLOWED_USERS, WORKING_DIR } from "../config";
 import { getModelForContext, MODEL_DISPLAY_NAMES } from "../config/model";
-import { escapeHtml } from "../formatting";
+import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import { isPathAllowed } from "../security";
 import type { CronConfig, CronSchedule } from "../types";
 import type { StatusCallback } from "../types/runtime";
@@ -65,6 +65,7 @@ export interface SchedulerServiceDependencies {
   modelDisplayNames: typeof MODEL_DISPLAY_NAMES;
   buildSchedulerRoute: typeof buildSchedulerRoute;
   escapeHtml: typeof escapeHtml;
+  convertMarkdownToHtml: typeof convertMarkdownToHtml;
   logger: SchedulerLogger;
   existsSync: typeof existsSync;
   statSync: typeof statSync;
@@ -186,6 +187,7 @@ function createDefaultDependencies(): SchedulerServiceDependencies {
     modelDisplayNames: MODEL_DISPLAY_NAMES,
     buildSchedulerRoute,
     escapeHtml,
+    convertMarkdownToHtml,
     logger,
     existsSync,
     statSync,
@@ -344,7 +346,11 @@ export function createSchedulerService(
       if (notify && botApi && dependencies.allowedUsers.length > 0) {
         const notifyUserId = dependencies.allowedUsers[0]!;
         const safeName = dependencies.escapeHtml(name);
-        const safeResult = dependencies.escapeHtml(result.slice(0, 3500));
+        // Render the model's markdown output to Telegram HTML (bold, headers,
+        // lists, links, tables) rather than shipping raw escaped markdown.
+        const safeResult = dependencies.convertMarkdownToHtml(
+          result.slice(0, 3500)
+        );
         await botApi.sendMessage(
           notifyUserId,
           `🕐 <b>Scheduled: ${safeName}</b>\n\n${safeResult}`,

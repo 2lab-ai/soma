@@ -64,6 +64,7 @@ import {
 import {
   createSessionIdentity,
   parseSessionKey,
+  resolveSendFileChatId,
   type SessionIdentity,
 } from "../routing/session-key";
 import {
@@ -811,26 +812,31 @@ export class ClaudeSession {
       ? `\n\n# Project Instructions (CLAUDE.md)\n${claudeMdContent}\n`
       : "";
 
-    // Inject TELEGRAM_CHAT_ID into send-file MCP server dynamically per session
+    // Inject TELEGRAM_CHAT_ID into the send-file MCP server dynamically per query.
+    //
+    // Cron/scheduler sessions carry a literal channelId ("scheduler") that is
+    // not a real chat — injecting it makes send_photo/send_document fail with
+    // Telegram "chat not found". resolveSendFileChatId() prefers the numeric
+    // chatId passed into this query (the owner id the scheduler supplies) and
+    // only falls back to the session channelId for ordinary user sessions.
     let mcpServersForQuery: Record<string, McpServerConfig> = MCP_SERVERS;
-    try {
-      const identity = parseSessionKey(this.sessionKey);
-      const chatId = identity.channelId;
-      if (chatId && MCP_SERVERS["send-file"] && "command" in MCP_SERVERS["send-file"]) {
-        const sendFileConfig = MCP_SERVERS["send-file"] as McpStdioConfig;
-        mcpServersForQuery = {
-          ...MCP_SERVERS,
-          "send-file": {
-            ...sendFileConfig,
-            env: {
-              ...sendFileConfig.env,
-              TELEGRAM_CHAT_ID: chatId,
-            },
+    const sendFileChatId = resolveSendFileChatId(this.sessionKey, chatId);
+    if (
+      sendFileChatId &&
+      MCP_SERVERS["send-file"] &&
+      "command" in MCP_SERVERS["send-file"]
+    ) {
+      const sendFileConfig = MCP_SERVERS["send-file"] as McpStdioConfig;
+      mcpServersForQuery = {
+        ...MCP_SERVERS,
+        "send-file": {
+          ...sendFileConfig,
+          env: {
+            ...sendFileConfig.env,
+            TELEGRAM_CHAT_ID: sendFileChatId,
           },
-        };
-      }
-    } catch {
-      // If sessionKey can't be parsed, use MCP_SERVERS as-is
+        },
+      };
     }
 
     const runtimeOptions = buildQueryRuntimeOptions({

@@ -2,12 +2,12 @@ import {
   buildSessionKey,
   buildStoragePartitionKey,
   createSessionIdentity,
+  SCHEDULER_TENANT_ID,
   type SessionIdentity,
   type SessionKey,
   type StoragePartitionKey,
 } from "../core/routing/session-key";
 
-const SCHEDULER_TENANT_ID = "cron";
 const SCHEDULER_CHANNEL_ID = "scheduler";
 
 function sanitizeThreadId(rawName: string): string {
