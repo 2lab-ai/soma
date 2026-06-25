@@ -346,16 +346,29 @@ export function createSchedulerService(
       if (notify && botApi && dependencies.allowedUsers.length > 0) {
         const notifyUserId = dependencies.allowedUsers[0]!;
         const safeName = dependencies.escapeHtml(name);
+        const rawResult = result.slice(0, 3500);
         // Render the model's markdown output to Telegram HTML (bold, headers,
         // lists, links, tables) rather than shipping raw escaped markdown.
-        const safeResult = dependencies.convertMarkdownToHtml(
-          result.slice(0, 3500)
-        );
-        await botApi.sendMessage(
-          notifyUserId,
-          `🕐 <b>Scheduled: ${safeName}</b>\n\n${safeResult}`,
-          { parse_mode: "HTML" }
-        );
+        const safeResult = dependencies.convertMarkdownToHtml(rawResult);
+        try {
+          await botApi.sendMessage(
+            notifyUserId,
+            `🕐 <b>Scheduled: ${safeName}</b>\n\n${safeResult}`,
+            { parse_mode: "HTML" }
+          );
+        } catch (sendError) {
+          // Defense-in-depth: if Telegram still rejects the HTML (e.g. an
+          // unforeseen entity-parsing edge case), deliver the content as plain
+          // text instead of letting the whole job report as failed. Mirrors the
+          // main bot reply path.
+          dependencies.logger.warn(
+            `[CRON] HTML notify failed for ${name}, retrying as plain text: ${sendError}`
+          );
+          await botApi.sendMessage(
+            notifyUserId,
+            `🕐 Scheduled: ${name}\n\n${rawResult}`
+          );
+        }
       }
     } catch (error) {
       dependencies.logger.error(`[CRON] Job ${name} failed: ${error}`);

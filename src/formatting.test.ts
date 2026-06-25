@@ -1,5 +1,98 @@
 import { describe, expect, test } from "bun:test";
-import { convertMarkdownToHtml } from "./formatting";
+import { balanceTelegramHtml, convertMarkdownToHtml } from "./formatting";
+
+/**
+ * Telegram accepts nested inline tags but rejects overlap or stray closes.
+ * This mirrors (loosely) what Telegram's parser checks: walk the tags and
+ * ensure every close matches the most-recently-opened still-open tag, and that
+ * nothing is left open.
+ */
+function isValidTelegramHtml(html: string): boolean {
+  const re = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*)?>/g;
+  const stack: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const closing = m[1] === "/";
+    const name = m[2]!.toLowerCase();
+    if (!closing) {
+      stack.push(name);
+    } else {
+      if (stack[stack.length - 1] !== name) return false; // overlap or stray
+      stack.pop();
+    }
+  }
+  return stack.length === 0;
+}
+
+describe("balanceTelegramHtml", () => {
+  test("fixes overlapping b/i tags (close-inner-first)", () => {
+    const out = balanceTelegramHtml("<b>homo<i>computatis</b>: rest</i>");
+    expect(isValidTelegramHtml(out)).toBe(true);
+    expect(out).toBe("<b>homo<i>computatis</i></b>: rest");
+  });
+
+  test("drops a stray close tag with no matching open", () => {
+    const out = balanceTelegramHtml("<b>consciousness</i>as<i>pattern</i>flow</b>");
+    expect(isValidTelegramHtml(out)).toBe(true);
+    expect(out).toBe("<b>consciousnessas<i>pattern</i>flow</b>");
+  });
+
+  test("closes unclosed tags at the end", () => {
+    const out = balanceTelegramHtml("<b>bold and <i>italic");
+    expect(isValidTelegramHtml(out)).toBe(true);
+    expect(out).toBe("<b>bold and <i>italic</i></b>");
+  });
+
+  test("preserves attributes on open tags (links)", () => {
+    const out = balanceTelegramHtml('<a href="https://x.com">link</a>');
+    expect(out).toBe('<a href="https://x.com">link</a>');
+  });
+
+  test("leaves already-valid nested html untouched", () => {
+    const valid = "<b>a <i>b</i> c</b>";
+    expect(balanceTelegramHtml(valid)).toBe(valid);
+  });
+
+  test("handles overlap inside a blockquote without leaving empties", () => {
+    const out = balanceTelegramHtml(
+      "<blockquote><b>homo<i>computatis</b>: x</blockquote>"
+    );
+    expect(isValidTelegramHtml(out)).toBe(true);
+    expect(out).toBe(
+      "<blockquote><b>homo<i>computatis</i></b>: x</blockquote>"
+    );
+  });
+});
+
+describe("convertMarkdownToHtml — always emits valid Telegram HTML", () => {
+  test("snake_case identifiers inside bold do not break tag nesting", () => {
+    // Regression for daily-synthesis 400: "Unmatched end tag, expected </b>, found </i>"
+    const md =
+      "**1. consciousness_as_pattern_flow** and **arrows_over_objects** ok";
+    const out = convertMarkdownToHtml(md);
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
+  test("blockquote with snake_case bold/italic stays valid", () => {
+    const md = "> **homo_computatis**: 의식 = 계산";
+    const out = convertMarkdownToHtml(md);
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
+  test("the reported daily-synthesis fragment converts to valid html", () => {
+    const md = [
+      "**🔥 발견**",
+      "",
+      "> homo_computatis: 자기 수정 프로토콜",
+      "",
+      "**1. The Log Is The Agent = consciousness_as_pattern_flow**",
+      "**2. arrows_over_objects → harness**",
+      "**3. particles_as_excitations → field**",
+    ].join("\n");
+    const out = convertMarkdownToHtml(md);
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+});
 
 describe("convertMarkdownToHtml — inline styling", () => {
   test("renders bold, headers and links as Telegram HTML (not raw markdown)", () => {

@@ -88,7 +88,74 @@ export function convertMarkdownToHtml(text: string): string {
   // Collapse multiple newlines
   text = text.replace(/\n{3,}/g, "\n\n");
 
+  // Telegram's HTML parser is strict: tags may nest but must NOT overlap, and
+  // every close tag needs a matching open. Markdown like snake_case words
+  // (e.g. `homo_computatis`) or interleaved */_ emphasis can make the rules
+  // above emit `<b>x<i>y</b>z</i>` (overlap) or a stray `</i>`, which Telegram
+  // rejects with 400 "can't parse entities: Unmatched end tag". Balance the
+  // tags so the output is always valid.
+  text = balanceTelegramHtml(text);
+
   return text;
+}
+
+/**
+ * Make a fragment of Telegram-flavored HTML well-formed: properly nested tags,
+ * no overlaps, no stray/unclosed tags.
+ *
+ * Telegram allows nesting (`<b><i>x</i></b>`) but rejects overlap
+ * (`<b><i>x</b></i>`) and unmatched close tags. We scan the tags with a stack:
+ * - open tag  -> push, emit as-is (attributes preserved, e.g. `<a href=...>`).
+ * - close tag -> if it matches an open tag on the stack, close every tag above
+ *   it first (so nesting stays valid) then close it; if it matches nothing,
+ *   drop it.
+ * - any tags still open at the end are closed.
+ *
+ * Text, HTML entities and the escaped contents of `<pre>`/`<code>` blocks are
+ * left untouched (they contain no real `<...>` tags after escaping).
+ */
+export function balanceTelegramHtml(html: string): string {
+  const TAG_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*)?>/g;
+  let result = "";
+  let lastIndex = 0;
+  const openStack: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = TAG_RE.exec(html)) !== null) {
+    result += html.slice(lastIndex, match.index);
+    lastIndex = TAG_RE.lastIndex;
+
+    const isClosing = match[1] === "/";
+    const name = match[2]!.toLowerCase();
+    const fullTag = match[0];
+
+    if (!isClosing) {
+      openStack.push(name);
+      result += fullTag;
+      continue;
+    }
+
+    const matchIdx = openStack.lastIndexOf(name);
+    if (matchIdx === -1) {
+      // Stray close tag with no matching open — drop it.
+      continue;
+    }
+    // Close everything stacked above the match (to keep nesting valid), then
+    // the matched tag itself.
+    for (let i = openStack.length - 1; i >= matchIdx; i--) {
+      result += `</${openStack[i]}>`;
+    }
+    openStack.length = matchIdx;
+  }
+
+  result += html.slice(lastIndex);
+
+  // Close any tags left open.
+  for (let i = openStack.length - 1; i >= 0; i--) {
+    result += `</${openStack[i]}>`;
+  }
+
+  return result;
 }
 
 /**
