@@ -17,6 +17,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { readFile, stat } from "fs/promises";
 import { basename, resolve } from "path";
+import { convertMarkdownToHtml } from "../../src/formatting";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
@@ -147,6 +148,54 @@ async function sendPhoto(
   return { ok: true, messageId: result.result?.message_id };
 }
 
+async function sendMessage(
+  chatId: string,
+  text: string
+): Promise<{ ok: boolean; messageId?: number; mode?: string; error?: string }> {
+  const trimmed = text?.trim();
+  if (!trimmed) {
+    return { ok: false, error: "text is empty" };
+  }
+  // Telegram hard-caps a single message at 4096 chars.
+  const body = trimmed.slice(0, 4096);
+
+  // Try rich HTML first (markdown -> balanced Telegram HTML). If Telegram
+  // rejects the entities for any reason, fall back to plain text so delivery
+  // still succeeds — the caller can then trust a true/false result.
+  const html = convertMarkdownToHtml(body);
+
+  const attempt = async (
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; messageId?: number; error?: string }> => {
+    const response = await fetch(`${TELEGRAM_API}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, ...payload }),
+    });
+    const result = (await response.json()) as {
+      ok: boolean;
+      result?: { message_id: number };
+      description?: string;
+    };
+    if (!result.ok) {
+      return { ok: false, error: result.description || "Telegram API error" };
+    }
+    return { ok: true, messageId: result.result?.message_id };
+  };
+
+  const htmlResult = await attempt({ text: html, parse_mode: "HTML" });
+  if (htmlResult.ok) {
+    return { ok: true, messageId: htmlResult.messageId, mode: "html" };
+  }
+
+  const plainResult = await attempt({ text: body });
+  if (plainResult.ok) {
+    return { ok: true, messageId: plainResult.messageId, mode: "plain" };
+  }
+
+  return { ok: false, error: plainResult.error || htmlResult.error };
+}
+
 // --- MCP Server Setup ---
 
 const server = new Server(
@@ -203,6 +252,28 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
         },
         required: ["filePath"],
+      },
+    },
+    {
+      name: "send_message",
+      description:
+        "Send a TEXT message to the user via Telegram and get a verified " +
+        "delivery result. Use this when you must KNOW whether the message " +
+        "actually reached the user before recording it as sent (e.g. cron " +
+        "jobs that log delivery). Markdown is rendered to Telegram HTML; if " +
+        "Telegram rejects the formatting it automatically retries as plain " +
+        "text. Returns JSON {ok, messageId, mode}. Only treat the message as " +
+        "delivered when ok is true. Max 4096 chars.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description:
+              "Message text (markdown supported). Max 4096 chars; longer text is truncated.",
+          },
+        },
+        required: ["text"],
       },
     },
   ],
@@ -267,6 +338,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const result = await sendPhoto(CHAT_ID, filePath, caption);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          isError: !result.ok,
+        };
+      }
+
+      case "send_message": {
+        const text = (args as { text?: string }).text;
+
+        if (!text) {
+          return {
+            content: [{ type: "text", text: "Error: text is required" }],
+            isError: true,
+          };
+        }
+
+        const result = await sendMessage(CHAT_ID, text);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
           isError: !result.ok,
