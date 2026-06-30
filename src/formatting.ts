@@ -23,14 +23,19 @@ export function escapeHtml(text: string): string {
  */
 export function convertMarkdownToHtml(text: string): string {
   // Store code blocks temporarily to avoid processing their contents
-  const codeBlocks: string[] = [];
+  const codeBlocks: Array<{ code: string; lang: string }> = [];
   const inlineCodes: string[] = [];
 
-  // Save code blocks first (```code```)
-  text = text.replace(/```(?:\w+)?\n?([\s\S]*?)```/g, (_, code) => {
-    codeBlocks.push(code);
-    return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
-  });
+  // Save code blocks first (```lang\ncode```). The optional language is kept so
+  // it can be re-emitted as <pre><code class="language-X"> for Telegram syntax
+  // highlighting (Bot API: a programming language is set via nested pre+code).
+  text = text.replace(
+    /```([a-zA-Z0-9_+-]*)[ \t]*\r?\n?([\s\S]*?)```/g,
+    (_, lang: string, code: string) => {
+      codeBlocks.push({ code, lang: lang || "" });
+      return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
+    }
+  );
 
   // Save inline code (`code`)
   text = text.replace(/`([^`]+)`/g, (_, code) => {
@@ -52,14 +57,22 @@ export function convertMarkdownToHtml(text: string): string {
   // Bold: **text** -> <b>text</b>
   text = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 
-  // Also handle *text* as bold (single asterisk)
-  text = text.replace(/(?<!\*)\*(.+?)\*(?!\*)/g, "<b>$1</b>");
+  // Italic: *text* -> <i>text</i> (single asterisk = italic in standard
+  // markdown; ** is already consumed above so only lone * remains).
+  text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<i>$1</i>");
 
   // Double underscore: __text__ -> <b>text</b>
   text = text.replace(/__([^_]+)__/g, "<b>$1</b>");
 
   // Italic: _text_ -> <i>text</i> (but not __text__)
   text = text.replace(/(?<!_)_([^_]+)_(?!_)/g, "<i>$1</i>");
+
+  // Strikethrough: ~~text~~ -> <s>text</s>
+  text = text.replace(/~~(.+?)~~/g, "<s>$1</s>");
+
+  // Spoiler: ||text|| -> <tg-spoiler>text</tg-spoiler> (MarkdownV2 spoiler
+  // syntax). Restricted to a single line so it never swallows table pipes.
+  text = text.replace(/\|\|([^\n]+?)\|\|/g, "<tg-spoiler>$1</tg-spoiler>");
 
   // Blockquotes: &gt; text -> <blockquote>text</blockquote>
   text = convertBlockquotes(text);
@@ -73,10 +86,15 @@ export function convertMarkdownToHtml(text: string): string {
   // Links: [text](url) -> <a href="url">text</a>
   text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
-  // Restore code blocks
+  // Restore code blocks. With a language, nest <code class="language-X"> inside
+  // <pre> so Telegram applies syntax highlighting; otherwise a plain <pre>.
   for (let i = 0; i < codeBlocks.length; i++) {
-    const escapedCode = escapeHtml(codeBlocks[i]!);
-    text = text.replace(`\x00CODEBLOCK${i}\x00`, `<pre>${escapedCode}</pre>`);
+    const { code: rawCode, lang } = codeBlocks[i]!;
+    const escapedCode = escapeHtml(rawCode);
+    const block = lang
+      ? `<pre><code class="language-${lang}">${escapedCode}</code></pre>`
+      : `<pre>${escapedCode}</pre>`;
+    text = text.replace(`\x00CODEBLOCK${i}\x00`, block);
   }
 
   // Restore inline code
@@ -159,7 +177,24 @@ export function balanceTelegramHtml(html: string): string {
 }
 
 /**
- * Convert blockquotes (handles multi-line).
+ * A blockquote longer than this many lines, or wider than this many characters,
+ * is rendered as `<blockquote expandable>` so it collapses by default instead of
+ * flooding the chat. Telegram shows a "Show more" affordance for these.
+ */
+const BLOCKQUOTE_EXPAND_LINES = 6;
+const BLOCKQUOTE_EXPAND_CHARS = 350;
+
+/** Wrap collected quote lines, choosing expandable form for long quotes. */
+function renderBlockquote(lines: string[]): string {
+  const body = lines.join("\n");
+  const expandable =
+    lines.length >= BLOCKQUOTE_EXPAND_LINES || body.length >= BLOCKQUOTE_EXPAND_CHARS;
+  const tag = expandable ? "<blockquote expandable>" : "<blockquote>";
+  return tag + body + "</blockquote>";
+}
+
+/**
+ * Convert blockquotes (handles multi-line). Long quotes become expandable.
  */
 function convertBlockquotes(text: string): string {
   const lines = text.split("\n");
@@ -179,7 +214,7 @@ function convertBlockquotes(text: string): string {
       inBlockquote = true;
     } else {
       if (inBlockquote) {
-        result.push("<blockquote>" + blockquoteLines.join("\n") + "</blockquote>");
+        result.push(renderBlockquote(blockquoteLines));
         blockquoteLines.length = 0;
         inBlockquote = false;
       }
@@ -189,7 +224,7 @@ function convertBlockquotes(text: string): string {
 
   // Handle blockquote at end
   if (inBlockquote) {
-    result.push("<blockquote>" + blockquoteLines.join("\n") + "</blockquote>");
+    result.push(renderBlockquote(blockquoteLines));
   }
 
   return result.join("\n");

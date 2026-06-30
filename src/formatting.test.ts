@@ -106,6 +106,87 @@ describe("convertMarkdownToHtml — inline styling", () => {
     expect(out).not.toContain("## ");
   });
 
+  test("single *asterisk* is italic, not bold (standard markdown)", () => {
+    const out = convertMarkdownToHtml("this is *emphasis* here");
+    expect(out).toContain("<i>emphasis</i>");
+    expect(out).not.toContain("<b>emphasis</b>");
+    expect(out).not.toContain("*");
+  });
+
+  test("double **asterisks** stay bold even with single-asterisk rule", () => {
+    const out = convertMarkdownToHtml("**strong** and *weak*");
+    expect(out).toContain("<b>strong</b>");
+    expect(out).toContain("<i>weak</i>");
+  });
+
+  test("converts ~~strikethrough~~ to <s>", () => {
+    const out = convertMarkdownToHtml("this is ~~gone~~ now");
+    expect(out).toContain("<s>gone</s>");
+    expect(out).not.toContain("~~");
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
+  test("converts ||spoiler|| to <tg-spoiler>", () => {
+    const out = convertMarkdownToHtml("the answer is ||42|| ok");
+    expect(out).toContain("<tg-spoiler>42</tg-spoiler>");
+    expect(out).not.toContain("||");
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
+  test("strike/spoiler nested with bold stay valid Telegram HTML", () => {
+    const out = convertMarkdownToHtml("**bold ~~struck~~** and ||**secret**||");
+    expect(isValidTelegramHtml(out)).toBe(true);
+    expect(out).toContain("<s>");
+    expect(out).toContain("<tg-spoiler>");
+  });
+});
+
+describe("convertMarkdownToHtml — code blocks", () => {
+  test("preserves fenced code block language as <pre><code class=language-X>", () => {
+    const md = "```python\nprint('hi')\n```";
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain('<pre><code class="language-python">');
+    expect(out).toContain("</code></pre>");
+    expect(out).toContain("print('hi')"); // content survives unescaped
+  });
+
+  test("fenced code without language stays a plain <pre>", () => {
+    const md = "```\nplain code\n```";
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain("<pre>plain code");
+    expect(out).not.toContain('class="language-');
+  });
+
+  test("escapes html-special chars inside code blocks", () => {
+    const md = "```html\n<div>&amp;</div>\n```";
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain("&lt;div&gt;");
+    expect(out).not.toContain("<div>");
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
+  test("does not apply markdown styling inside code blocks", () => {
+    const md = "```\n**not bold** _not italic_\n```";
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain("**not bold**");
+    expect(out).not.toContain("<b>not bold</b>");
+  });
+});
+
+describe("convertMarkdownToHtml — blockquotes", () => {
+  test("short blockquote is a plain <blockquote>", () => {
+    const out = convertMarkdownToHtml("> one line quote");
+    expect(out).toContain("<blockquote>");
+    expect(out).not.toContain("expandable");
+  });
+
+  test("long multi-line blockquote becomes expandable", () => {
+    const lines = Array.from({ length: 8 }, (_, i) => `> line ${i + 1}`);
+    const out = convertMarkdownToHtml(lines.join("\n"));
+    expect(out).toContain("<blockquote expandable>");
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
   test("drops horizontal rules", () => {
     const out = convertMarkdownToHtml("above\n---\nbelow");
     expect(out).not.toContain("---");
