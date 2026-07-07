@@ -38,8 +38,11 @@ describe("scheduler session isolation (red-green proof)", () => {
 
     // Import the actual configureAndStartScheduler
     // We need to test the WIRING, not just the function signature
-    const { configureSchedulerRuntime, getSchedulerRuntime, resetSchedulerRuntimeForTests } =
-      await import("./runtime-boundary");
+    const {
+      configureSchedulerRuntime,
+      getSchedulerRuntime,
+      resetSchedulerRuntimeForTests,
+    } = await import("./runtime-boundary");
 
     resetSchedulerRuntimeForTests();
 
@@ -63,7 +66,8 @@ describe("scheduler session isolation (red-green proof)", () => {
     );
 
     // The fix: execute function must use getSessionByKey (not getSession for userId)
-    const usesSessionByKey = runnerSource.includes("getSessionByKey(sessionKey)") ||
+    const usesSessionByKey =
+      runnerSource.includes("getSessionByKey(sessionKey)") ||
       runnerSource.includes("getSessionByKey(request.sessionKey)") ||
       runnerSource.includes("manager.getSessionByKey(sessionKey)");
     const usesUserSession = runnerSource.includes("manager.getSession(userId)");
@@ -165,8 +169,9 @@ describe("scheduler session isolation (red-green proof)", () => {
     // NEW: removed that call entirely — buffer is consumed directly in auto-continue loop
 
     // The old buggy pattern: check steering count then track
-    const hasOldBuggyPattern =
-      queryFlowSource.includes("session.trackBufferedMessagesForInjection()");
+    const hasOldBuggyPattern = queryFlowSource.includes(
+      "session.trackBufferedMessagesForInjection()"
+    );
 
     // RED on old code: trackBufferedMessagesForInjection was called → causes duplication
     // GREEN on new code: removed → no duplication

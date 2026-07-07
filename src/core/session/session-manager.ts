@@ -129,9 +129,8 @@ export class SessionManager {
   getSessionByKey(sessionKey: string): ClaudeSession {
     if (!this.sessions.has(sessionKey)) {
       const session = new ClaudeSession(sessionKey, this.chatCaptureService, {
-        workingDir: this.threadWorkdirProvider.getThreadWorkingDirFromSessionKey(
-          sessionKey
-        ),
+        workingDir:
+          this.threadWorkdirProvider.getThreadWorkingDirFromSessionKey(sessionKey),
         providerOrchestrator: this.providerOrchestrator,
       });
       this.sessions.set(sessionKey, session);

@@ -188,21 +188,23 @@ export async function bootstrapApplication(
   const sleep = dependencies.sleep ?? ((ms: number) => Bun.sleep(ms));
   const buildProviderOrchestrator =
     dependencies.createProviderOrchestrator ?? createProviderOrchestrator;
-  const execSyncFn = dependencies.execSync ?? ((command: string) => {
-    try {
-      const result = Bun.spawnSync(["bash", "-c", command], {
-        cwd: process.cwd(),
-        timeout: 120_000,
-      });
-      return {
-        status: result.exitCode,
-        stdout: result.stdout?.toString() || "",
-        stderr: result.stderr?.toString() || "",
-      };
-    } catch (e) {
-      return { status: 1, stdout: "", stderr: String(e) };
-    }
-  });
+  const execSyncFn =
+    dependencies.execSync ??
+    ((command: string) => {
+      try {
+        const result = Bun.spawnSync(["bash", "-c", command], {
+          cwd: process.cwd(),
+          timeout: 120_000,
+        });
+        return {
+          status: result.exitCode,
+          stdout: result.stdout?.toString() || "",
+          stderr: result.stderr?.toString() || "",
+        };
+      } catch (e) {
+        return { status: 1, stdout: "", stderr: String(e) };
+      }
+    });
 
   // Superpower: pending verification task to include in restart marker
   let pendingVerificationTask: VerificationTask | null = null;
@@ -331,12 +333,10 @@ export async function bootstrapApplication(
 
             // Proactive: auto-start fix without waiting for user message
             try {
-              console.log(`[SUPERPOWER] Proactive boot: auto-triggering fix for ${vt.bdTaskId}`);
-              await session.sendMessageStreaming(
-                fixPrompt,
-                async () => {},
-                userId,
+              console.log(
+                `[SUPERPOWER] Proactive boot: auto-triggering fix for ${vt.bdTaskId}`
               );
+              await session.sendMessageStreaming(fixPrompt, async () => {}, userId);
             } catch (e) {
               console.error(`[SUPERPOWER] Proactive fix trigger failed:`, e);
             }
@@ -353,7 +353,9 @@ export async function bootstrapApplication(
       fsOps.unlinkSync(RESTART_MARKER_FILE);
     } catch (e) {
       console.warn("[STARTUP] Failed to process restart marker:", e);
-      try { fsOps.unlinkSync(RESTART_MARKER_FILE); } catch (cleanupErr) {
+      try {
+        fsOps.unlinkSync(RESTART_MARKER_FILE);
+      } catch (cleanupErr) {
         console.error("[STARTUP] Failed to delete restart marker:", cleanupErr);
       }
     }
@@ -405,9 +407,10 @@ export async function bootstrapApplication(
       if (userId) {
         const session = manager.getSession(userId);
         const effectiveMax = session.actualContextMax ?? session.contextWindowSize;
-        ctxPct = effectiveMax > 0
-          ? ((session.currentContextTokens / effectiveMax) * 100).toFixed(1)
-          : "?";
+        ctxPct =
+          effectiveMax > 0
+            ? ((session.currentContextTokens / effectiveMax) * 100).toFixed(1)
+            : "?";
         contextInfo = `Context: ${ctxPct}% (${session.currentContextTokens.toLocaleString()}/${effectiveMax.toLocaleString()} tokens)`;
       }
 
@@ -500,7 +503,9 @@ export async function bootstrapApplication(
     const contextTokens = session.currentContextTokens;
     const contextSize = session.actualContextMax ?? session.contextWindowSize;
     const contextPct =
-      (contextTokens > 0 && contextSize > 0) ? ((contextTokens / contextSize) * 100).toFixed(1) : "?";
+      contextTokens > 0 && contextSize > 0
+        ? ((contextTokens / contextSize) * 100).toFixed(1)
+        : "?";
     const toolStats = session.formatToolStats();
 
     const lines = [
@@ -582,7 +587,9 @@ export async function bootstrapApplication(
           pendingVerificationTask = JSON.parse(
             fsOps.readFileSync(VERIFICATION_TASK_FILE, "utf-8")
           ) as VerificationTask;
-          console.log(`[SIGTERM] Loaded verification task from file: ${pendingVerificationTask.bdTaskId}`);
+          console.log(
+            `[SIGTERM] Loaded verification task from file: ${pendingVerificationTask.bdTaskId}`
+          );
           fsOps.unlinkSync(VERIFICATION_TASK_FILE);
         } catch (e) {
           console.warn("[SIGTERM] Failed to read verification task file:", e);
@@ -591,13 +598,11 @@ export async function bootstrapApplication(
 
       if (pendingVerificationTask) {
         markerData.verificationTask = pendingVerificationTask;
-        console.log(`[SIGTERM] Including verification task: ${pendingVerificationTask.bdTaskId}`);
+        console.log(
+          `[SIGTERM] Including verification task: ${pendingVerificationTask.bdTaskId}`
+        );
       }
-      fsOps.writeFileSync(
-        RESTART_MARKER_FILE,
-        JSON.stringify(markerData),
-        "utf-8"
-      );
+      fsOps.writeFileSync(RESTART_MARKER_FILE, JSON.stringify(markerData), "utf-8");
       console.log("[SIGTERM] Restart marker written");
     } catch (e) {
       console.error("[SIGTERM] Failed to write restart marker:", e);
@@ -610,7 +615,9 @@ export async function bootstrapApplication(
   const setVerificationTask = (task: VerificationTask | null): void => {
     pendingVerificationTask = task;
     if (task) {
-      console.log(`[SUPERPOWER] Verification task set: ${task.bdTaskId} — ${task.description}`);
+      console.log(
+        `[SUPERPOWER] Verification task set: ${task.bdTaskId} — ${task.description}`
+      );
     } else {
       console.log("[SUPERPOWER] Verification task cleared");
     }

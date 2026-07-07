@@ -185,7 +185,8 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         if (session.needsSave) {
           const currentTokens = session.currentContextTokens;
           const windowSize = session.actualContextMax ?? session.contextWindowSize;
-          const percentage = windowSize > 0 ? ((currentTokens / windowSize) * 100).toFixed(1) : "?";
+          const percentage =
+            windowSize > 0 ? ((currentTokens / windowSize) * 100).toFixed(1) : "?";
           await sendSystemMessage(
             ctx,
             `⚠️ **Context Limit Approaching**\n\n` +
@@ -275,11 +276,16 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
         break;
       } catch (error) {
         if (isReentrancyError(error)) {
-          console.warn(`[QUERY] Re-entrancy guard hit, buffering as steering: "${message.slice(0, 50)}"`);
+          console.warn(
+            `[QUERY] Re-entrancy guard hit, buffering as steering: "${message.slice(0, 50)}"`
+          );
           const msgId = ctx.message?.message_id ?? 0;
           session.addSteering(message, msgId);
           try {
-            await sendSystemMessage(ctx, "⏳ 이전 요청 처리 중입니다. 메시지가 대기열에 추가되었습니다.");
+            await sendSystemMessage(
+              ctx,
+              "⏳ 이전 요청 처리 중입니다. 메시지가 대기열에 추가되었습니다."
+            );
           } catch {}
           return;
         }

@@ -19,7 +19,10 @@ import { runQueryFlow } from "./query-flow";
 
 // ─── Mock Factories ────────────────────────────────────────────────
 
-function createMockContext(messageText: string, messageId = 100): {
+function createMockContext(
+  messageText: string,
+  messageId = 100
+): {
   ctx: Context;
   state: {
     replies: string[];
@@ -52,12 +55,10 @@ function createMockContext(messageText: string, messageId = 100): {
       ),
       editMessageText: mock(async () => true),
       deleteMessage: mock(async () => true),
-      sendMessage: mock(
-        async (_chatId: number, text: string, _opts?: any) => {
-          state.systemMessages.push(text);
-          return { message_id: msgSeq++, chat: { id: 456 } };
-        }
-      ),
+      sendMessage: mock(async (_chatId: number, text: string, _opts?: any) => {
+        state.systemMessages.push(text);
+        return { message_id: msgSeq++, chat: { id: 456 } };
+      }),
     },
     reply: mock(async (text: string, _opts?: any) => {
       state.replies.push(text);

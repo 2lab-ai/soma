@@ -17,7 +17,7 @@ function createInMemorySessionStore(): SessionStore & { saved: Map<string, unkno
     saved,
     ensureDirectory: () => {},
     getSessionFilePath: (key: string) => `/tmp/test-sessions/${key}.json`,
-    loadSession: (key: string) => saved.get(key) as any ?? null,
+    loadSession: (key: string) => (saved.get(key) as any) ?? null,
     saveSession: (key: string, session: unknown) => {
       saved.set(key, session);
     },

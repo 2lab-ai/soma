@@ -54,7 +54,7 @@ describe("isPathAllowed", () => {
   test("handles tilde expansion", () => {
     // ~ should expand to HOME
     const home = process.env.HOME;
-    if (home && ALLOWED_PATHS.some(p => p.startsWith(home))) {
+    if (home && ALLOWED_PATHS.some((p) => p.startsWith(home))) {
       expect(isPathAllowed("~/2lab.ai")).toBe(true);
     }
   });

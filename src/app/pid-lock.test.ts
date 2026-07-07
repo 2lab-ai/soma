@@ -4,7 +4,9 @@ import { existsSync, unlinkSync, writeFileSync, readFileSync } from "fs";
 const TEST_PID_FILE = "/tmp/soma-test.pid";
 
 afterEach(() => {
-  try { unlinkSync(TEST_PID_FILE); } catch {}
+  try {
+    unlinkSync(TEST_PID_FILE);
+  } catch {}
 });
 
 describe("BUG soma-reentry-v2: PID lock prevents duplicate bot instances", () => {

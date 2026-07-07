@@ -370,7 +370,8 @@ describe("Superpower: proactive boot (soma-70kl)", () => {
     expect(session.sendMessageStreaming).toHaveBeenCalledTimes(1);
 
     // The prompt should contain fix instructions
-    const call = (session.sendMessageStreaming as ReturnType<typeof mock>).mock.calls[0];
+    const call = (session.sendMessageStreaming as ReturnType<typeof mock>).mock
+      .calls[0];
     const prompt = call?.[0] as string;
     expect(prompt).toContain("검증 실패");
     expect(prompt).toContain("soma-test");
@@ -452,7 +453,8 @@ describe("Superpower: proactive boot (soma-70kl)", () => {
       execSync: mock(() => ({ status: 1, stdout: "Expected 3 got 6", stderr: "FAIL" })),
     });
 
-    const call = (session.sendMessageStreaming as ReturnType<typeof mock>).mock.calls[0];
+    const call = (session.sendMessageStreaming as ReturnType<typeof mock>).mock
+      .calls[0];
     const prompt = call?.[0] as string;
     expect(prompt).toContain("bun test failing.test.ts");
     expect(prompt).toContain("soma-xyz");

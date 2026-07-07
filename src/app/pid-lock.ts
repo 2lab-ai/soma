@@ -39,7 +39,9 @@ export function acquirePidLock(pidFile = DEFAULT_PID_FILE): void {
           console.warn(`[PID-LOCK] Killing stale bot process ${existingPid}`);
           killProcess(existingPid);
         } else {
-          console.log(`[PID-LOCK] Stale PID file (process ${existingPid} dead), overwriting`);
+          console.log(
+            `[PID-LOCK] Stale PID file (process ${existingPid} dead), overwriting`
+          );
         }
       }
     } catch (e) {
