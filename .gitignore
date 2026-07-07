@@ -52,3 +52,7 @@ install.txt
 
 # Chat history data (NDJSON files, summaries)
 data/
+
+# cleanup sweep 2026-07-08
+__pycache__/
+*.pyc
