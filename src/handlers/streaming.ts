@@ -4,7 +4,11 @@ import { streamApi } from "@grammyjs/stream";
 import { sessionManager } from "../core/session/session-manager";
 import type { QueryMetadata, StatusCallback } from "../types/runtime";
 import type { ClaudeSession } from "../core/session/session";
-import { convertMarkdownToHtml, escapeHtml } from "../formatting";
+import {
+  convertMarkdownToHtml,
+  escapeHtml,
+  splitTelegramHtml,
+} from "../formatting";
 import { UserChoiceExtractor } from "../utils/user-choice-extractor";
 import { TelegramChoiceBuilder } from "../utils/telegram-choice-builder";
 import type { UserChoice, UserChoices } from "../types/user-choice";
@@ -658,8 +662,9 @@ export async function createStatusCallback(
 
         let lastChunkMsg: Message | null = null;
         let lastChunkContent: string | null = null;
-        for (let i = 0; i < formatted.length; i += TELEGRAM_SAFE_LIMIT) {
-          const chunk = formatted.slice(i, i + TELEGRAM_SAFE_LIMIT);
+        // HTML-aware split: blind slicing can cut through tags/entities and
+        // leave chunks Telegram rejects with 400 (raw-tag plain-text fallback).
+        for (const chunk of splitTelegramHtml(formatted, TELEGRAM_SAFE_LIMIT)) {
           try {
             lastChunkMsg = await ctx.reply(chunk, { parse_mode: "HTML" });
             lastChunkContent = chunk;

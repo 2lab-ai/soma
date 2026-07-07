@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { balanceTelegramHtml, convertMarkdownToHtml } from "./formatting";
+import { balanceTelegramHtml, convertMarkdownToHtml, splitTelegramHtml } from "./formatting";
 
 /**
  * Telegram accepts nested inline tags but rejects overlap or stray closes.
@@ -255,5 +255,82 @@ describe("convertMarkdownToHtml — tables", () => {
     expect(out).toContain("<pre>");
     expect(out).not.toContain("|------|");
     expect(out).not.toContain("**");
+  });
+});
+
+describe("splitTelegramHtml — HTML-aware message chunking", () => {
+  const stripTags = (html: string) => html.replace(/<[^>]+>/g, "");
+
+  test("short input returns a single unchanged chunk", () => {
+    const html = "<b>hello</b> world";
+    expect(splitTelegramHtml(html, 4000)).toEqual([html]);
+  });
+
+  test("every chunk is valid Telegram HTML and within the limit", () => {
+    const body = Array.from({ length: 60 }, (_, i) => `line ${i} of the report`).join("\n");
+    const html = `<b>${body}</b>`;
+    const chunks = splitTelegramHtml(html, 200);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(200);
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+    }
+  });
+
+  test("visible text is preserved across chunks (no loss, no reorder)", () => {
+    const body = Array.from({ length: 40 }, (_, i) => `row-${i}`).join("\n");
+    const html = `<blockquote>${body}</blockquote>`;
+    const chunks = splitTelegramHtml(html, 150);
+    // boundary newlines are consumed at split points; re-add via join("\n")
+    expect(stripTags(chunks.join("\n"))).toBe(stripTags(html));
+  });
+
+  test("never cuts inside a tag or an HTML entity", () => {
+    const body = ("x".repeat(20) + " &amp; " + "y".repeat(20) + "\n").repeat(30);
+    const html = `<i>${body}</i>`;
+    const chunks = splitTelegramHtml(html, 120);
+    for (const chunk of chunks) {
+      // no dangling partial tag
+      expect(chunk.lastIndexOf("<")).toBeLessThanOrEqual(chunk.lastIndexOf(">"));
+      // no split entity like "&am" at end
+      expect(/&[a-zA-Z#0-9]*$/.test(chunk)).toBe(false);
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+    }
+  });
+
+  test("formatting continues across the boundary (tags reopened)", () => {
+    const body = Array.from({ length: 50 }, (_, i) => `bold line ${i}`).join("\n");
+    const html = `<b>${body}</b>`;
+    const chunks = splitTelegramHtml(html, 180);
+    // every chunk that carries body text keeps the <b> context
+    for (const chunk of chunks) {
+      if (stripTags(chunk).trim().length > 0) {
+        expect(chunk).toContain("<b>");
+        expect(chunk).toContain("</b>");
+      }
+    }
+  });
+
+  test("prefers newline boundaries when available", () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `paragraph number ${i} with some words`);
+    const chunks = splitTelegramHtml(lines.join("\n"), 100);
+    for (const chunk of chunks.slice(0, -1)) {
+      // cuts land at line ends, so chunks must not end mid-word
+      expect(/\S{1,}$/.test(chunk) ? chunk.endsWith(lines.find((l) => chunk.endsWith(l)) ?? "\u0000") : true).toBe(true);
+    }
+    expect(chunks.join("\n")).toBe(lines.join("\n"));
+  });
+
+  test("pre/code blocks split safely with language class carried over", () => {
+    const code = Array.from({ length: 40 }, (_, i) => `const v${i} = ${i};`).join("\n");
+    const html = `<pre><code class="language-ts">${code}</code></pre>`;
+    const chunks = splitTelegramHtml(html, 200);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+      if (stripTags(chunk).trim()) {
+        expect(chunk).toContain('<code class="language-ts">');
+      }
+    }
   });
 });
