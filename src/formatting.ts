@@ -97,10 +97,20 @@ export function convertMarkdownToHtml(text: string): string {
     text = text.replace(`\x00CODEBLOCK${i}\x00`, block);
   }
 
-  // Restore inline code
+  // Restore inline code. A placeholder that ended up inside a <pre> block
+  // (e.g. backticks in a table cell) is restored as plain escaped text —
+  // Telegram rejects <code> nested inside pre.
   for (let i = 0; i < inlineCodes.length; i++) {
+    const placeholder = `\x00INLINECODE${i}\x00`;
+    const idx = text.indexOf(placeholder);
+    if (idx === -1) continue;
     const escapedCode = escapeHtml(inlineCodes[i]!);
-    text = text.replace(`\x00INLINECODE${i}\x00`, `<code>${escapedCode}</code>`);
+    const before = text.slice(0, idx);
+    const preOpens = (before.match(/<pre(?:\s|>)/g) || []).length;
+    const preCloses = (before.match(/<\/pre>/g) || []).length;
+    const restored =
+      preOpens > preCloses ? escapedCode : `<code>${escapedCode}</code>`;
+    text = text.replace(placeholder, restored);
   }
 
   // Collapse multiple newlines
@@ -267,14 +277,20 @@ export function splitTelegramHtml(html: string, limit: number): string[] {
     return cut;
   };
 
+  // Open tags too large to ever fit a chunk (e.g. an <a href> with an
+  // extremely long URL) are dropped along with their matching close — the
+  // visible text is kept, only the styling wrapper degrades. Emitting them
+  // would either exceed the limit or reopen an oversized tag forever.
+  const skippedOpens: Record<string, number> = {};
+
   for (const token of tokens) {
     if (token.kind === "open") {
-      // Reserve room for this tag plus its own close.
-      if (
-        cur.length + token.text.length + closeLen() + token.name.length + 3 >
-          limit &&
-        curHasContent
-      ) {
+      const tagCost = token.text.length + token.name.length + 3; // open + close
+      if (reopen().length + tagCost + closeLen() > limit) {
+        skippedOpens[token.name] = (skippedOpens[token.name] ?? 0) + 1;
+        continue;
+      }
+      if (cur.length + tagCost + closeLen() > limit && curHasContent) {
         flush();
       }
       stack.push({ name: token.name, text: token.text });
@@ -283,6 +299,10 @@ export function splitTelegramHtml(html: string, limit: number): string[] {
     }
 
     if (token.kind === "close") {
+      if (skippedOpens[token.name]) {
+        skippedOpens[token.name]!--;
+        continue;
+      }
       cur += token.text;
       // Input is balanced, so this matches the top of the stack.
       const idx = stack.map((t) => t.name).lastIndexOf(token.name);
@@ -292,22 +312,22 @@ export function splitTelegramHtml(html: string, limit: number): string[] {
 
     // Text line token.
     let text = token.text;
-    while (cur.length + text.length + closeLen() > limit) {
-      const budget = limit - cur.length - closeLen();
-      if (budget <= 0 || !curHasContent) {
-        // Line longer than a whole chunk budget: hard-split it.
-        const hardBudget = Math.max(1, limit - cur.length - closeLen());
-        let cut = text.lastIndexOf(" ", hardBudget);
-        if (cut <= 0) cut = hardBudget;
-        cut = entitySafeCut(text, Math.min(cut, hardBudget));
-        if (cut <= 0) cut = Math.min(hardBudget, text.length);
-        cur += text.slice(0, cut);
-        curHasContent = true;
-        text = text.slice(cut).replace(/^ /, "");
+    while (text && cur.length + text.length + closeLen() > limit) {
+      if (curHasContent) {
+        // Cut at the current boundary and retry on a fresh chunk.
         flush();
         continue;
       }
-      flush();
+      // Fresh chunk and the line still does not fit: hard-split it.
+      const hardBudget = Math.max(1, limit - cur.length - closeLen());
+      let cut = text.lastIndexOf(" ", hardBudget);
+      if (cut <= 0) cut = Math.min(hardBudget, text.length);
+      const safeCut = entitySafeCut(text, Math.min(cut, hardBudget));
+      if (safeCut > 0) cut = safeCut;
+      cur += text.slice(0, cut);
+      curHasContent = true;
+      text = text.slice(cut).replace(/^ /, "");
+      if (text) flush();
     }
     cur += text;
     if (text.trim()) curHasContent = true;
@@ -415,13 +435,20 @@ function displayWidth(text: string): number {
   return width;
 }
 
-/** Strip markdown emphasis markers from a (already HTML-escaped) table cell. */
+/**
+ * Strip markdown inline markers from a (already HTML-escaped) table cell.
+ * Cells end up inside a <pre> block, and Telegram rejects formatting entities
+ * nested in pre/code — so emphasis, strikethrough and links must be reduced to
+ * their plain text here, before the later inline passes run.
+ */
 function stripCellEmphasis(cell: string): string {
   return cell
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/__(.+?)__/g, "$1")
     .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "$1")
     .replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
     .trim();
 }
 
