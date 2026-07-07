@@ -334,3 +334,50 @@ describe("splitTelegramHtml — HTML-aware message chunking", () => {
     }
   });
 });
+
+describe("codex review findings — pre/code must not contain formatting entities", () => {
+  test("~~strike~~ inside a table cell does not inject <s> into the <pre>", () => {
+    const md = ["| task | state |", "|---|---|", "| cleanup | ~~done~~ |"].join("\n");
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain("<pre>");
+    expect(out).not.toMatch(/<pre>[^]*?<s>/);
+    expect(out).toContain("done");
+  });
+
+  test("[link](url) inside a table cell does not inject <a> into the <pre>", () => {
+    const md = ["| name | ref |", "|---|---|", "| doc | [spec](https://x.com) |"].join("\n");
+    const out = convertMarkdownToHtml(md);
+    expect(out).not.toMatch(/<pre>[^]*?<a /);
+    expect(out).toContain("spec");
+  });
+
+  test("`inline code` inside a table cell does not inject <code> into the <pre>", () => {
+    const md = ["| fn | use |", "|---|---|", "| run | `bun test` |"].join("\n");
+    const out = convertMarkdownToHtml(md);
+    expect(out).not.toMatch(/<pre>[^]*?<code>/);
+    expect(out).toContain("bun test");
+  });
+});
+
+describe("codex review findings — splitTelegramHtml degenerate inputs", () => {
+  test("an open tag too large for the limit is dropped, not looped forever", () => {
+    const url = "https://example.com/" + "q".repeat(300);
+    const html = `<a href="${url}">click here</a> ` + "word ".repeat(100);
+    const chunks = splitTelegramHtml(html, 120);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(120);
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+    }
+    expect(chunks.join(" ")).toContain("click here");
+  });
+
+  test("hard cuts never leave a chunk over the limit even mid-word", () => {
+    const html = "<b>" + "x".repeat(500) + "</b>";
+    const chunks = splitTelegramHtml(html, 100);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(100);
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+    }
+    expect(chunks.map((c) => c.replace(/<[^>]+>/g, "")).join("")).toBe("x".repeat(500));
+  });
+});
