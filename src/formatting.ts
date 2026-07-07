@@ -23,14 +23,19 @@ export function escapeHtml(text: string): string {
  */
 export function convertMarkdownToHtml(text: string): string {
   // Store code blocks temporarily to avoid processing their contents
-  const codeBlocks: string[] = [];
+  const codeBlocks: Array<{ code: string; lang: string }> = [];
   const inlineCodes: string[] = [];
 
-  // Save code blocks first (```code```)
-  text = text.replace(/```(?:\w+)?\n?([\s\S]*?)```/g, (_, code) => {
-    codeBlocks.push(code);
-    return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
-  });
+  // Save code blocks first (```lang\ncode```). The optional language is kept so
+  // it can be re-emitted as <pre><code class="language-X"> for Telegram syntax
+  // highlighting (Bot API: a programming language is set via nested pre+code).
+  text = text.replace(
+    /```([a-zA-Z0-9_+-]*)[ \t]*\r?\n?([\s\S]*?)```/g,
+    (_, lang: string, code: string) => {
+      codeBlocks.push({ code, lang: lang || "" });
+      return `\x00CODEBLOCK${codeBlocks.length - 1}\x00`;
+    }
+  );
 
   // Save inline code (`code`)
   text = text.replace(/`([^`]+)`/g, (_, code) => {
@@ -52,14 +57,22 @@ export function convertMarkdownToHtml(text: string): string {
   // Bold: **text** -> <b>text</b>
   text = text.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 
-  // Also handle *text* as bold (single asterisk)
-  text = text.replace(/(?<!\*)\*(.+?)\*(?!\*)/g, "<b>$1</b>");
+  // Italic: *text* -> <i>text</i> (single asterisk = italic in standard
+  // markdown; ** is already consumed above so only lone * remains).
+  text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<i>$1</i>");
 
   // Double underscore: __text__ -> <b>text</b>
   text = text.replace(/__([^_]+)__/g, "<b>$1</b>");
 
   // Italic: _text_ -> <i>text</i> (but not __text__)
   text = text.replace(/(?<!_)_([^_]+)_(?!_)/g, "<i>$1</i>");
+
+  // Strikethrough: ~~text~~ -> <s>text</s>
+  text = text.replace(/~~(.+?)~~/g, "<s>$1</s>");
+
+  // Spoiler: ||text|| -> <tg-spoiler>text</tg-spoiler> (MarkdownV2 spoiler
+  // syntax). Restricted to a single line so it never swallows table pipes.
+  text = text.replace(/\|\|([^\n]+?)\|\|/g, "<tg-spoiler>$1</tg-spoiler>");
 
   // Blockquotes: &gt; text -> <blockquote>text</blockquote>
   text = convertBlockquotes(text);
@@ -73,16 +86,31 @@ export function convertMarkdownToHtml(text: string): string {
   // Links: [text](url) -> <a href="url">text</a>
   text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
-  // Restore code blocks
+  // Restore code blocks. With a language, nest <code class="language-X"> inside
+  // <pre> so Telegram applies syntax highlighting; otherwise a plain <pre>.
   for (let i = 0; i < codeBlocks.length; i++) {
-    const escapedCode = escapeHtml(codeBlocks[i]!);
-    text = text.replace(`\x00CODEBLOCK${i}\x00`, `<pre>${escapedCode}</pre>`);
+    const { code: rawCode, lang } = codeBlocks[i]!;
+    const escapedCode = escapeHtml(rawCode);
+    const block = lang
+      ? `<pre><code class="language-${lang}">${escapedCode}</code></pre>`
+      : `<pre>${escapedCode}</pre>`;
+    text = text.replace(`\x00CODEBLOCK${i}\x00`, block);
   }
 
-  // Restore inline code
+  // Restore inline code. A placeholder that ended up inside a <pre> block
+  // (e.g. backticks in a table cell) is restored as plain escaped text —
+  // Telegram rejects <code> nested inside pre.
   for (let i = 0; i < inlineCodes.length; i++) {
+    const placeholder = `\x00INLINECODE${i}\x00`;
+    const idx = text.indexOf(placeholder);
+    if (idx === -1) continue;
     const escapedCode = escapeHtml(inlineCodes[i]!);
-    text = text.replace(`\x00INLINECODE${i}\x00`, `<code>${escapedCode}</code>`);
+    const before = text.slice(0, idx);
+    const preOpens = (before.match(/<pre(?:\s|>)/g) || []).length;
+    const preCloses = (before.match(/<\/pre>/g) || []).length;
+    const restored =
+      preOpens > preCloses ? escapedCode : `<code>${escapedCode}</code>`;
+    text = text.replace(placeholder, restored);
   }
 
   // Collapse multiple newlines
@@ -159,7 +187,187 @@ export function balanceTelegramHtml(html: string): string {
 }
 
 /**
- * Convert blockquotes (handles multi-line).
+ * Split Telegram-flavored HTML into chunks that each fit `limit` characters and
+ * are each independently valid Telegram HTML.
+ *
+ * Blindly slicing formatted HTML (the old `slice(i, i + LIMIT)` approach) can
+ * cut through a tag (`<blockqu|ote>`), an entity (`&am|p;`) or leave a tag
+ * unclosed in one chunk — Telegram then rejects the chunk with 400 and the
+ * caller falls back to plain text, showing raw `<b>` markup to the user.
+ *
+ * Strategy:
+ * - tags are atomic tokens; text is split per line, so cuts prefer line
+ *   boundaries (the boundary newline is consumed — chunks are separate
+ *   messages and Telegram trims surrounding whitespace anyway);
+ * - open tags are tracked on a stack; at a cut, every open tag is closed at
+ *   the end of the chunk and reopened (with original attributes) at the start
+ *   of the next one, so inline styling continues seamlessly;
+ * - a single line longer than the remaining budget is hard-split at a space
+ *   when possible, never inside an `&...;` entity;
+ * - the budget always reserves room for the synthetic closing tags, so no
+ *   chunk ever exceeds `limit`. Telegram's 4096 limit counts text after
+ *   entity parsing; raw HTML length is an upper bound of that, so capping the
+ *   raw chunk at `limit` (<= 4096) is safe.
+ *
+ * Input is expected to be balanced (output of convertMarkdownToHtml /
+ * balanceTelegramHtml).
+ */
+export function splitTelegramHtml(html: string, limit: number): string[] {
+  if (html.length <= limit) return [html];
+
+  const TAG_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*)?>/g;
+
+  type Token =
+    | { kind: "open"; name: string; text: string }
+    | { kind: "close"; name: string; text: string }
+    | { kind: "line"; text: string; newlineAfter: boolean };
+
+  // ---- Tokenize: tags are atomic, text becomes per-line tokens. ----
+  const tokens: Token[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  const pushText = (raw: string) => {
+    if (!raw) return;
+    const lines = raw.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const isLast = i === lines.length - 1;
+      if (lines[i] !== "" || !isLast) {
+        tokens.push({ kind: "line", text: lines[i]!, newlineAfter: !isLast });
+      }
+    }
+  };
+  while ((m = TAG_RE.exec(html)) !== null) {
+    pushText(html.slice(last, m.index));
+    last = TAG_RE.lastIndex;
+    const name = m[2]!.toLowerCase();
+    tokens.push(
+      m[1] === "/"
+        ? { kind: "close", name, text: m[0] }
+        : { kind: "open", name, text: m[0] }
+    );
+  }
+  pushText(html.slice(last));
+
+  // ---- Greedy packing with tag-stack carry-over. ----
+  const chunks: string[] = [];
+  const stack: Array<{ name: string; text: string }> = [];
+  let cur = "";
+  let curHasContent = false; // any visible text beyond reopened tags
+
+  const closeLen = () =>
+    stack.reduce((acc, t) => acc + t.name.length + 3, 0); // "</name>"
+  const reopen = () => stack.map((t) => t.text).join("");
+
+  const flush = () => {
+    // The boundary newline is consumed: chunks are separate messages, and
+    // Telegram trims trailing whitespace anyway.
+    let out = cur.replace(/\n+$/, "");
+    for (let i = stack.length - 1; i >= 0; i--) out += `</${stack[i]!.name}>`;
+    chunks.push(out);
+    cur = reopen();
+    curHasContent = false;
+  };
+
+  /** Back the cut position off so it never lands inside an `&...;` entity. */
+  const entitySafeCut = (text: string, cut: number): number => {
+    const amp = text.lastIndexOf("&", cut - 1);
+    if (amp !== -1 && amp >= cut - 10 && !text.slice(amp, cut).includes(";")) {
+      return amp;
+    }
+    return cut;
+  };
+
+  // Open tags too large to ever fit a chunk (e.g. an <a href> with an
+  // extremely long URL) are dropped along with their matching close — the
+  // visible text is kept, only the styling wrapper degrades. Emitting them
+  // would either exceed the limit or reopen an oversized tag forever.
+  const skippedOpens: Record<string, number> = {};
+
+  for (const token of tokens) {
+    if (token.kind === "open") {
+      const tagCost = token.text.length + token.name.length + 3; // open + close
+      if (reopen().length + tagCost + closeLen() > limit) {
+        skippedOpens[token.name] = (skippedOpens[token.name] ?? 0) + 1;
+        continue;
+      }
+      if (cur.length + tagCost + closeLen() > limit && curHasContent) {
+        flush();
+      }
+      stack.push({ name: token.name, text: token.text });
+      cur += token.text;
+      continue;
+    }
+
+    if (token.kind === "close") {
+      if (skippedOpens[token.name]) {
+        skippedOpens[token.name]!--;
+        continue;
+      }
+      cur += token.text;
+      // Input is balanced, so this matches the top of the stack.
+      const idx = stack.map((t) => t.name).lastIndexOf(token.name);
+      if (idx !== -1) stack.splice(idx, 1);
+      continue;
+    }
+
+    // Text line token.
+    let text = token.text;
+    while (text && cur.length + text.length + closeLen() > limit) {
+      if (curHasContent) {
+        // Cut at the current boundary and retry on a fresh chunk.
+        flush();
+        continue;
+      }
+      // Fresh chunk and the line still does not fit: hard-split it.
+      const hardBudget = Math.max(1, limit - cur.length - closeLen());
+      let cut = text.lastIndexOf(" ", hardBudget);
+      if (cut <= 0) cut = Math.min(hardBudget, text.length);
+      const safeCut = entitySafeCut(text, Math.min(cut, hardBudget));
+      if (safeCut > 0) cut = safeCut;
+      cur += text.slice(0, cut);
+      curHasContent = true;
+      text = text.slice(cut).replace(/^ /, "");
+      if (text) flush();
+    }
+    cur += text;
+    if (text.trim()) curHasContent = true;
+    if (token.newlineAfter) {
+      // Keep the newline if it fits; otherwise cut here (newline consumed).
+      if (cur.length + 1 + closeLen() > limit) {
+        flush();
+      } else {
+        cur += "\n";
+      }
+    }
+  }
+
+  if (curHasContent || (cur && cur !== reopen())) {
+    flush();
+  }
+
+  // Drop whitespace-only chunks (can appear around cut points).
+  return chunks.filter((c) => c.replace(/<[^>]+>/g, "").trim() !== "");
+}
+
+/**
+ * A blockquote longer than this many lines, or wider than this many characters,
+ * is rendered as `<blockquote expandable>` so it collapses by default instead of
+ * flooding the chat. Telegram shows a "Show more" affordance for these.
+ */
+const BLOCKQUOTE_EXPAND_LINES = 6;
+const BLOCKQUOTE_EXPAND_CHARS = 350;
+
+/** Wrap collected quote lines, choosing expandable form for long quotes. */
+function renderBlockquote(lines: string[]): string {
+  const body = lines.join("\n");
+  const expandable =
+    lines.length >= BLOCKQUOTE_EXPAND_LINES || body.length >= BLOCKQUOTE_EXPAND_CHARS;
+  const tag = expandable ? "<blockquote expandable>" : "<blockquote>";
+  return tag + body + "</blockquote>";
+}
+
+/**
+ * Convert blockquotes (handles multi-line). Long quotes become expandable.
  */
 function convertBlockquotes(text: string): string {
   const lines = text.split("\n");
@@ -179,7 +387,7 @@ function convertBlockquotes(text: string): string {
       inBlockquote = true;
     } else {
       if (inBlockquote) {
-        result.push("<blockquote>" + blockquoteLines.join("\n") + "</blockquote>");
+        result.push(renderBlockquote(blockquoteLines));
         blockquoteLines.length = 0;
         inBlockquote = false;
       }
@@ -189,7 +397,7 @@ function convertBlockquotes(text: string): string {
 
   // Handle blockquote at end
   if (inBlockquote) {
-    result.push("<blockquote>" + blockquoteLines.join("\n") + "</blockquote>");
+    result.push(renderBlockquote(blockquoteLines));
   }
 
   return result.join("\n");
@@ -227,13 +435,20 @@ function displayWidth(text: string): number {
   return width;
 }
 
-/** Strip markdown emphasis markers from a (already HTML-escaped) table cell. */
+/**
+ * Strip markdown inline markers from a (already HTML-escaped) table cell.
+ * Cells end up inside a <pre> block, and Telegram rejects formatting entities
+ * nested in pre/code — so emphasis, strikethrough and links must be reduced to
+ * their plain text here, before the later inline passes run.
+ */
 function stripCellEmphasis(cell: string): string {
   return cell
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/__(.+?)__/g, "$1")
     .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "$1")
     .replace(/(?<!_)_(?!_)(.+?)(?<!_)_(?!_)/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
     .trim();
 }
 

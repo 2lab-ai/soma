@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { balanceTelegramHtml, convertMarkdownToHtml } from "./formatting";
+import { balanceTelegramHtml, convertMarkdownToHtml, splitTelegramHtml } from "./formatting";
 
 /**
  * Telegram accepts nested inline tags but rejects overlap or stray closes.
@@ -106,6 +106,87 @@ describe("convertMarkdownToHtml — inline styling", () => {
     expect(out).not.toContain("## ");
   });
 
+  test("single *asterisk* is italic, not bold (standard markdown)", () => {
+    const out = convertMarkdownToHtml("this is *emphasis* here");
+    expect(out).toContain("<i>emphasis</i>");
+    expect(out).not.toContain("<b>emphasis</b>");
+    expect(out).not.toContain("*");
+  });
+
+  test("double **asterisks** stay bold even with single-asterisk rule", () => {
+    const out = convertMarkdownToHtml("**strong** and *weak*");
+    expect(out).toContain("<b>strong</b>");
+    expect(out).toContain("<i>weak</i>");
+  });
+
+  test("converts ~~strikethrough~~ to <s>", () => {
+    const out = convertMarkdownToHtml("this is ~~gone~~ now");
+    expect(out).toContain("<s>gone</s>");
+    expect(out).not.toContain("~~");
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
+  test("converts ||spoiler|| to <tg-spoiler>", () => {
+    const out = convertMarkdownToHtml("the answer is ||42|| ok");
+    expect(out).toContain("<tg-spoiler>42</tg-spoiler>");
+    expect(out).not.toContain("||");
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
+  test("strike/spoiler nested with bold stay valid Telegram HTML", () => {
+    const out = convertMarkdownToHtml("**bold ~~struck~~** and ||**secret**||");
+    expect(isValidTelegramHtml(out)).toBe(true);
+    expect(out).toContain("<s>");
+    expect(out).toContain("<tg-spoiler>");
+  });
+});
+
+describe("convertMarkdownToHtml — code blocks", () => {
+  test("preserves fenced code block language as <pre><code class=language-X>", () => {
+    const md = "```python\nprint('hi')\n```";
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain('<pre><code class="language-python">');
+    expect(out).toContain("</code></pre>");
+    expect(out).toContain("print('hi')"); // content survives unescaped
+  });
+
+  test("fenced code without language stays a plain <pre>", () => {
+    const md = "```\nplain code\n```";
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain("<pre>plain code");
+    expect(out).not.toContain('class="language-');
+  });
+
+  test("escapes html-special chars inside code blocks", () => {
+    const md = "```html\n<div>&amp;</div>\n```";
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain("&lt;div&gt;");
+    expect(out).not.toContain("<div>");
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
+  test("does not apply markdown styling inside code blocks", () => {
+    const md = "```\n**not bold** _not italic_\n```";
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain("**not bold**");
+    expect(out).not.toContain("<b>not bold</b>");
+  });
+});
+
+describe("convertMarkdownToHtml — blockquotes", () => {
+  test("short blockquote is a plain <blockquote>", () => {
+    const out = convertMarkdownToHtml("> one line quote");
+    expect(out).toContain("<blockquote>");
+    expect(out).not.toContain("expandable");
+  });
+
+  test("long multi-line blockquote becomes expandable", () => {
+    const lines = Array.from({ length: 8 }, (_, i) => `> line ${i + 1}`);
+    const out = convertMarkdownToHtml(lines.join("\n"));
+    expect(out).toContain("<blockquote expandable>");
+    expect(isValidTelegramHtml(out)).toBe(true);
+  });
+
   test("drops horizontal rules", () => {
     const out = convertMarkdownToHtml("above\n---\nbelow");
     expect(out).not.toContain("---");
@@ -174,5 +255,129 @@ describe("convertMarkdownToHtml — tables", () => {
     expect(out).toContain("<pre>");
     expect(out).not.toContain("|------|");
     expect(out).not.toContain("**");
+  });
+});
+
+describe("splitTelegramHtml — HTML-aware message chunking", () => {
+  const stripTags = (html: string) => html.replace(/<[^>]+>/g, "");
+
+  test("short input returns a single unchanged chunk", () => {
+    const html = "<b>hello</b> world";
+    expect(splitTelegramHtml(html, 4000)).toEqual([html]);
+  });
+
+  test("every chunk is valid Telegram HTML and within the limit", () => {
+    const body = Array.from({ length: 60 }, (_, i) => `line ${i} of the report`).join("\n");
+    const html = `<b>${body}</b>`;
+    const chunks = splitTelegramHtml(html, 200);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(200);
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+    }
+  });
+
+  test("visible text is preserved across chunks (no loss, no reorder)", () => {
+    const body = Array.from({ length: 40 }, (_, i) => `row-${i}`).join("\n");
+    const html = `<blockquote>${body}</blockquote>`;
+    const chunks = splitTelegramHtml(html, 150);
+    // boundary newlines are consumed at split points; re-add via join("\n")
+    expect(stripTags(chunks.join("\n"))).toBe(stripTags(html));
+  });
+
+  test("never cuts inside a tag or an HTML entity", () => {
+    const body = ("x".repeat(20) + " &amp; " + "y".repeat(20) + "\n").repeat(30);
+    const html = `<i>${body}</i>`;
+    const chunks = splitTelegramHtml(html, 120);
+    for (const chunk of chunks) {
+      // no dangling partial tag
+      expect(chunk.lastIndexOf("<")).toBeLessThanOrEqual(chunk.lastIndexOf(">"));
+      // no split entity like "&am" at end
+      expect(/&[a-zA-Z#0-9]*$/.test(chunk)).toBe(false);
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+    }
+  });
+
+  test("formatting continues across the boundary (tags reopened)", () => {
+    const body = Array.from({ length: 50 }, (_, i) => `bold line ${i}`).join("\n");
+    const html = `<b>${body}</b>`;
+    const chunks = splitTelegramHtml(html, 180);
+    // every chunk that carries body text keeps the <b> context
+    for (const chunk of chunks) {
+      if (stripTags(chunk).trim().length > 0) {
+        expect(chunk).toContain("<b>");
+        expect(chunk).toContain("</b>");
+      }
+    }
+  });
+
+  test("prefers newline boundaries when available", () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `paragraph number ${i} with some words`);
+    const chunks = splitTelegramHtml(lines.join("\n"), 100);
+    for (const chunk of chunks.slice(0, -1)) {
+      // cuts land at line ends, so chunks must not end mid-word
+      expect(/\S{1,}$/.test(chunk) ? chunk.endsWith(lines.find((l) => chunk.endsWith(l)) ?? "\u0000") : true).toBe(true);
+    }
+    expect(chunks.join("\n")).toBe(lines.join("\n"));
+  });
+
+  test("pre/code blocks split safely with language class carried over", () => {
+    const code = Array.from({ length: 40 }, (_, i) => `const v${i} = ${i};`).join("\n");
+    const html = `<pre><code class="language-ts">${code}</code></pre>`;
+    const chunks = splitTelegramHtml(html, 200);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+      if (stripTags(chunk).trim()) {
+        expect(chunk).toContain('<code class="language-ts">');
+      }
+    }
+  });
+});
+
+describe("codex review findings — pre/code must not contain formatting entities", () => {
+  test("~~strike~~ inside a table cell does not inject <s> into the <pre>", () => {
+    const md = ["| task | state |", "|---|---|", "| cleanup | ~~done~~ |"].join("\n");
+    const out = convertMarkdownToHtml(md);
+    expect(out).toContain("<pre>");
+    expect(out).not.toMatch(/<pre>[^]*?<s>/);
+    expect(out).toContain("done");
+  });
+
+  test("[link](url) inside a table cell does not inject <a> into the <pre>", () => {
+    const md = ["| name | ref |", "|---|---|", "| doc | [spec](https://x.com) |"].join("\n");
+    const out = convertMarkdownToHtml(md);
+    expect(out).not.toMatch(/<pre>[^]*?<a /);
+    expect(out).toContain("spec");
+  });
+
+  test("`inline code` inside a table cell does not inject <code> into the <pre>", () => {
+    const md = ["| fn | use |", "|---|---|", "| run | `bun test` |"].join("\n");
+    const out = convertMarkdownToHtml(md);
+    expect(out).not.toMatch(/<pre>[^]*?<code>/);
+    expect(out).toContain("bun test");
+  });
+});
+
+describe("codex review findings — splitTelegramHtml degenerate inputs", () => {
+  test("an open tag too large for the limit is dropped, not looped forever", () => {
+    const url = "https://example.com/" + "q".repeat(300);
+    const html = `<a href="${url}">click here</a> ` + "word ".repeat(100);
+    const chunks = splitTelegramHtml(html, 120);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(120);
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+    }
+    expect(chunks.join(" ")).toContain("click here");
+  });
+
+  test("hard cuts never leave a chunk over the limit even mid-word", () => {
+    const html = "<b>" + "x".repeat(500) + "</b>";
+    const chunks = splitTelegramHtml(html, 100);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(100);
+      expect(isValidTelegramHtml(chunk)).toBe(true);
+    }
+    expect(chunks.map((c) => c.replace(/<[^>]+>/g, "")).join("")).toBe("x".repeat(500));
   });
 });
