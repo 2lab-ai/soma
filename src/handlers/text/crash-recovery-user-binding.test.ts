@@ -53,7 +53,7 @@ describe("crash recovery user-binding (#31)", () => {
 
     // First crash
     const crash1 = "[CRASH RECOVERY]\nmsg1\n[END]";
-    const existingCtx1 = nextQueryContext?.userId === userId ? nextQueryContext.context : "";
+    const existingCtx1 = (nextQueryContext as { userId: number; context: string } | null)?.userId === userId ? nextQueryContext!.context : "";
     nextQueryContext = { userId, context: existingCtx1 ? `${existingCtx1}\n${crash1}` : crash1 };
 
     // Second crash (same user) — should accumulate
