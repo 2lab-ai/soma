@@ -6,7 +6,7 @@
 # returned audio to the requested output format via ffmpeg.
 set -euo pipefail
 
-SOMA_VOICE_URL="${SOMA_VOICE_URL:-http://100.107.224.40:9999}"
+SOMA_VOICE_URL="${SOMA_VOICE_URL:-http://blade-4090.tail219308.ts.net:9999}"
 
 VOICE="iu"
 OUTPUT=""
