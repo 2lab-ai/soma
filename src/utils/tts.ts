@@ -7,7 +7,10 @@ import { spawn } from "child_process";
 import { unlinkSync, existsSync } from "fs";
 import { TEMP_DIR } from "../config";
 
+// Overridable so hosts without a local GPU can point at a remote-TTS shim
+// (e.g. scripts/fish-tts-remote.sh → soma-voice API on the GPU box).
 const FISH_TTS_SCRIPT =
+  process.env.FISH_TTS_SCRIPT ??
   "/home/zhugehyuk/2lab.ai/skills/fish-tts/scripts/fish-tts.sh";
 
 const DEFAULT_VOICE = "iu";
