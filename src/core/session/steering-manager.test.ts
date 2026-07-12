@@ -31,8 +31,8 @@ describe("SteeringManager.extractSteeringMessages", () => {
 
     const extracted = mgr.extractSteeringMessages();
     expect(extracted).toHaveLength(2);
-    expect(extracted[0].content).toBe("msg1");
-    expect(extracted[1].content).toBe("msg2");
+    expect(extracted[0]!.content).toBe("msg1");
+    expect(extracted[1]!.content).toBe("msg2");
 
     // Buffer should be empty after extraction
     expect(mgr.extractSteeringMessages()).toEqual([]);
@@ -53,10 +53,10 @@ describe("SteeringManager.extractSteeringMessages", () => {
 
     const extracted = mgr.extractSteeringMessages();
     expect(extracted).toHaveLength(2);
-    expect(extracted[0].content).toBe("injected1");
-    expect(extracted[0].receivedDuringTool).toBe("Bash");
-    expect(extracted[1].content).toBe("injected2");
-    expect(extracted[1].receivedDuringTool).toBe("Read");
+    expect(extracted[0]!.content).toBe("injected1");
+    expect(extracted[0]!.receivedDuringTool).toBe("Bash");
+    expect(extracted[1]!.content).toBe("injected2");
+    expect(extracted[1]!.receivedDuringTool).toBe("Read");
   });
 
   test("returns combined messages from both stores without duplicates", () => {
@@ -79,8 +79,8 @@ describe("SteeringManager.extractSteeringMessages", () => {
 
     const extracted = mgr.extractSteeringMessages();
     expect(extracted).toHaveLength(1);
-    expect(extracted[0].messageId).toBe(30);
-    expect(extracted[0].content).toBe("same-msg");
+    expect(extracted[0]!.messageId).toBe(30);
+    expect(extracted[0]!.content).toBe("same-msg");
   });
 
   test("clears both stores after extraction", () => {
@@ -103,8 +103,8 @@ describe("SteeringManager.extractSteeringMessages", () => {
     mgr.addSteering("second", 51);
 
     const extracted = mgr.extractSteeringMessages();
-    expect(extracted[0].content).toBe("first");
-    expect(extracted[1].content).toBe("second");
+    expect(extracted[0]!.content).toBe("first");
+    expect(extracted[1]!.content).toBe("second");
   });
 });
 

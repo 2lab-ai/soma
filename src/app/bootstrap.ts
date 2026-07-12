@@ -55,7 +55,8 @@ interface SessionPort {
       metadata?: unknown
     ) => Promise<void>,
     chatId?: number,
-    modelContext?: string
+    modelContext?: string,
+    queryUserId?: number
   ): Promise<string>;
 }
 

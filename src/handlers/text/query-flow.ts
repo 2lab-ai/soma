@@ -507,7 +507,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
 
         if (isClaudeCodeCrash) {
           const exitCodeMatch = errorStr.match(/exited with code (\d+)/);
-          const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1], 10) : null;
+          const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1] ?? "", 10) : null;
           console.error(`[CRASH] Claude Code crashed: exit_code=${exitCode}, error=${errorStr}`);
 
           // Preserve steering messages before kill() clears them

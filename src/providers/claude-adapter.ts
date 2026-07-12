@@ -196,7 +196,7 @@ export class ClaudeProviderAdapter implements ProviderBoundary {
             assistantUsage &&
             typeof assistantUsage === "object"
           ) {
-            const usageRecord = assistantUsage as Record<string, unknown>;
+            const usageRecord = assistantUsage as unknown as Record<string, unknown>;
             const normalizedUsage = {
               inputTokens: safeNumber(usageRecord.input_tokens),
               outputTokens: safeNumber(usageRecord.output_tokens),
