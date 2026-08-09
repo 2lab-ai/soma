@@ -10,7 +10,32 @@ import type { SessionData } from "../../types/session";
 import type { ClaudeSession } from "./session";
 import { serializeSessionData } from "./session-serialize";
 
-export const SESSIONS_DIR = "/tmp/soma-sessions";
+/**
+ * Session pointers are namespaced per bot.
+ *
+ * Two soma deployments sharing one repo (elon-bot/p9, chaewon-bot/np1) both
+ * wrote `/tmp/soma-sessions/cron_scheduler_heartbeat.json`, so one bot would
+ * resume the other's session id and the CLI failed with "No conversation found
+ * with session ID" — the transcript lives in the *other* bot's project dir.
+ * Namespacing by `SERVICE_NAME` keeps the pointers disjoint.
+ */
+export const SESSIONS_ROOT = "/tmp/soma-sessions";
+
+/** Strips anything that could escape or confuse a single path segment. */
+export function sanitizeServiceName(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, "");
+  // "." / ".." survive the character filter but are path traversal, not names.
+  if (!cleaned || cleaned === "." || cleaned === "..") return "default";
+  return cleaned;
+}
+
+export function resolveSessionsDir(
+  serviceName: string | undefined = process.env.SERVICE_NAME
+): string {
+  return `${SESSIONS_ROOT}/${sanitizeServiceName(serviceName ?? "")}`;
+}
+
+export const SESSIONS_DIR = resolveSessionsDir();
 
 export interface SessionStore {
   ensureDirectory(): void;
