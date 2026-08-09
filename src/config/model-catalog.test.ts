@@ -22,6 +22,7 @@ import {
   getSelectableModels,
   isKnownModel,
   loadSnapshotSync,
+  maybeRefreshInBackground,
   refreshCatalog,
   setCatalogFetcher,
   setSnapshotPathForTests,
@@ -266,5 +267,70 @@ describe("snapshot persistence", () => {
     writeFileSync(join(tmpDir, "model-catalog.json"), '{"models":"nope"}', "utf-8");
     loadSnapshotSync();
     expect(getSelectableModels().map((m) => m.id)).toEqual([...AVAILABLE_MODELS]);
+  });
+});
+
+describe("auth-mode gate (AUTH_MODE=oauth)", () => {
+  // Selection and routing must agree: in oauth mode `buildProviderEnv()`
+  // returns undefined, so the SDK talks to Anthropic directly and an
+  // llmux-only id (gpt-*, grok-*) has nowhere to route. Offering it in the
+  // menu would be a selectable-but-unroutable model.
+  const previousAuthMode = process.env.AUTH_MODE;
+
+  afterEach(() => {
+    if (previousAuthMode === undefined) delete process.env.AUTH_MODE;
+    else process.env.AUTH_MODE = previousAuthMode;
+  });
+
+  test("selection falls back to the static roster even with a populated catalog", () => {
+    __testSeedCatalog(WIRE_ENTRIES);
+    expect(getSelectableModels().length).toBe(
+      AVAILABLE_MODELS.length + WIRE_ENTRIES.length
+    );
+
+    process.env.AUTH_MODE = "oauth";
+    expect(getSelectableModels().map((m) => m.id)).toEqual([...AVAILABLE_MODELS]);
+  });
+
+  test("llmux-only ids are not accepted as known models", () => {
+    __testSeedCatalog(WIRE_ENTRIES);
+    process.env.AUTH_MODE = "oauth";
+    expect(isKnownModel("gpt-5.6-sol")).toBe(false);
+    expect(isKnownModel("grok-4.5")).toBe(false);
+    // …the static roster stays selectable/valid.
+    expect(isKnownModel("claude-opus-4-8[1m]")).toBe(true);
+  });
+
+  test("refresh is a skipped no-op and never calls the fetcher", async () => {
+    process.env.AUTH_MODE = "oauth";
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+    const result = await refreshCatalog({ force: true });
+    expect(result.ok).toBe(false);
+    expect(result.skipped).toBe(true);
+    expect(calls).toBe(0);
+    maybeRefreshInBackground();
+    expect(calls).toBe(0);
+  });
+
+  test("display name and context window stay readable for already-persisted catalog models", () => {
+    __testSeedCatalog(WIRE_ENTRIES);
+    process.env.AUTH_MODE = "oauth";
+    // A config saved while in llmux mode must still RENDER after a flip.
+    expect(getDisplayName("grok-4.5")).toBe("Grok 4.5");
+    expect(getCatalogMaxContext("grok-4.5")).toBe(256_000);
+  });
+
+  test("the mode is evaluated per call, so a flip applies immediately", () => {
+    __testSeedCatalog(WIRE_ENTRIES);
+    process.env.AUTH_MODE = "oauth";
+    expect(isKnownModel("grok-4.5")).toBe(false);
+    process.env.AUTH_MODE = "llmux";
+    expect(isKnownModel("grok-4.5")).toBe(true);
+    delete process.env.AUTH_MODE; // default is llmux
+    expect(isKnownModel("grok-4.5")).toBe(true);
   });
 });

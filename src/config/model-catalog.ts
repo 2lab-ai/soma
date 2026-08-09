@@ -6,6 +6,12 @@
  * `/model` menu WITHOUT touching the static `AVAILABLE_MODELS` roster in
  * `model.ts`.
  *
+ * **Auth-mode gate.** Everything that makes a model *selectable* (menu roster,
+ * id validation, refresh) is live only in llmux mode — in oauth mode the SDK
+ * bypasses the proxy, so an llmux-only id would be selectable but unroutable.
+ * Pure lookups (`getDisplayName`, `getCatalogMaxContext`) stay ungated so a
+ * config saved before a mode flip still renders correctly.
+ *
  * **Extend-only contract.** The catalog may only ADD entries on top of the
  * static roster. llmux being down, answering garbage, or answering an empty
  * list falls back to the on-disk snapshot and then to the static roster — the
@@ -25,6 +31,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
+import { isLlmuxMode } from "./llmux";
 import { AVAILABLE_MODELS, MODEL_DISPLAY_NAMES } from "./model";
 
 /** Normalized catalog entry (`max_context` → `maxContext`, efforts lowercased). */
@@ -247,6 +254,15 @@ function saveSnapshot(): void {
  * per {@link REFRESH_COOLDOWN_MS} unless `force` is set.
  */
 export function refreshCatalog(opts?: RefreshOptions): Promise<RefreshResult> {
+  // oauth mode never routes through llmux, so there is nothing to ask.
+  if (!isLlmuxMode()) {
+    return Promise.resolve({
+      ok: false,
+      count: entries.length,
+      skipped: true,
+      error: "auth mode is oauth",
+    });
+  }
   if (inFlight) return inFlight;
 
   const fetcher = resolveFetcher(opts?.fetchImpl);
@@ -291,6 +307,7 @@ export function refreshCatalog(opts?: RefreshOptions): Promise<RefreshResult> {
  * is swallowed.
  */
 export function maybeRefreshInBackground(): void {
+  if (!isLlmuxMode()) return;
   if (fetchedAt !== null && Date.now() - fetchedAt < REFRESH_TTL_MS) return;
   void refreshCatalog().catch(() => {
     /* refreshCatalog never rejects; defensive */
@@ -314,6 +331,12 @@ function lookup(id: string): CatalogModel | null {
  * The `/model` menu roster: the static `AVAILABLE_MODELS` first (in their
  * curated order), then every catalog id the static list does not already
  * carry. This is where the extend-only contract is enforced.
+ *
+ * In oauth mode the catalog contributes NOTHING: `buildProviderEnv()` returns
+ * undefined there, so a query goes straight to Anthropic and an llmux-only id
+ * (`gpt-*`, `grok-*`) has no route. Selection and routing must agree, so the
+ * menu shrinks back to the static roster rather than offering models that
+ * cannot be served.
  */
 export function getSelectableModels(): SelectableModel[] {
   const out: SelectableModel[] = [];
@@ -322,6 +345,7 @@ export function getSelectableModels(): SelectableModel[] {
     seen.add(id.toLowerCase());
     out.push({ id, displayName: getDisplayName(id), group: lookup(id)?.group ?? inferGroup(id) });
   }
+  if (!isLlmuxMode()) return out;
   for (const model of entries) {
     const key = model.id.toLowerCase();
     if (seen.has(key)) continue;
@@ -331,13 +355,18 @@ export function getSelectableModels(): SelectableModel[] {
   return out;
 }
 
-/** True for the static roster ∪ the current catalog (case-insensitive). */
+/**
+ * True for the static roster ∪ the current catalog (case-insensitive).
+ * In oauth mode only the static roster counts — same reason as
+ * {@link getSelectableModels}: an unroutable id must not pass validation
+ * (callback decode, persisted `lastUsedModel`).
+ */
 export function isKnownModel(id: string): boolean {
   if (typeof id !== "string") return false;
   const key = id.trim().toLowerCase();
   if (key.length === 0) return false;
   if ((AVAILABLE_MODELS as readonly string[]).some((m) => m.toLowerCase() === key)) return true;
-  return byId.has(key);
+  return isLlmuxMode() && byId.has(key);
 }
 
 /**
