@@ -73,12 +73,13 @@ import {
   executeQueryRuntime,
 } from "./query-runtime";
 import { serializeSessionData } from "./session-serialize";
+// Single source of truth for the per-bot sessions directory (see session-store).
+import { SESSIONS_DIR } from "./session-store";
 import type { McpServerConfig, McpStdioConfig } from "../../types";
 
 export type { ActivityState, QueryState } from "./state-machine";
 
 const initialRuntimeState = createInitialSessionRuntimeState();
-const SESSIONS_DIR = "/tmp/soma-sessions";
 
 // Validate persisted lastUsedModel — drop unknown or migrated-away IDs rather
 // than resuming an SDK session bound to a model we no longer recognize.

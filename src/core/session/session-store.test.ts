@@ -6,10 +6,14 @@ import { tmpdir } from "os";
 import { ClaudeSession } from "./session";
 import {
   FileSessionStore,
+  SESSIONS_ROOT,
   deleteSessionFile,
+  ensureSessionsDir,
   getSessionFilePath,
   listSessionKeys,
   loadSession,
+  resolveSessionsDir,
+  sanitizeServiceName,
   saveSession,
   sessionFileExists,
 } from "./session-store";
@@ -70,5 +74,64 @@ describe("session-store", () => {
     deleteSessionFile(key, dir);
     expect(existsSync(filePath)).toBe(false);
     expect(listSessionKeys(dir)).toEqual([]);
+  });
+});
+
+describe("per-bot sessions directory", () => {
+  const originalServiceName = process.env.SERVICE_NAME;
+
+  afterEach(() => {
+    if (originalServiceName === undefined) {
+      delete process.env.SERVICE_NAME;
+    } else {
+      process.env.SERVICE_NAME = originalServiceName;
+    }
+  });
+
+  test("separates pointer paths per SERVICE_NAME", () => {
+    expect(resolveSessionsDir("elon-bot")).toBe(`${SESSIONS_ROOT}/elon-bot`);
+    expect(resolveSessionsDir("chaewon-bot")).toBe(`${SESSIONS_ROOT}/chaewon-bot`);
+    expect(resolveSessionsDir("elon-bot")).not.toBe(resolveSessionsDir("chaewon-bot"));
+  });
+
+  test("two bots no longer collide on the cron heartbeat pointer", () => {
+    const key = "cron:scheduler:heartbeat";
+    expect(getSessionFilePath(key, resolveSessionsDir("elon-bot"))).not.toBe(
+      getSessionFilePath(key, resolveSessionsDir("chaewon-bot"))
+    );
+  });
+
+  test("sanitizes unsafe characters out of the service name", () => {
+    expect(sanitizeServiceName("chae/won bot!")).toBe("chaewonbot");
+    expect(sanitizeServiceName("np1_v2.0-beta")).toBe("np1_v2.0-beta");
+    expect(resolveSessionsDir("../../etc")).toBe(`${SESSIONS_ROOT}/....etc`);
+  });
+
+  test("falls back to default for empty or traversal names", () => {
+    expect(sanitizeServiceName("")).toBe("default");
+    expect(sanitizeServiceName("..")).toBe("default");
+    expect(sanitizeServiceName(".")).toBe("default");
+    expect(sanitizeServiceName("///")).toBe("default");
+  });
+
+  test("reads SERVICE_NAME from process.env and defaults when unset", () => {
+    process.env.SERVICE_NAME = "elon-bot";
+    expect(resolveSessionsDir()).toBe(`${SESSIONS_ROOT}/elon-bot`);
+
+    delete process.env.SERVICE_NAME;
+    expect(resolveSessionsDir()).toBe(`${SESSIONS_ROOT}/default`);
+  });
+
+  test("ensureSessionsDir creates the namespaced directory recursively", async () => {
+    const base = await createTempDir();
+    const dir = join(base, "soma-sessions", "elon-bot");
+    expect(existsSync(dir)).toBe(false);
+
+    ensureSessionsDir(dir);
+    expect(existsSync(dir)).toBe(true);
+
+    // Idempotent: a second call on an existing directory is a no-op.
+    ensureSessionsDir(dir);
+    expect(existsSync(dir)).toBe(true);
   });
 });

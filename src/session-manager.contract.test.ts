@@ -7,8 +7,10 @@ import type { ProviderOrchestrator } from "./providers/orchestrator";
 import type { SessionStore } from "./core/session/session-store";
 import type { ThreadWorkdirProvider } from "./core/session/thread-workdir";
 import { sessionManager } from "./core/session/session-manager";
-
-const SESSIONS_DIR = "/tmp/soma-sessions";
+// Track the production constant — the sessions dir is namespaced per bot
+// (SERVICE_NAME), so hardcoding "/tmp/soma-sessions" here would test a path
+// the SessionManager no longer writes to.
+import { SESSIONS_DIR } from "./core/session/session-store";
 
 function buildCanonicalPath(chatId: number, threadId?: number): string {
   const key = sessionManager.deriveKey(chatId, threadId);
