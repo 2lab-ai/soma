@@ -1,44 +1,111 @@
 /**
- * Telegram callback-data short identifier for ModelId.
+ * Telegram callback-data encoding for model selection, plus the pure builder
+ * for the `/model` keyboard rows.
  *
- * Telegram's `callback_data` has a hard 64-byte limit, so we can't send the
- * full model id. The previous scheme (`modelId.split("-")[1]`) collapsed
- * every opus row onto the literal `"opus"`, which means a roster with two
- * or more opus selections silently routed the user's pick to whichever opus
- * the AVAILABLE_MODELS array listed first. Encoding the array index as a
- * decimal string fixes that without growing the payload meaningfully.
- *
- * Stability: indices are stable as long as AVAILABLE_MODELS entries are
- * append-only (or in-place renames). Reorders or deletions invalidate
- * outstanding keyboards. That's the same constraint the literal-encoding
- * scheme had, just expressed honestly.
+ * History of the encoding:
+ *  1. `modelId.split("-")[1]` collapsed every opus row onto the literal
+ *     `"opus"` — the user's pick silently routed to the first opus listed.
+ *  2. The AVAILABLE_MODELS array index fixed that, but an index is only stable
+ *     while the roster is a static append-only array. With the llmux catalog
+ *     the roster changes at runtime, so index N means a different model after
+ *     a refresh.
+ *  3. Now: the id travels verbatim. Telegram allows 64 bytes of callback_data;
+ *     the longest payload we build is `model:save:<ctx>:<id>:<level>`, which
+ *     leaves ~35 bytes for the id (today's longest catalog id is 18). Ids that
+ *     would not fit are dropped from the menu by {@link buildModelMenuRows}
+ *     rather than truncated into an ambiguous prefix.
  */
-import { AVAILABLE_MODELS, type ModelId } from "../config/model";
+import { AVAILABLE_MODELS } from "../config/model";
+import { getSelectableModels, isKnownModel } from "../config/model-catalog";
 
-/** Encode a ModelId as the AVAILABLE_MODELS index string (e.g. "0", "3"). */
-export function encodeModelId(model: ModelId): string {
-  const idx = AVAILABLE_MODELS.indexOf(model);
-  // ModelId is a literal union over AVAILABLE_MODELS — any runtime value
-  // typed as ModelId must be present in the array. A −1 here would be a
-  // contract bug; surface it loudly rather than rendering "model:model::-1".
-  if (idx < 0) {
-    throw new Error(
-      `encodeModelId: '${model}' is not present in AVAILABLE_MODELS`
-    );
-  }
-  return String(idx);
+/** Telegram's hard limit on `callback_data`. */
+const CALLBACK_DATA_LIMIT_BYTES = 64;
+/** Longest reasoning level appended by the `model:save:` payload. */
+const LONGEST_REASONING_LEVEL = "minimal";
+/** Inert payload for the non-clickable group headers. */
+export const MODEL_MENU_NOOP_DATA = "model:noop";
+
+export interface ModelMenuRow {
+  kind: "label" | "model";
+  /** Button caption. */
+  text: string;
+  /** `callback_data` for the button (labels get {@link MODEL_MENU_NOOP_DATA}). */
+  callbackData: string;
+  /** The model id this row selects — only present on `kind: "model"` rows. */
+  model?: string;
+}
+
+/** Encode a model id for `callback_data` (identity — kept as the seam). */
+export function encodeModelId(model: string): string {
+  return model;
 }
 
 /**
- * Decode a short identifier back to a ModelId. Returns `undefined` when the
- * input is out of range or not a non-negative integer — callers (e.g.
- * `handleModelCallback`) MUST handle that case explicitly (typically by
- * answering the Telegram callback with an "expired" message) rather than
- * silently dispatching to an arbitrary fallback model.
+ * Decode a callback-data model id. Returns `undefined` when the id is not (or
+ * no longer) known — callers MUST handle that explicitly (answer the callback
+ * with an "expired menu" notice) rather than falling back to some other model.
  */
-export function decodeModelId(short: string): ModelId | undefined {
-  if (!/^\d+$/.test(short)) return undefined;
-  const idx = Number(short);
-  if (idx < 0 || idx >= AVAILABLE_MODELS.length) return undefined;
-  return AVAILABLE_MODELS[idx];
+export function decodeModelId(short: string): string | undefined {
+  if (typeof short !== "string" || short.length === 0) return undefined;
+  return isKnownModel(short) ? short : undefined;
+}
+
+/**
+ * True when every payload this model needs fits Telegram's 64-byte budget.
+ * The `model:save:` payload is the longest of the three, so it is the one
+ * measured.
+ */
+export function callbackDataFits(context: string, modelId: string): boolean {
+  const worstCase = `model:save:${context}:${encodeModelId(modelId)}:${LONGEST_REASONING_LEVEL}`;
+  return Buffer.byteLength(worstCase, "utf-8") <= CALLBACK_DATA_LIMIT_BYTES;
+}
+
+function groupLabel(group: string): string {
+  return `— ${group} —`;
+}
+
+/**
+ * Build the `/model` model-selection rows: the static roster first, then the
+ * llmux catalog additions, with a header row whenever the group changes.
+ *
+ * Pure over the current catalog state — the caller decides when to refresh.
+ */
+export function buildModelMenuRows(context: string, currentModel: string): ModelMenuRow[] {
+  const rows: ModelMenuRow[] = [];
+  let lastGroup: string | null = null;
+
+  for (const model of getSelectableModels()) {
+    // A model whose callback payload cannot fit is unusable, not merely ugly:
+    // Telegram rejects the whole keyboard. Skip it and keep the menu working.
+    if (!callbackDataFits(context, model.id)) continue;
+
+    if (model.group !== lastGroup) {
+      lastGroup = model.group;
+      rows.push({
+        kind: "label",
+        text: groupLabel(model.group),
+        callbackData: MODEL_MENU_NOOP_DATA,
+      });
+    }
+    const current = model.id === currentModel ? " ✓" : "";
+    rows.push({
+      kind: "model",
+      text: `${model.displayName}${current}`,
+      callbackData: `model:model:${context}:${encodeModelId(model.id)}`,
+      model: model.id,
+    });
+  }
+
+  // Defensive: the static roster must always be reachable (extend-only).
+  if (!rows.some((r) => r.kind === "model")) {
+    for (const id of AVAILABLE_MODELS) {
+      rows.push({
+        kind: "model",
+        text: id,
+        callbackData: `model:model:${context}:${encodeModelId(id)}`,
+        model: id,
+      });
+    }
+  }
+  return rows;
 }

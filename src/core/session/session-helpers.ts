@@ -4,6 +4,7 @@ import {
   THINKING_DEEP_KEYWORDS,
   THINKING_KEYWORDS,
 } from "../../config";
+import { getCatalogMaxContext } from "../../config/model-catalog";
 import type { SessionData, SteeringMessage, TokenUsage } from "../../types/session";
 import type { UsageSnapshot } from "../../types/runtime";
 import { fetchClaudeUsage } from "../../usage";
@@ -83,6 +84,12 @@ export function lookupContextWindowSize(
   return Math.max(baseWindow, betaWindow);
 }
 
+/**
+ * Largest of: what the SDK reported, what `lookupContextWindowSize` knows for
+ * the claude families, and what the llmux catalog declares (`max_context`).
+ * The catalog candidate is what gives non-claude models (grok/codex) a window
+ * at all; with no catalog it contributes 0, so behaviour is unchanged.
+ */
 export function resolveContextWindowSize(params: {
   sdkWindow?: number | null;
   model?: string;
@@ -91,7 +98,8 @@ export function resolveContextWindowSize(params: {
   const sdkWindow =
     typeof params.sdkWindow === "number" && params.sdkWindow > 0 ? params.sdkWindow : 0;
   const lookupWindow = lookupContextWindowSize(params.model, params.betas);
-  const resolved = Math.max(sdkWindow, lookupWindow);
+  const catalogWindow = params.model ? (getCatalogMaxContext(params.model) ?? 0) : 0;
+  const resolved = Math.max(sdkWindow, lookupWindow, catalogWindow);
   return resolved > 0 ? resolved : null;
 }
 

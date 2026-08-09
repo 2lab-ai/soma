@@ -10,12 +10,11 @@ import {
   NATIVE_STREAMING_THROTTLE_MS,
 } from "../../config";
 import {
-  AVAILABLE_MODELS,
   getModelForContext,
-  MODEL_DISPLAY_NAMES,
   type ConfigContext,
   type ModelId,
 } from "../../config/model";
+import { getDisplayName, isKnownModel } from "../../config/model-catalog";
 import {
   beginInterruptTransition,
   clearStopRequestedTransition,
@@ -83,10 +82,11 @@ const SESSIONS_DIR = "/tmp/soma-sessions";
 
 // Validate persisted lastUsedModel — drop unknown or migrated-away IDs rather
 // than resuming an SDK session bound to a model we no longer recognize.
+// "Known" = static roster ∪ current llmux catalog.
 function parseLastUsedModel(raw: unknown): ModelId | null {
   if (typeof raw !== "string") return null;
-  if (!(AVAILABLE_MODELS as readonly string[]).includes(raw)) return null;
-  return raw as ModelId;
+  if (!isKnownModel(raw)) return null;
+  return raw;
 }
 
 export class ClaudeSession {
@@ -760,7 +760,7 @@ export class ClaudeSession {
       this.temporaryModelOverride ?? getModelForContext(modelContext);
     if (this.temporaryModelOverride) {
       console.log(
-        `[RATE-LIMIT] Using fallback model: ${MODEL_DISPLAY_NAMES[this.temporaryModelOverride] || this.temporaryModelOverride}`
+        `[RATE-LIMIT] Using fallback model: ${getDisplayName(this.temporaryModelOverride)}`
       );
     }
 
@@ -769,7 +769,7 @@ export class ClaudeSession {
     // silently ignores the model parameter.
     if (this.sessionId && this.lastUsedModel && effectiveModel !== this.lastUsedModel) {
       console.log(
-        `[MODEL-SWITCH] Model changed: ${MODEL_DISPLAY_NAMES[this.lastUsedModel] || this.lastUsedModel} → ${MODEL_DISPLAY_NAMES[effectiveModel] || effectiveModel}. Resetting session.`
+        `[MODEL-SWITCH] Model changed: ${getDisplayName(this.lastUsedModel)} → ${getDisplayName(effectiveModel)}. Resetting session.`
       );
       this.sessionId = null;
     }
@@ -1023,7 +1023,7 @@ export class ClaudeSession {
         queryStartedMs,
         contextUsagePercent,
         contextUsagePercentBefore,
-        modelDisplayName: MODEL_DISPLAY_NAMES[currentModelId] || currentModelId,
+        modelDisplayName: getDisplayName(currentModelId),
         currentProvider: runtimeResult?.providerId,
       });
 

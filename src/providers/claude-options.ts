@@ -21,20 +21,33 @@ import { usesAdaptiveThinking } from "../config/model";
  *   the field is stripped to avoid SDK 400s. The `usesAdaptiveThinking` check
  *   is the single source of truth — when a future adaptive family lands, no
  *   edit is needed here.
- * - **All other models**: passthrough.
+ * - **Non-Claude models (llmux catalog: `gpt-*`, `grok-*`, …)**: drops
+ *   `maxThinkingTokens` and sets NEITHER `thinking` NOR `effort`. Those ids are
+ *   served through the llmux translation layer, where a Claude-shaped thinking
+ *   budget has no meaning — forwarding it just leaks an unsupported field into
+ *   the upstream request. Effort for these models is llmux's business.
+ * - **All other Claude models (Sonnet/Haiku)**: passthrough — the keyword-driven
+ *   thinking-token budget is exactly what they want.
  */
+function withoutThinkingBudget<T extends object>(opts: T): Omit<T, "maxThinkingTokens"> {
+  const { maxThinkingTokens: _ignored, ...rest } = opts as T & {
+    maxThinkingTokens?: number;
+  };
+  return rest;
+}
+
 export function applyModelSpecificOverrides<
   T extends Options & { abortController?: AbortController }
 >(model: string, opts: T): T {
   if (usesAdaptiveThinking(model)) {
-    const { maxThinkingTokens: _ignored, ...rest } = opts as T & {
-      maxThinkingTokens?: number;
-    };
     return {
-      ...rest,
+      ...withoutThinkingBudget(opts),
       thinking: { type: "adaptive" },
       effort: "xhigh",
     } as unknown as T;
+  }
+  if (!model.startsWith("claude-")) {
+    return withoutThinkingBudget(opts) as unknown as T;
   }
   return opts;
 }

@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import type { Context } from "grammy";
 import { WORKING_DIR } from "../../config";
-import { MODEL_DISPLAY_NAMES, getModelForContext } from "../../config/model";
+import { getModelForContext } from "../../config/model";
+import { getDisplayName } from "../../config/model-catalog";
 import type { ClaudeSession } from "../../core/session/session";
 import { getSessionFilePath, saveSession } from "../../core/session/session-store";
 import { Reactions } from "../../constants/reactions";
@@ -632,9 +633,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
               } catch (e) { console.warn("[REACT] fallback complete reaction failed:", e); }
 
               const fallbackModel = session.temporaryModelOverride;
-              const modelName = fallbackModel
-                ? MODEL_DISPLAY_NAMES[fallbackModel] || fallbackModel
-                : "Sonnet";
+              const modelName = fallbackModel ? getDisplayName(fallbackModel) : "Sonnet";
               await sendSystemMessage(
                 ctx,
                 `✅ ${modelName}으로 응답 완료. Opus 복구 시 자동 전환됩니다.`

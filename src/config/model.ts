@@ -8,7 +8,12 @@ import { existsSync, readFileSync, watch, writeFileSync } from "fs";
 import { resolve } from "path";
 import { parse, stringify } from "yaml";
 
-export const AVAILABLE_MODELS = [
+/**
+ * Static fallback roster. This list is the floor of what the `/model` menu
+ * offers — the llmux catalog (`config/model-catalog.ts`) only ever EXTENDS it,
+ * so a dead llmux still leaves every model here selectable.
+ */
+export const AVAILABLE_MODELS: readonly string[] = [
   "claude-fable-5",
   "claude-sonnet-4-5-20250929",
   "claude-opus-4-8[1m]",
@@ -17,9 +22,16 @@ export const AVAILABLE_MODELS = [
   "claude-haiku-4-5-20251001",
 ] as const;
 
-export type ModelId = (typeof AVAILABLE_MODELS)[number];
+/**
+ * A model id. Deliberately `string`, not a literal union over
+ * `AVAILABLE_MODELS`: ids now also come from the llmux catalog at runtime, so
+ * the compiler cannot enumerate them. Validation is a runtime concern —
+ * `isKnownModel()` in `config/model-catalog.ts`.
+ */
+export type ModelId = string;
 
-export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
+/** Curated labels for the static roster. Catalog models bring their own name. */
+export const MODEL_DISPLAY_NAMES: Record<string, string> = {
   // Fable 5 serves 1M context on the bare id (no `[1m]` suffix, no beta header
   // — see lookupContextWindowSize); the "(1M)" label communicates that window.
   "claude-fable-5": "Fable 5 (1M)",
@@ -39,15 +51,19 @@ export const MODEL_DISPLAY_NAMES: Record<ModelId, string> = {
 export const DEFAULT_MODEL: ModelId = "claude-opus-4-8[1m]";
 
 /**
- * Predicate for the Claude Opus 4.x family. Captures the contract that
- * any opus-4.x model uses adaptive thinking + xhigh effort and ignores
- * the per-context reasoning-token budget at the SDK layer. Single source
- * of truth for the branch logic that was previously inlined as
- * `=== "claude-opus-4-7"` at four call sites (claude-options,
- * normalizeConfig, callback.ts ×2, usage-commands).
+ * Predicate for the Claude Opus family. Captures the contract that any opus
+ * model uses adaptive thinking + xhigh effort and ignores the per-context
+ * reasoning-token budget at the SDK layer. Single source of truth for the
+ * branch logic that was previously inlined as `=== "claude-opus-4-7"` at four
+ * call sites (claude-options, normalizeConfig, callback.ts ×2, usage-commands).
+ *
+ * The prefix is the whole opus line (`claude-opus-`), not `claude-opus-4-`:
+ * the llmux catalog serves `claude-opus-5` / `claude-opus-5[1m]`, and under
+ * the narrower prefix those fell through to the non-adaptive branch, kept
+ * their `maxThinkingTokens`, and the API answered 400 on `budget_tokens`.
  */
 export function isOpusFamily(model: string): boolean {
-  return model.startsWith("claude-opus-4-");
+  return model.startsWith("claude-opus-");
 }
 
 /**

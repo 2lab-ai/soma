@@ -4,11 +4,11 @@ import {
   ensureConfigExists,
   getCurrentConfig,
   usesAdaptiveThinking,
-  MODEL_DISPLAY_NAMES,
   REASONING_TOKENS,
   type ModelId,
   type ReasoningLevel,
 } from "../../config/model";
+import { getDisplayName } from "../../config/model-catalog";
 import { type ChatType, isAuthorizedForChat } from "../../security";
 import { sessionManager } from "../../core/session/session-manager";
 import {
@@ -312,9 +312,9 @@ export async function handleModel(ctx: Context): Promise<void> {
     await ctx.reply(
       `🤖 <b>Model Configuration</b>\n\n` +
         `<b>Current Settings:</b>\n\n` +
-        `💬 <b>Chat:</b> ${MODEL_DISPLAY_NAMES[generalModel]} (${reasoningSummary(generalModel, generalReasoning)})\n` +
-        `📝 <b>Summary:</b> ${MODEL_DISPLAY_NAMES[summaryModel]} (${reasoningSummary(summaryModel, summaryReasoning)})\n` +
-        `⏰ <b>Cron:</b> ${MODEL_DISPLAY_NAMES[cronModel]} (${reasoningSummary(cronModel, cronReasoning)})\n\n` +
+        `💬 <b>Chat:</b> ${getDisplayName(generalModel)} (${reasoningSummary(generalModel, generalReasoning)})\n` +
+        `📝 <b>Summary:</b> ${getDisplayName(summaryModel)} (${reasoningSummary(summaryModel, summaryReasoning)})\n` +
+        `⏰ <b>Cron:</b> ${getDisplayName(cronModel)} (${reasoningSummary(cronModel, cronReasoning)})\n\n` +
         `Select which context to configure:`,
       {
         parse_mode: "HTML",

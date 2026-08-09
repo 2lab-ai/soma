@@ -9,6 +9,7 @@ import type {
 } from "./types.models";
 import { NormalizedProviderError, normalizeProviderError } from "./error-normalizer";
 import { applyModelSpecificOverrides } from "./claude-options";
+import { buildProviderEnv } from "../config/llmux";
 import { resolveContextWindowSize } from "../core/session/session-helpers";
 
 type ClaudeQueryFactory = (payload: {
@@ -68,6 +69,8 @@ function toClaudeOptions(
     allowDangerouslySkipPermissions: input.allowDangerouslySkipPermissions ?? true,
     hooks: input.hooks as Options["hooks"],
     pathToClaudeCodeExecutable: input.pathToClaudeCodeExecutable,
+    // Auth routing for the spawned CLI (undefined = inherit process.env).
+    env: buildProviderEnv(),
     abortController,
   };
   return applyModelSpecificOverrides(input.modelId ?? "", base);
