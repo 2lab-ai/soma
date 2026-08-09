@@ -21,14 +21,17 @@ import {
   getCurrentConfig,
   usesAdaptiveThinking,
   updateContextModel,
-  MODEL_DISPLAY_NAMES,
-  AVAILABLE_MODELS,
   REASONING_TOKENS,
   type ConfigContext,
   type ModelId,
   type ReasoningLevel,
 } from "../config/model";
-import { decodeModelId, encodeModelId } from "./model-callback-id";
+import { getDisplayName, maybeRefreshInBackground } from "../config/model-catalog";
+import {
+  buildModelMenuRows,
+  decodeModelId,
+  MODEL_MENU_NOOP_DATA,
+} from "./model-callback-id";
 import { skillsRegistry } from "../services/skills-registry";
 import { ChatSearchService } from "../services/chat-search-service";
 import { FileChatStorage } from "../storage/chat-storage";
@@ -279,28 +282,32 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
     const parts = callbackData.split(":");
     const action = parts[1];
 
+    if (callbackData === MODEL_MENU_NOOP_DATA) {
+      // Group header row in the model menu — inert by design.
+      await ctx.answerCallbackQuery();
+      return;
+    }
+
     if (action === "context") {
       // Context selection - show model selection
       const context = parts[2] as ConfigContext;
       const config = getCurrentConfig();
       const currentModel = config.contexts[context]?.model || config.defaults.model;
 
+      // Opening the menu is the natural refresh point for the llmux catalog:
+      // fire-and-forget, so a dead llmux costs nothing but a stale-by-one-open
+      // roster (and never less than the static roster).
+      maybeRefreshInBackground();
+
       const keyboard = new InlineKeyboard();
-      for (const modelId of AVAILABLE_MODELS) {
-        const displayName = MODEL_DISPLAY_NAMES[modelId];
-        const current = modelId === currentModel ? " ✓" : "";
-        keyboard
-          .text(
-            `${displayName}${current}`,
-            `model:model:${context}:${encodeModelId(modelId)}`
-          )
-          .row();
+      for (const row of buildModelMenuRows(context, currentModel)) {
+        keyboard.text(row.text, row.callbackData).row();
       }
       keyboard.text("« Back", "model:back");
 
       await ctx.editMessageText(
         `🤖 <b>Select Model for ${context.charAt(0).toUpperCase() + context.slice(1)}</b>\n\n` +
-          `Current: ${MODEL_DISPLAY_NAMES[currentModel]}`,
+          `Current: ${getDisplayName(currentModel)}`,
         {
           parse_mode: "HTML",
           reply_markup: keyboard,
@@ -337,7 +344,7 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
 
         await ctx.editMessageText(
           `🧠 <b>Reasoning Budget</b>\n\n` +
-            `Model: ${MODEL_DISPLAY_NAMES[modelId]}\n` +
+            `Model: ${getDisplayName(modelId)}\n` +
             `Context: ${context.charAt(0).toUpperCase() + context.slice(1)}\n\n` +
             `ℹ️ Opus 4.7 uses adaptive thinking + xhigh effort. ` +
             `This setting is ignored.`,
@@ -370,7 +377,7 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
 
         await ctx.editMessageText(
           `🧠 <b>Select Reasoning Budget</b>\n\n` +
-            `Model: ${MODEL_DISPLAY_NAMES[modelId]}\n` +
+            `Model: ${getDisplayName(modelId)}\n` +
             `Context: ${context.charAt(0).toUpperCase() + context.slice(1)}`,
           {
             parse_mode: "HTML",
@@ -396,7 +403,7 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       await ctx.editMessageText(
         `✅ <b>Configuration Saved!</b>\n\n` +
           `<b>${context.charAt(0).toUpperCase() + context.slice(1)}</b> now uses:\n` +
-          `Model: ${MODEL_DISPLAY_NAMES[modelId]}\n` +
+          `Model: ${getDisplayName(modelId)}\n` +
           `Reasoning: ${reasoning} (${REASONING_TOKENS[reasoning].toLocaleString()} tokens)\n\n` +
           `Use /model to configure other contexts.`,
         { parse_mode: "HTML" }
@@ -433,9 +440,9 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       await ctx.editMessageText(
         `🤖 <b>Model Configuration</b>\n\n` +
           `<b>Current Settings:</b>\n\n` +
-          `💬 <b>Chat:</b> ${MODEL_DISPLAY_NAMES[generalModel]} (${reasoningSummary(generalModel, generalReasoning)})\n` +
-          `📝 <b>Summary:</b> ${MODEL_DISPLAY_NAMES[summaryModel]} (${reasoningSummary(summaryModel, summaryReasoning)})\n` +
-          `⏰ <b>Cron:</b> ${MODEL_DISPLAY_NAMES[cronModel]} (${reasoningSummary(cronModel, cronReasoning)})\n\n` +
+          `💬 <b>Chat:</b> ${getDisplayName(generalModel)} (${reasoningSummary(generalModel, generalReasoning)})\n` +
+          `📝 <b>Summary:</b> ${getDisplayName(summaryModel)} (${reasoningSummary(summaryModel, summaryReasoning)})\n` +
+          `⏰ <b>Cron:</b> ${getDisplayName(cronModel)} (${reasoningSummary(cronModel, cronReasoning)})\n\n` +
           `Select which context to configure:`,
         {
           parse_mode: "HTML",

@@ -2,6 +2,7 @@ import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent
 import type { ProviderOrchestrator } from "../../providers/orchestrator";
 import type { ProviderEvent, ProviderQueryInput } from "../../providers/types.models";
 import { applyModelSpecificOverrides } from "../../providers/claude-options";
+import { buildProviderEnv } from "../../config/llmux";
 import { resolve } from "path";
 import { STREAMING_THROTTLE_MS, TEMP_PATHS } from "../../config";
 import { escapeHtml, formatToolStatus } from "../../formatting";
@@ -134,6 +135,8 @@ export function buildQueryRuntimeOptions(
     maxThinkingTokens: input.maxThinkingTokens,
     additionalDirectories: input.additionalDirectories,
     resume: input.resumeSessionId || undefined,
+    // Auth routing for the spawned CLI (undefined = inherit process.env).
+    env: buildProviderEnv(),
     hooks: {
       PreToolUse: [
         {

@@ -95,9 +95,7 @@ function createHarness(initialConfig: CronConfig | null): SchedulerTestHarness {
       },
     }),
     getModelForContext: () => "test" as never,
-    modelDisplayNames: {
-      test: "Test Model",
-    } as never,
+    getModelDisplayName: (() => "Test Model") as never,
     buildSchedulerRoute: (name: string) => ({
       identity: {
         tenantId: "cron",

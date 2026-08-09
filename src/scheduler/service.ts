@@ -4,7 +4,8 @@ import type { Api } from "grammy";
 import { resolve } from "path";
 import { parse as parseYaml } from "yaml";
 import { ALLOWED_USERS, WORKING_DIR } from "../config";
-import { getModelForContext, MODEL_DISPLAY_NAMES } from "../config/model";
+import { getModelForContext } from "../config/model";
+import { getDisplayName } from "../config/model-catalog";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import { isPathAllowed } from "../security";
 import type { CronConfig, CronSchedule } from "../types";
@@ -62,7 +63,7 @@ export interface SchedulerServiceDependencies {
   loadCronConfig: () => CronConfig | null;
   getRuntime: typeof getSchedulerRuntime;
   getModelForContext: typeof getModelForContext;
-  modelDisplayNames: typeof MODEL_DISPLAY_NAMES;
+  getModelDisplayName: typeof getDisplayName;
   buildSchedulerRoute: typeof buildSchedulerRoute;
   escapeHtml: typeof escapeHtml;
   convertMarkdownToHtml: typeof convertMarkdownToHtml;
@@ -184,7 +185,7 @@ function createDefaultDependencies(): SchedulerServiceDependencies {
     ),
     getRuntime: getSchedulerRuntime,
     getModelForContext,
-    modelDisplayNames: MODEL_DISPLAY_NAMES,
+    getModelDisplayName: getDisplayName,
     buildSchedulerRoute,
     escapeHtml,
     convertMarkdownToHtml,
@@ -290,7 +291,7 @@ export function createSchedulerService(
     const cronModel = dependencies.getModelForContext("cron");
     const runtime = dependencies.getRuntime();
     dependencies.logger.log(
-      `[CRON] Executing scheduled job: ${name} (model: ${dependencies.modelDisplayNames[cronModel]})`
+      `[CRON] Executing scheduled job: ${name} (model: ${dependencies.getModelDisplayName(cronModel)})`
     );
 
     if (cronExecutionLock || runtime.isBusy()) {

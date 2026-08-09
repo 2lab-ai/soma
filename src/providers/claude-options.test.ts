@@ -52,4 +52,37 @@ describe("applyModelSpecificOverrides", () => {
     expect((out as { thinking?: unknown }).thinking).toBeUndefined();
     expect((out as { effort?: unknown }).effort).toBeUndefined();
   });
+
+  test("Opus 5 strips maxThinkingTokens and forces adaptive + xhigh", () => {
+    const out = applyModelSpecificOverrides("claude-opus-5[1m]", {
+      model: "claude-opus-5[1m]",
+      cwd: "/tmp",
+      maxThinkingTokens: 50000,
+    });
+
+    expect((out as { maxThinkingTokens?: number }).maxThinkingTokens).toBeUndefined();
+    expect((out as { thinking?: { type: string } }).thinking).toEqual({
+      type: "adaptive",
+    });
+    expect((out as { effort?: string }).effort).toBe("xhigh");
+  });
+
+  test("non-Claude catalog model drops the thinking budget without setting thinking/effort", () => {
+    const abortController = new AbortController();
+    for (const model of ["gpt-5.6-sol", "gpt-5.5", "grok-4.5"]) {
+      const out = applyModelSpecificOverrides(model, {
+        model,
+        cwd: "/tmp",
+        maxThinkingTokens: 50000,
+        abortController,
+      });
+
+      expect(out.model).toBe(model);
+      expect(out.cwd).toBe("/tmp");
+      expect((out as { maxThinkingTokens?: number }).maxThinkingTokens).toBeUndefined();
+      expect((out as { thinking?: unknown }).thinking).toBeUndefined();
+      expect((out as { effort?: unknown }).effort).toBeUndefined();
+      expect(out.abortController).toBe(abortController);
+    }
+  });
 });
