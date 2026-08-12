@@ -82,7 +82,7 @@ function isAiMcpTool(content: string): boolean {
   return /🔮.*MCP.*(?:codex|gemini|claude)/i.test(content);
 }
 
-function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string {
+export function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string {
   const endTime = new Date();
   const timeOpts = { hour: "2-digit", minute: "2-digit", second: "2-digit" } as const;
   const startStr = startTime.toLocaleTimeString("ko-KR", timeOpts);
@@ -132,6 +132,20 @@ function buildEnhancedFooter(startTime: Date, metadata?: QueryMetadata): string 
     lines.push(
       `5h  ${renderBar(a.fiveHour)} ${String(Math.round(a.fiveHour)).padStart(3)}%  7d ${renderBar(a.sevenDay, 8)} ${String(Math.round(a.sevenDay)).padStart(3)}%`
     );
+  }
+
+  // llmux mode: name the pool account whose windows the bars show, plus pool
+  // availability — without this the 5h/7d numbers read as "my subscription".
+  const after = metadata?.usageAfter;
+  if (shouldShowUsage && after?.source === "llmux" && after.account) {
+    const pool =
+      after.poolOk !== undefined && after.poolTotal !== undefined
+        ? ` · pool ${after.poolOk}/${after.poolTotal}`
+        : "";
+    // Account ids are group-namespaced ("claude:me@x.com") — the "llmux"
+    // label already carries the routing context, so drop the prefix.
+    const account = after.account.replace(/^claude:/, "");
+    lines.push(`⚡ llmux ${account}${pool}`);
   }
 
   // Tools line (if available)

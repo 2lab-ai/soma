@@ -11,6 +11,7 @@ import { createHash } from "crypto";
 import os from "os";
 import path from "path";
 import type { AllUsage, ClaudeUsage, CodexUsage, GeminiUsage } from "./types/provider";
+import { getLlmuxSettings } from "./config/llmux";
 
 const API_TIMEOUT_MS = 5000;
 const DEFAULT_CACHE_TTL_SECONDS = 60;
@@ -452,6 +453,159 @@ export async function fetchGeminiUsage(
     return await request;
   } finally {
     pendingGeminiRequests.delete(tokenHash);
+  }
+}
+
+// ============================================================================
+// llmux Pool Usage
+// ============================================================================
+
+/**
+ * 5h/7d windows of the claude-group account currently serving llmux traffic,
+ * plus pool availability. Shown in the turn footer instead of the host
+ * machine's personal OAuth usage when soma runs in llmux mode — the personal
+ * account numbers say nothing about what the bot actually consumes.
+ */
+export interface LlmuxUsage {
+  /** 0..100, one decimal. */
+  fiveHour: number;
+  /** 0..100, integer. */
+  sevenDay: number;
+  account: string;
+  poolOk: number;
+  poolTotal: number;
+}
+
+interface LlmuxWindow {
+  utilization?: number;
+}
+
+interface LlmuxAccount {
+  name?: string;
+  group?: string;
+  status?: string;
+  order?: number;
+  five_hour?: LlmuxWindow | null;
+  seven_day?: LlmuxWindow | null;
+}
+
+/**
+ * Pure parser for `GET /llmux/status`. llmux reports `utilization` on a 0..1
+ * scale (unlike the Anthropic OAuth endpoint, which is already 0..100), so
+ * the x100 happens HERE and only here. Account choice: the current claude
+ * slot when the daemon names one, else the first claude-group account in
+ * selection order that has a live 5h window.
+ */
+export function parseLlmuxStatus(data: unknown): LlmuxUsage | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as {
+    current_by_group?: Record<string, unknown>;
+    accounts?: unknown;
+  };
+  if (!Array.isArray(record.accounts)) return null;
+
+  const claude = (record.accounts as LlmuxAccount[]).filter(
+    (a) => a && a.group === "claude" && typeof a.name === "string"
+  );
+  if (claude.length === 0) return null;
+
+  const currentName = record.current_by_group?.claude;
+  const hasWindow = (a: LlmuxAccount): boolean =>
+    typeof a.five_hour?.utilization === "number";
+
+  const current = claude.find((a) => a.name === currentName && hasWindow(a));
+  const fallback = claude
+    .filter(hasWindow)
+    .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity))[0];
+  const picked = current ?? fallback;
+  if (!picked) return null;
+
+  const five = picked.five_hour?.utilization ?? 0;
+  const seven = picked.seven_day?.utilization ?? 0;
+  return {
+    fiveHour: Math.round(five * 1000) / 10,
+    sevenDay: Math.round(seven * 100),
+    account: picked.name as string,
+    poolOk: claude.filter((a) => a.status === "active" || a.status === "ok").length,
+    poolTotal: claude.length,
+  };
+}
+
+/**
+ * Admin credential for llmux control-plane reads (`/llmux/status` rejects
+ * data-plane/keyless callers). `LLMUX_ADMIN_KEY` env wins; otherwise read
+ * `proxy.api_key` from the daemon's own config (`$XDG_CONFIG_HOME/llmux.json`,
+ * default `~/.config/llmux.json`) — same-host, same class of read as the
+ * Claude credentials file above. NOT `getLlmuxSettings().apiKey`, which is a
+ * data-plane placeholder.
+ */
+async function getLlmuxAdminKey(): Promise<string | null> {
+  const fromEnv = process.env.LLMUX_ADMIN_KEY?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const configDir =
+      process.env.XDG_CONFIG_HOME?.trim() || path.join(os.homedir(), ".config");
+    const raw = await readFile(path.join(configDir, "llmux.json"), "utf-8");
+    const json = JSON.parse(raw);
+    const key = json?.proxy?.api_key;
+    return typeof key === "string" && key.trim() ? key.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+const llmuxCache: Map<string, CacheEntry<LlmuxUsage>> = new Map();
+const pendingLlmuxRequests: Map<string, Promise<LlmuxUsage | null>> = new Map();
+
+export async function fetchLlmuxUsage(
+  ttlSeconds: number = DEFAULT_CACHE_TTL_SECONDS
+): Promise<LlmuxUsage | null> {
+  const key = await getLlmuxAdminKey();
+  if (!key) return null;
+  const { baseUrl } = getLlmuxSettings();
+
+  const cacheKey = hashToken(`${baseUrl}\n${key}`);
+  const cached = llmuxCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < ttlSeconds * 1000) {
+    return cached.data;
+  }
+
+  const pending = pendingLlmuxRequests.get(cacheKey);
+  if (pending) return pending;
+
+  const request = (async (): Promise<LlmuxUsage | null> => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+
+      const response = await fetch(`${baseUrl}/llmux/status`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          // llmux's client_auth reads ONLY `x-api-key` — an Authorization
+          // Bearer header is ignored and the caller downgrades to keyless
+          // loopback (data plane only), which 403s on /llmux/status.
+          "x-api-key": key,
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+      if (!response.ok) return null;
+
+      const usage = parseLlmuxStatus(await response.json());
+      if (usage) llmuxCache.set(cacheKey, { data: usage, timestamp: Date.now() });
+      return usage;
+    } catch {
+      return null;
+    }
+  })();
+
+  pendingLlmuxRequests.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    pendingLlmuxRequests.delete(cacheKey);
   }
 }
 

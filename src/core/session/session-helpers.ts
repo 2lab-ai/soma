@@ -7,7 +7,8 @@ import {
 import { getCatalogMaxContext } from "../../config/model-catalog";
 import type { SessionData, SteeringMessage, TokenUsage } from "../../types/session";
 import type { UsageSnapshot } from "../../types/runtime";
-import { fetchClaudeUsage } from "../../usage";
+import { isLlmuxMode } from "../../config/llmux";
+import { fetchClaudeUsage, fetchLlmuxUsage } from "../../usage";
 
 export type ContextWindowUsage = NonNullable<SessionData["contextWindowUsage"]>;
 
@@ -144,11 +145,28 @@ export function mergeLatestUsage(
 
 export async function captureUsageSnapshot(): Promise<UsageSnapshot | null> {
   try {
+    // llmux mode: the bot's traffic is served by the llmux account pool, so
+    // the host machine's personal OAuth usage is the WRONG number to show.
+    // No fallback to the oauth endpoint here — a missing llmux snapshot means
+    // the footer omits the usage line rather than displaying unrelated data.
+    if (isLlmuxMode()) {
+      const usage = await fetchLlmuxUsage(0); // bypass cache
+      if (!usage) return null;
+      return {
+        fiveHour: usage.fiveHour,
+        sevenDay: usage.sevenDay,
+        source: "llmux",
+        account: usage.account,
+        poolOk: usage.poolOk,
+        poolTotal: usage.poolTotal,
+      };
+    }
     const usage = await fetchClaudeUsage(0); // bypass cache
     if (!usage) return null;
     return {
       fiveHour: usage.five_hour ? Math.round(usage.five_hour.utilization * 10) / 10 : 0,
       sevenDay: usage.seven_day ? Math.round(usage.seven_day.utilization) : 0,
+      source: "oauth",
     };
   } catch {
     return null;

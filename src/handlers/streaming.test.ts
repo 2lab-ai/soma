@@ -1,6 +1,7 @@
 import { describe, test, expect, mock } from "bun:test";
 import {
   StreamingState,
+  buildEnhancedFooter,
   createStatusCallback,
   handleRateLimitError,
 } from "./streaming";
@@ -371,5 +372,51 @@ describe("closeOpenMarkdown - auto-close truncated markdown", () => {
 
   test("returns unchanged if nothing to close", () => {
     expect(closeOpenMarkdown("plain text")).toBe("plain text");
+  });
+});
+
+describe("buildEnhancedFooter - llmux usage line", () => {
+  function meta(overrides: Partial<QueryMetadata>): QueryMetadata {
+    return {
+      usageBefore: null,
+      usageAfter: null,
+      toolDurations: {},
+      queryDurationMs: 1000,
+      ...overrides,
+    };
+  }
+
+  test("llmux snapshot renders account + pool line after 5h/7d", () => {
+    const footer = buildEnhancedFooter(
+      new Date(Date.now() - 5000),
+      meta({
+        currentProvider: "anthropic",
+        usageBefore: { fiveHour: 30, sevenDay: 19, source: "llmux" },
+        usageAfter: {
+          fiveHour: 31,
+          sevenDay: 20,
+          source: "llmux",
+          account: "claude:acct-3@example.com",
+          poolOk: 7,
+          poolTotal: 9,
+        },
+      })
+    );
+    expect(footer).toContain("5h");
+    expect(footer).toContain("7d");
+    expect(footer).toContain("⚡ llmux acct-3@example.com · pool 7/9");
+  });
+
+  test("oauth snapshot renders no llmux line", () => {
+    const footer = buildEnhancedFooter(
+      new Date(Date.now() - 5000),
+      meta({
+        currentProvider: "anthropic",
+        usageBefore: { fiveHour: 30, sevenDay: 19, source: "oauth" },
+        usageAfter: { fiveHour: 31, sevenDay: 20, source: "oauth" },
+      })
+    );
+    expect(footer).toContain("5h");
+    expect(footer).not.toContain("⚡ llmux");
   });
 });

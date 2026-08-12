@@ -4,6 +4,14 @@ import type { Provider } from "./provider";
 export interface UsageSnapshot {
   fiveHour: number;
   sevenDay: number;
+  /** Which backend produced the numbers. Absent = legacy oauth snapshot. */
+  source?: "oauth" | "llmux";
+  /** llmux only: account whose 5h/7d windows are shown. */
+  account?: string;
+  /** llmux only: claude-group accounts currently usable (status active|ok). */
+  poolOk?: number;
+  /** llmux only: total claude-group accounts in the pool. */
+  poolTotal?: number;
 }
 
 export interface QueryMetadata {
