@@ -19,6 +19,22 @@ import {
 } from "./telegram-bot";
 import { configureAndStartScheduler, stopSchedulerRunner } from "./scheduler-runner";
 
+/**
+ * Update types the runner asks Telegram for, mirroring what
+ * `registerBotHandlers` actually handles (message ×5 kinds, callback_query,
+ * my_chat_member).
+ *
+ * This MUST be passed explicitly. `allowed_updates` is persisted per bot token
+ * on Telegram's side and "if not specified, the previous setting will be used"
+ * — so a token that was ever polled with a narrower list keeps that list
+ * forever, silently. That is not hypothetical: choa-bot (2026-08-21) came with
+ * a stale `["message"]` from an earlier life, which delivered text but dropped
+ * every `callback_query`, so the /model menu rendered and then ignored every
+ * button press with no error anywhere. Naming the list here makes the wire
+ * contract a property of the code instead of per-token server state.
+ */
+export const POLLED_UPDATE_TYPES = ["message", "callback_query", "my_chat_member"] as const;
+
 interface SessionStatsSnapshot {
   totalSessions: number;
   totalQueries: number;
@@ -183,7 +199,10 @@ export async function bootstrapApplication(
   const stopScheduler = dependencies.stopSchedulerRunner ?? stopSchedulerRunner;
   const startRunner =
     dependencies.startRunner ??
-    ((bot: Bot<Context>): RunnerPort => run(bot) as unknown as RunnerPort);
+    ((bot: Bot<Context>): RunnerPort =>
+      run(bot, {
+        runner: { fetch: { allowed_updates: [...POLLED_UPDATE_TYPES] } },
+      }) as unknown as RunnerPort);
   const manager = dependencies.sessionManager ?? (sessionManager as SessionManagerPort);
   const createFormStore =
     dependencies.createFormStore ?? (() => new PendingFormStore());
