@@ -6,6 +6,7 @@
 
 import { resolve, normalize } from "path";
 import { realpathSync } from "fs";
+import { createRuleSet, type DangerousRule } from "soma-lib";
 import type { RateLimitBucket } from "./types";
 import {
   ALLOWED_GROUPS,
@@ -127,23 +128,48 @@ function normalizeCommand(command: string): string {
   return command.replace(/\\\n/g, "");
 }
 
+/**
+ * soma's project block rules expressed as shared soma-lib `DangerousRule`s.
+ * Catalog contents are unchanged (BLOCKED_PATTERNS substrings +
+ * BLOCKED_EXECUTION_RULES regexes from config); only the matching engine is
+ * shared. Order matters: patterns before execution rules, so the first match
+ * reproduces the historical deny reason. All rules are lockdown
+ * (sessionOverridable: false) — soma hard-denies, there is no ask flow.
+ *
+ * Matcher regexes must never use /g or /y: matchRules evaluates the whole
+ * catalog (no short-circuit), so a stateful lastIndex would leak between
+ * checks. Verified 2026-08-21: all 7 BLOCKED_EXECUTION_RULES regexes use
+ * only the i flag.
+ */
+const SOMA_BLOCK_RULES: readonly DangerousRule[] = [
+  ...BLOCKED_PATTERNS.map((pattern) => ({
+    id: `blocked-pattern:${pattern}`,
+    label: pattern,
+    description: `Blocked pattern: ${pattern}`,
+    sessionOverridable: false,
+    match: (cmd: string) => cmd.toLowerCase().includes(pattern.toLowerCase()),
+  })),
+  ...BLOCKED_EXECUTION_RULES.map((rule) => ({
+    id: rule.id,
+    label: rule.id,
+    description: `Blocked: ${rule.reason} (${rule.id})`,
+    sessionOverridable: false,
+    match: (cmd: string) => rule.regex.test(cmd),
+  })),
+];
+
+const somaBlockRuleSet = createRuleSet(SOMA_BLOCK_RULES);
+
 export function checkCommandSafety(command: string): [safe: boolean, reason: string] {
   // Normalize command to defeat line-continuation bypass
   const normalized = normalizeCommand(command);
   const lowerCommand = normalized.toLowerCase();
 
-  // Check blocked patterns
-  for (const pattern of BLOCKED_PATTERNS) {
-    if (lowerCommand.includes(pattern.toLowerCase())) {
-      return [false, `Blocked pattern: ${pattern}`];
-    }
-  }
-
-  // Check execution dispatch patterns (Security Audit S5)
-  for (const rule of BLOCKED_EXECUTION_RULES) {
-    if (rule.regex.test(normalized)) {
-      return [false, `Blocked: ${rule.reason} (${rule.id})`];
-    }
+  // Blocked patterns + execution dispatch rules (Security Audit S5) via the
+  // shared soma-lib matching engine; first match wins the deny reason.
+  const matched = somaBlockRuleSet.matchRules(normalized);
+  if (matched.length > 0) {
+    return [false, matched[0]!.description];
   }
 
   // Special handling for rm commands - validate paths
