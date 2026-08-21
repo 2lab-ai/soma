@@ -6,14 +6,13 @@
 
 import { resolve, normalize } from "path";
 import { realpathSync } from "fs";
-import { createRuleSet, type DangerousRule } from "soma-lib";
+import { EXECUTION_DISPATCH_RULES, createRuleSet, type DangerousRule } from "soma-lib";
 import type { RateLimitBucket } from "./types";
 import {
   ALLOWED_GROUPS,
   ALLOWED_PATHS,
   ALLOWED_USERS,
   BLOCKED_PATTERNS,
-  BLOCKED_EXECUTION_RULES,
   RATE_LIMIT_ENABLED,
   RATE_LIMIT_REQUESTS,
   RATE_LIMIT_WINDOW,
@@ -130,16 +129,18 @@ function normalizeCommand(command: string): string {
 
 /**
  * soma's project block rules expressed as shared soma-lib `DangerousRule`s.
- * Catalog contents are unchanged (BLOCKED_PATTERNS substrings +
- * BLOCKED_EXECUTION_RULES regexes from config); only the matching engine is
- * shared. Order matters: patterns before execution rules, so the first match
- * reproduces the historical deny reason. All rules are lockdown
- * (sessionOverridable: false) — soma hard-denies, there is no ask flow.
+ * Two sources: BLOCKED_PATTERNS substrings (personal policy, stays in config)
+ * and the shared EXECUTION_DISPATCH_RULES (curl|sh family — canonical since
+ * soma-lib v0.2.0; soma's local regex copies were deleted then). soma
+ * hard-denies everything here regardless of the canonical sessionOverridable
+ * flag — there is no ask flow — so the flag is forced to false and the deny
+ * reason keeps the historical `Blocked: {reason} ({id})` shape. Order
+ * matters: patterns before execution rules, so the first match reproduces
+ * the historical deny reason.
  *
  * Matcher regexes must never use /g or /y: matchRules evaluates the whole
  * catalog (no short-circuit), so a stateful lastIndex would leak between
- * checks. Verified 2026-08-21: all 7 BLOCKED_EXECUTION_RULES regexes use
- * only the i flag.
+ * checks (soma-lib enforces this for the shared rules).
  */
 const SOMA_BLOCK_RULES: readonly DangerousRule[] = [
   ...BLOCKED_PATTERNS.map((pattern) => ({
@@ -149,12 +150,10 @@ const SOMA_BLOCK_RULES: readonly DangerousRule[] = [
     sessionOverridable: false,
     match: (cmd: string) => cmd.toLowerCase().includes(pattern.toLowerCase()),
   })),
-  ...BLOCKED_EXECUTION_RULES.map((rule) => ({
-    id: rule.id,
-    label: rule.id,
-    description: `Blocked: ${rule.reason} (${rule.id})`,
+  ...EXECUTION_DISPATCH_RULES.map((rule) => ({
+    ...rule,
     sessionOverridable: false,
-    match: (cmd: string) => rule.regex.test(cmd),
+    description: `Blocked: ${rule.description} (${rule.id})`,
   })),
 ];
 
