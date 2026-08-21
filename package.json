@@ -33,6 +33,6 @@
     "openai": "^6.15.0",
     "yaml": "^2.8.2",
     "zod": "^4.2.1",
-    "soma-lib": "https://github.com/2lab-ai/soma-lib/releases/download/v0.4.1/soma-lib-0.4.1.tgz"
+    "soma-lib": "https://github.com/2lab-ai/soma-lib/releases/download/v0.5.0/soma-lib-0.5.0.tgz"
   }
 }
