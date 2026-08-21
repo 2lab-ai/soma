@@ -29,15 +29,16 @@ preflight:
 	@echo "✅ Preflight passed"
 
 # Full deployment pipeline with preflight (service must be pre-installed via make install-service)
+# Darwin: restart exit + liveness gate success BEFORE any ✅ (no false-green).
 up: install build preflight
 	@echo "🔄 Deploying $(SERVICE_NAME)..."
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		if [ -f $(MACOS_PLIST) ]; then \
-			$(MAKE) restart; \
-			echo "✅ Deployment complete - macOS service restarted"; \
-		else \
-			echo "⚠️  macOS: Run 'make install-service' first"; \
-		fi \
+		if [ ! -f $(MACOS_PLIST) ]; then \
+			echo "❌ macOS: plist missing — run: ENV=$(ENV) make install-service"; \
+			exit 1; \
+		fi; \
+		$(MAKE) restart || { echo "❌ Deployment failed — restart/start did not pass liveness"; exit 1; }; \
+		echo "✅ Deployment complete - macOS service restarted"; \
 	elif [ "$(IS_WSL)" = "1" ]; then \
 		if ! $(SYSTEMCTL) is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
 			echo "⚠️  Service '$(SERVICE_NAME)' not installed. Run: ENV=$(ENV) make install-service"; \
@@ -55,6 +56,7 @@ up: install build preflight
 		fi \
 	else \
 		echo "⚠️  Unsupported platform"; \
+		exit 1; \
 	fi
 
 # Emergency deployment without preflight (use with caution)
@@ -62,12 +64,12 @@ up-force: install build
 	@echo "⚠️  Skipping preflight checks (emergency mode)..."
 	@echo "🔄 Deploying $(SERVICE_NAME)..."
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		if [ -f $(MACOS_PLIST) ]; then \
-			$(MAKE) restart; \
-			echo "✅ Deployment complete - macOS service restarted"; \
-		else \
-			echo "⚠️  macOS: Run 'make install-service' first"; \
-		fi \
+		if [ ! -f $(MACOS_PLIST) ]; then \
+			echo "❌ macOS: plist missing — run: ENV=$(ENV) make install-service"; \
+			exit 1; \
+		fi; \
+		$(MAKE) restart || { echo "❌ Deployment failed — restart/start did not pass liveness"; exit 1; }; \
+		echo "✅ Deployment complete - macOS service restarted"; \
 	elif [ "$(IS_WSL)" = "1" ]; then \
 		if ! $(SYSTEMCTL) is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
 			echo "⚠️  Service '$(SERVICE_NAME)' not installed. Run: ENV=$(ENV) make install-service"; \
@@ -85,6 +87,7 @@ up-force: install build
 		fi \
 	else \
 		echo "⚠️  Unsupported platform"; \
+		exit 1; \
 	fi
 
 # Install dependencies
@@ -125,11 +128,25 @@ test:
 	fi
 
 # Stop service or process
+# Darwin deliberate-stop: bootout + domain absence (NOT SIGTERM — KeepAlive respawns).
+# start/restart still use bootstrap-if-missing + kickstart (no bootout churn).
 stop:
 	@echo "🛑 Stopping..."
 	@if [ "$(UNAME_S)" = "Darwin" ] && [ -f $(MACOS_PLIST) ]; then \
-		launchctl unload $(MACOS_PLIST) 2>/dev/null || true; \
-		echo "   macOS service stopped"; \
+		UID_NUM=$$(id -u); \
+		LABEL=ai.2lab.$(SERVICE_NAME); \
+		if launchctl print gui/$$UID_NUM/$$LABEL >/dev/null 2>&1; then \
+			launchctl bootout gui/$$UID_NUM/$$LABEL || { echo "❌ bootout failed for $$LABEL"; exit 1; }; \
+			i=0; \
+			while launchctl print gui/$$UID_NUM/$$LABEL >/dev/null 2>&1; do \
+				i=$$((i+1)); \
+				if [ $$i -ge 20 ]; then echo "❌ $$LABEL still loaded after bootout"; exit 1; fi; \
+				sleep 0.25; \
+			done; \
+			echo "   macOS service unloaded ($$LABEL)"; \
+		else \
+			echo "   macOS service not loaded"; \
+		fi \
 	elif [ "$(IS_WSL)" = "1" ] && $(SYSTEMCTL) is-active $(SERVICE_NAME) >/dev/null 2>&1; then \
 		$(SYSTEMCTL) stop $(SERVICE_NAME); \
 		echo "   systemd service stopped"; \
@@ -141,11 +158,47 @@ stop:
 	fi
 
 # Start service or process
+# Darwin: never bootout+bootstrap on an already-loaded agent (bootstrap 125).
+# Load once if missing, kickstart -k, then require PID + new "Bot started" log line.
 start:
 	@echo "🚀 Starting..."
 	@if [ "$(UNAME_S)" = "Darwin" ] && [ -f $(MACOS_PLIST) ]; then \
-		launchctl load $(MACOS_PLIST); sleep 1; \
-		launchctl list | grep ai.2lab.$(SERVICE_NAME) && echo "   macOS service running" || echo "   ⚠️  Failed to start"; \
+		UID_NUM=$$(id -u); \
+		LABEL=ai.2lab.$(SERVICE_NAME); \
+		PLIST=$$HOME/Library/LaunchAgents/$$LABEL.plist; \
+		OUT_LOG=$$HOME/Library/Logs/$$LABEL.out.log; \
+		if [ ! -f "$$PLIST" ]; then PLIST=$(MACOS_PLIST); fi; \
+		if ! launchctl print gui/$$UID_NUM/$$LABEL >/dev/null 2>&1; then \
+			echo "   Loading $$LABEL into gui/$$UID_NUM..."; \
+			launchctl bootstrap gui/$$UID_NUM "$$PLIST" || \
+				(echo "   bootstrap failed; trying legacy load"; launchctl load "$$PLIST"); \
+		fi; \
+		if ! launchctl print gui/$$UID_NUM/$$LABEL >/dev/null 2>&1; then \
+			echo "❌ Failed to load $$LABEL"; \
+			exit 1; \
+		fi; \
+		MARKER=$$(wc -l < "$$OUT_LOG" 2>/dev/null | tr -d ' ' || echo 0); \
+		launchctl kickstart -k gui/$$UID_NUM/$$LABEL || { echo "❌ kickstart failed for $$LABEL"; exit 1; }; \
+		ok=0; \
+		i=0; \
+		while [ $$i -lt 40 ]; do \
+			i=$$((i+1)); \
+			sleep 0.5; \
+			LINE=$$(launchctl list | grep "$$LABEL" || true); \
+			PID=$$(echo "$$LINE" | awk '{print $$1}'); \
+			if [ -z "$$PID" ] || [ "$$PID" = "-" ]; then continue; fi; \
+			if [ ! -f "$$OUT_LOG" ]; then continue; fi; \
+			if tail -n +$$((MARKER+1)) "$$OUT_LOG" 2>/dev/null | grep -q "Bot started"; then \
+				ok=1; break; \
+			fi; \
+		done; \
+		if [ $$ok -ne 1 ]; then \
+			echo "❌ Liveness failed for $$LABEL (no PID and/or no new 'Bot started' within ~20s)"; \
+			echo "   log: $$OUT_LOG"; \
+			tail -n 20 "$$OUT_LOG" 2>/dev/null || true; \
+			exit 1; \
+		fi; \
+		echo "   macOS service running ($$LABEL pid=$$PID, Bot started)"; \
 	elif [ "$(IS_WSL)" = "1" ] && $(SYSTEMCTL) is-enabled $(SERVICE_NAME) >/dev/null 2>&1; then \
 		$(SYSTEMCTL) start $(SERVICE_NAME); sleep 1; \
 		$(SYSTEMCTL) is-active $(SERVICE_NAME) && echo "   systemd service running" || echo "   ⚠️  Failed to start"; \
@@ -161,17 +214,22 @@ start:
 		fi \
 	fi
 
-# Restart service (includes graceful shutdown delay)
-restart: stop
-	@sleep 2 && $(MAKE) start
+# Restart service — Darwin uses kickstart -k (no bootout/bootstrap flip)
+restart:
+	@if [ "$(UNAME_S)" = "Darwin" ] && [ -f $(MACOS_PLIST) ]; then \
+		$(MAKE) start; \
+	else \
+		$(MAKE) stop; \
+		sleep 2; \
+		$(MAKE) start; \
+	fi
 
 # Install service (one-time setup)
 install-service:
 	@echo "📝 Installing service..."
 	@echo "   Using env file: $(ENV_EXPANDED)"
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		echo "macOS: Please manually configure launchagent/ai.2lab.soma.plist.template"; \
-		echo "       Then copy it to ~/Library/LaunchAgents/ai.2lab.$(SERVICE_NAME).plist"; \
+		bash launchagent/install-macos-service.sh "$(SERVICE_NAME)" "$(ENV_EXPANDED)" "$$(pwd)"; \
 	elif [ "$(IS_WSL)" = "1" ]; then \
 		mkdir -p ~/.config/systemd/user; \
 		printf '[Unit]\nDescription=$(SERVICE_NAME)\nAfter=network.target\n\n[Service]\nType=simple\nWorkingDirectory=%s\nEnvironmentFile=%s\nExecStart=%s run start\nRestart=always\nRestartSec=10\nEnvironment=PATH=%s:/usr/local/bin:/usr/bin:/bin\nStandardOutput=append:$(LOGFILE)\nStandardError=append:$(ERRFILE)\n\n[Install]\nWantedBy=default.target\n' "$(shell pwd)" "$(ENV_EXPANDED)" "$(BUN_PATH)" "$(dir $(BUN_PATH))" > $(SYSTEMD_SERVICE); \
@@ -192,13 +250,13 @@ reinstall-service: uninstall-service install-service start
 uninstall-service:
 	@echo "🗑️  Uninstalling service..."
 	@if [ "$(UNAME_S)" = "Darwin" ]; then \
-		if [ -f $(MACOS_PLIST) ]; then \
-			launchctl unload $(MACOS_PLIST) 2>/dev/null || true; \
-			rm -f $(MACOS_PLIST); \
-			echo "✅ macOS service removed"; \
-		else \
-			echo "   Service not installed"; \
-		fi \
+		UID_NUM=$$(id -u); \
+		LABEL=ai.2lab.$(SERVICE_NAME); \
+		if launchctl print gui/$$UID_NUM/$$LABEL >/dev/null 2>&1; then \
+			launchctl bootout gui/$$UID_NUM/$$LABEL || { echo "❌ bootout failed for $$LABEL"; exit 1; }; \
+		fi; \
+		rm -f $(MACOS_PLIST); \
+		echo "✅ macOS service removed"; \
 	elif [ "$(IS_WSL)" = "1" ]; then \
 		$(SYSTEMCTL) stop $(SERVICE_NAME) 2>/dev/null || true; \
 		$(SYSTEMCTL) disable $(SERVICE_NAME) 2>/dev/null || true; \
