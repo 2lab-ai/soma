@@ -194,76 +194,9 @@ export const BLOCKED_PATTERNS = [
   "dd if=",
 ];
 
-/**
- * Execution-dispatch detection rules.
- * Security Audit S5: curl|sh, wget|bash, etc. bypass BLOCKED_PATTERNS.
- *
- * Word boundary (\b) after interpreter name prevents false positives
- * like `| sha256sum` or `| show`.
- *
- * Interpreter lists are defined once (DRY) to prevent drift.
- */
-const SHELL_INTERPRETERS = "sh|bash|zsh|dash|ksh|csh|tcsh|fish";
-const SCRIPT_INTERPRETERS = "python[23]?|perl|ruby|node|php";
-const ALL_INTERPRETERS = `${SHELL_INTERPRETERS}|${SCRIPT_INTERPRETERS}`;
-
-export type BlockRule = {
-  readonly id: string;
-  readonly regex: RegExp;
-  readonly reason: string;
-};
-
-export const BLOCKED_EXECUTION_RULES: readonly BlockRule[] = [
-  {
-    id: "pipe-to-interpreter",
-    regex: new RegExp(`\\|\\s*(?:${ALL_INTERPRETERS})\\b`, "i"),
-    reason: "Pipe to shell/script interpreter",
-  },
-  {
-    id: "pipe-to-path-interpreter",
-    regex: new RegExp(
-      `\\|\\s*(?:\\/(?:usr\\/)?(?:local\\/)?(?:s?bin)\\/(?:env\\s+(?:-\\S+\\s+)*)?|env\\s+(?:-\\S+\\s+)*)(?:${ALL_INTERPRETERS})\\b`,
-      "i"
-    ),
-    reason: "Pipe to absolute-path or env-wrapped interpreter",
-  },
-  {
-    id: "pipe-to-busybox",
-    regex: new RegExp(
-      `\\|\\s*(?:\\/(?:usr\\/)?(?:local\\/)?(?:s?bin)\\/)?busybox\\s+(?:sh|bash|ash|dash)\\b`,
-      "i"
-    ),
-    reason: "Pipe to busybox-wrapped shell",
-  },
-  {
-    id: "process-substitution",
-    regex: new RegExp(
-      `(?:${SHELL_INTERPRETERS})\\s+<\\(\\s*(?:curl|wget)\\b`,
-      "i"
-    ),
-    reason: "Process substitution with remote fetch",
-  },
-  {
-    id: "source-dot-substitution",
-    // dot-source: `. <(curl ...)` / `source <(curl ...)` — `\.\s` (not just `\.`)
-    // because shell requires whitespace after `.` builtin to distinguish from filenames
-    regex: /(?:source|\.\s)\s*<\(\s*(?:curl|wget)\b/i,
-    reason: "Source/dot process substitution with remote fetch",
-  },
-  {
-    id: "xargs-to-interpreter",
-    regex: new RegExp(`\\|\\s*xargs\\s+(?:${ALL_INTERPRETERS})\\b`, "i"),
-    reason: "Xargs to shell/script interpreter",
-  },
-  {
-    id: "env-wrapped-interpreter",
-    regex: new RegExp(
-      `\\|\\s*(?:\\/(?:usr\\/)?(?:local\\/)?(?:s?bin)\\/)?env\\s+(?:-\\S+\\s+)*(?:${ALL_INTERPRETERS})\\b`,
-      "i"
-    ),
-    reason: "Env-wrapped pipe to interpreter",
-  },
-];
+// Execution-dispatch rules (curl|sh family, Security Audit S5) moved to the
+// shared soma-lib canonical catalog in v0.2.0 — consumed by src/security.ts
+// as EXECUTION_DISPATCH_RULES (hard-deny, reasons preserved).
 
 const BASE_TRANSCRIPTION_PROMPT = `Transcribe this voice message accurately.
 The speaker may use multiple languages (English, and possibly others).
