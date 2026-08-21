@@ -1,4 +1,3 @@
-import { Cron } from "croner";
 import { existsSync, readFileSync, statSync } from "fs";
 import type { Api } from "grammy";
 import { resolve } from "path";
@@ -8,6 +7,7 @@ import { getModelForContext } from "../config/model";
 import { getDisplayName } from "../config/model-catalog";
 import { convertMarkdownToHtml, escapeHtml } from "../formatting";
 import { isPathAllowed } from "../security";
+import { createMinuteCronJobFactory } from "soma-lib";
 import type { CronConfig, CronSchedule } from "../types";
 import type { StatusCallback } from "../types/runtime";
 import { startFileWatcher, stopFileWatcher } from "./file-watcher";
@@ -174,10 +174,14 @@ function createDefaultDependencies(): SchedulerServiceDependencies {
     fileWatcherDebounceMs: DEFAULT_FILE_WATCH_DEBOUNCE_MS,
     allowedUsers: ALLOWED_USERS,
     now: () => Date.now(),
-    createCronJob: (cronExpression, onTick) =>
-      new Cron(cronExpression, async () => {
-        await onTick();
-      }),
+    // croner replaced by the shared soma-lib adapter (v0.4.0, roadmap Step
+    // 3b): 5-field numeric expressions evaluated against the HOST-LOCAL wall
+    // clock (croner parity — cron.yaml times keep meaning local time), fires
+    // within the matching minute, one bad tick never kills the schedule.
+    createCronJob: createMinuteCronJobFactory({
+      wallClock: "local",
+      onTickError: (error) => logger.error(`[CRON] onTick failed: ${error}`),
+    }),
     loadCronConfig: createDefaultCronConfigLoader(
       cronConfigPath,
       DEFAULT_MAX_PROMPT_LENGTH,
