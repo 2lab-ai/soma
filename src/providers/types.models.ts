@@ -31,6 +31,13 @@ export interface ProviderQueryInput {
   hooks?: unknown;
   pathToClaudeCodeExecutable?: string;
   allowDangerouslySkipPermissions?: boolean;
+  /**
+   * Handler for exceptional tool-permission prompts (issue #79). Typed as
+   * `unknown` for the same reason `hooks` is — the concrete shape is the
+   * Claude SDK's `CanUseTool`, and adapters without a permission callback
+   * simply ignore it.
+   */
+  canUseTool?: unknown;
   abortController?: AbortController;
 }
 

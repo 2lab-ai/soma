@@ -1,4 +1,9 @@
-import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type CanUseTool,
+  type Options,
+  type SDKMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { ProviderOrchestrator } from "../../providers/orchestrator";
 import type { ProviderEvent, ProviderQueryInput } from "../../providers/types.models";
 import { applyModelSpecificOverrides } from "../../providers/claude-options";
@@ -118,6 +123,15 @@ export interface BuildQueryRuntimeOptionsInput {
   pathToClaudeCodeExecutable?: string;
   abortController: AbortController;
   hooks: QueryRuntimeHooks;
+  /**
+   * Handler for the SDK's exceptional permission prompts (issue #79).
+   *
+   * `bypassPermissions` keeps ordinary tool calls autonomous, but the SDK
+   * still routes explicit ask rules, org-ask connectors, critical-path
+   * rm/rmdir and `requiresUserInteraction` tools through `canUseTool`.
+   * Without one, those prompts have no user round-trip and the turn stalls.
+   */
+  canUseTool?: CanUseTool;
 }
 
 export function buildQueryRuntimeOptions(
@@ -175,6 +189,10 @@ export function buildQueryRuntimeOptions(
 
   if (input.pathToClaudeCodeExecutable) {
     options.pathToClaudeCodeExecutable = input.pathToClaudeCodeExecutable;
+  }
+
+  if (input.canUseTool) {
+    options.canUseTool = input.canUseTool;
   }
 
   return applyModelSpecificOverrides(input.model, options);
@@ -467,6 +485,7 @@ async function executeProviderRuntime(
         ? input.options.systemPrompt
         : undefined,
     permissionMode: toProviderPermissionMode(input.options.permissionMode),
+    canUseTool: input.options.canUseTool,
     hooks: input.options.hooks,
     pathToClaudeCodeExecutable: input.options.pathToClaudeCodeExecutable,
     allowDangerouslySkipPermissions: input.options.allowDangerouslySkipPermissions,

@@ -67,6 +67,11 @@ function toClaudeOptions(
     resume: input.resumeSessionId,
     permissionMode,
     allowDangerouslySkipPermissions: input.allowDangerouslySkipPermissions ?? true,
+    // Exceptional permission prompts still reach canUseTool under
+    // bypassPermissions (issue #79). Dropping it here would make the Telegram
+    // approve/deny round trip dead code in production, where every query goes
+    // through this adapter.
+    canUseTool: input.canUseTool as Options["canUseTool"],
     hooks: input.hooks as Options["hooks"],
     pathToClaudeCodeExecutable: input.pathToClaudeCodeExecutable,
     // Auth routing for the spawned CLI (undefined = inherit process.env).

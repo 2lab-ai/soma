@@ -17,6 +17,8 @@ import {
   ChoiceTransitionError,
   createPendingDirectInput,
 } from "../core/session/choice-flow";
+import { PERMISSION_CALLBACK_PREFIX } from "../core/session/permission-broker";
+import { handlePermissionCallback } from "./permission-callback";
 import {
   getCurrentConfig,
   usesAdaptiveThinking,
@@ -526,6 +528,13 @@ export async function handleCallback(ctx: Context): Promise<void> {
 
   if (!isAuthorizedForChat(userId, chatId, chatType)) {
     await ctx.answerCallbackQuery({ text: "Unauthorized" });
+    return;
+  }
+
+  // SDK tool-permission answers (issue #79). Routed before every other prefix
+  // so an approve/deny click can never fall through to generic handling.
+  if (callbackData.startsWith(PERMISSION_CALLBACK_PREFIX)) {
+    await handlePermissionCallback(ctx, callbackData, chatId, userId);
     return;
   }
 

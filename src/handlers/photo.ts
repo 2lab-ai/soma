@@ -119,7 +119,16 @@ ${pathsList}`;
     try {
       const response = await withPoisonedResumeRecovery(
         session,
-        () => session.sendMessageStreaming(addTimestamp(prompt), statusCallback, chatId),
+        // queryUserId binds tool-permission prompts to the asking user —
+        // in a group, chat-level authorization is not a user binding.
+        () =>
+          session.sendMessageStreaming(
+            addTimestamp(prompt),
+            statusCallback,
+            chatId,
+            "general",
+            userId
+          ),
         {
           label: "photo",
           canRecover: () =>

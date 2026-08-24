@@ -114,7 +114,16 @@ async function sendDirectInputToClaude(
   try {
     const response = await withPoisonedResumeRecovery(
       session,
-      () => session.sendMessageStreaming(selectedLabel, statusCallback, chatId),
+      // queryUserId binds tool-permission prompts to the answering user —
+      // in a group, chat-level authorization is not a user binding.
+      () =>
+        session.sendMessageStreaming(
+          selectedLabel,
+          statusCallback,
+          chatId,
+          "general",
+          userId
+        ),
       {
         label: "direct-input",
         canRecover: () =>

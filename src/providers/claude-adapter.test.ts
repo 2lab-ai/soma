@@ -273,6 +273,47 @@ describe("ClaudeProviderAdapter", () => {
     expect(opts.effort).toBe("xhigh");
   });
 
+  // Issue #79: the Telegram permission round trip only reaches the SDK if the
+  // adapter forwards canUseTool — bypassPermissions still routes exceptional
+  // prompts (explicit ask rules, critical-path rm/rmdir, …) through it.
+  test("forwards canUseTool to the SDK alongside bypassPermissions", async () => {
+    const recorded: Array<{ prompt: string; options: unknown }> = [];
+
+    const queryFactory = (payload: { prompt: string; options: unknown }) => {
+      recorded.push(payload);
+      return toAsyncGenerator([
+        {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "ok",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          num_turns: 1,
+          total_cost_usd: 0,
+          usage: { inputTokens: 0, outputTokens: 0 },
+          modelUsage: {},
+          permission_denials: [],
+          session_id: "s",
+        } as unknown as SDKMessage,
+      ]);
+    };
+
+    const canUseTool = async () => ({ behavior: "deny" as const, message: "no" });
+    const adapter = new ClaudeProviderAdapter(queryFactory as any);
+    const handle = await adapter.startQuery({
+      ...createInput("canusetool-wiring"),
+      modelId: "claude-sonnet-4-5-20250929",
+      permissionMode: "bypass",
+      canUseTool,
+    } as any);
+    await adapter.streamEvents(handle, () => {});
+
+    const opts = recorded[0]!.options as Record<string, unknown>;
+    expect(opts.canUseTool).toBe(canUseTool);
+    expect(opts.permissionMode).toBe("bypassPermissions");
+  });
+
   test("Sonnet 4.5: forwards maxThinkingTokens without adaptive override", async () => {
     const recorded: Array<{ prompt: string; options: unknown }> = [];
 
