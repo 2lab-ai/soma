@@ -10,6 +10,10 @@ import type { ProviderRetryPolicyMap } from "../providers/retry-policy";
 import { addSystemReaction, sendSystemMessage } from "../utils/system-message";
 import { PendingFormStore } from "../stores/pending-form-store";
 import { sessionManager } from "../core/session/session-manager";
+import {
+  createTelegramPromptSender,
+  permissionBroker,
+} from "../core/session/permission-broker";
 import { setBotUsername } from "../handlers";
 import {
   createTelegramBot,
@@ -246,6 +250,11 @@ export async function bootstrapApplication(
   registerMiddleware(bot);
   await registerCommands(bot);
   registerHandlers(bot);
+
+  // Bind the permission broker to the live bot Api (issue #79). Deliberately
+  // the Api and not a grammY Context: cron/scheduler sessions have no Context
+  // but still need to ask the owner for approval.
+  permissionBroker.setPromptSender(createTelegramPromptSender(bot.api));
 
   console.log("=".repeat(50));
   console.log("Claude Telegram Bot - TypeScript Edition");
@@ -535,6 +544,14 @@ export async function bootstrapApplication(
   const stopRunner = () => {
     console.log("[SHUTDOWN] Step 1: Stopping scheduler...");
     stopScheduler();
+    // Nobody can answer a permission prompt once polling stops — fail closed
+    // instead of leaving a query blocked on a dead keyboard (issue #79).
+    const cancelledPrompts = permissionBroker.cancelAll("the bot is shutting down");
+    if (cancelledPrompts > 0) {
+      console.log(
+        `[SHUTDOWN] Denied ${cancelledPrompts} pending permission prompt(s)`
+      );
+    }
     console.log("[SHUTDOWN] Step 2: Saving all sessions...");
     const stats = manager.getGlobalStats();
     console.log(

@@ -64,6 +64,7 @@ import {
   createSessionIdentity,
   parseSessionKey,
   resolveSendFileChatId,
+  resolveTelegramTopicId,
   type SessionIdentity,
 } from "../routing/session-key";
 import {
@@ -72,6 +73,7 @@ import {
   createQueryRuntimeHooks,
   executeQueryRuntime,
 } from "./query-runtime";
+import { permissionBroker } from "./permission-broker";
 import { serializeSessionData } from "./session-serialize";
 // Single source of truth for the per-bot sessions directory (see session-store).
 import { SESSIONS_DIR } from "./session-store";
@@ -851,6 +853,21 @@ export class ClaudeSession {
       pathToClaudeCodeExecutable: process.env.CLAUDE_CODE_PATH,
       abortController: this.abortController,
       hooks: this.queryRuntimeHooks,
+      // Exceptional SDK permission prompts (explicit ask rules, org-ask
+      // connectors, critical-path rm/rmdir, requiresUserInteraction) get a
+      // Telegram approve/deny round trip bound to THIS chat/user — never a
+      // process-global chat id, which would race across sessions.
+      canUseTool: permissionBroker.createCanUseTool({
+        chatId,
+        // Cron/scheduler runs carry no query user but do carry the owner's
+        // private chat id (scheduler-runner passes ALLOWED_USERS[0] as
+        // chatId), where chat id === user id. A group has no such
+        // equivalence, so fall back to chat-level authorization only.
+        userId: queryUserId ?? (chatId !== undefined && chatId > 0 ? chatId : undefined),
+        threadId: resolveTelegramTopicId(this.sessionKey, chatId),
+        sessionKey: this.sessionKey,
+        abortSignal: this.abortController.signal,
+      }),
     });
 
     // Record which model this query uses so future calls can detect changes

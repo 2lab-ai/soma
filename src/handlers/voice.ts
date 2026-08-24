@@ -145,7 +145,16 @@ export async function handleVoice(ctx: Context): Promise<void> {
     // 10. Send to Claude (with timestamp)
     const claudeResponse = await withPoisonedResumeRecovery(
       session,
-      () => session.sendMessageStreaming(addTimestamp(transcript), statusCallback, chatId),
+      // queryUserId binds tool-permission prompts to the asking user —
+      // in a group, chat-level authorization is not a user binding.
+      () =>
+        session.sendMessageStreaming(
+          addTimestamp(transcript),
+          statusCallback,
+          chatId,
+          "general",
+          userId
+        ),
       {
         label: "voice",
         canRecover: () =>

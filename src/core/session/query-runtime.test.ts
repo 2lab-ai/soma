@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { createSessionIdentity } from "../routing/session-key";
 import {
   buildQueryRuntimeMetadata,
@@ -550,6 +550,71 @@ describe("query-runtime options", () => {
     expect((options as { thinking?: unknown }).thinking).toBeUndefined();
     expect((options as { effort?: unknown }).effort).toBeUndefined();
   });
+
+  // Issue #79: the runtime had no canUseTool at all, so an exceptional SDK
+  // permission prompt had no user round-trip and the turn stalled.
+  test("wires canUseTool through while keeping bypass mode for ordinary tools", () => {
+    const abortController = new AbortController();
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+    const canUseTool: CanUseTool = async () => ({
+      behavior: "deny",
+      message: "test",
+    });
+
+    const options = buildQueryRuntimeOptions({
+      model: "claude-sonnet-4-5-20250929",
+      cwd: "/tmp",
+      systemPrompt: "system",
+      mcpServers: {},
+      maxThinkingTokens: 10000,
+      additionalDirectories: [],
+      resumeSessionId: null,
+      abortController,
+      hooks,
+      canUseTool,
+    });
+
+    expect(options.canUseTool).toBe(canUseTool);
+    // Ordinary tools must stay autonomous — only exceptional prompts
+    // (explicit ask rules, org-ask connectors, critical-path rm/rmdir,
+    // requiresUserInteraction) reach canUseTool under bypass.
+    expect(options.permissionMode).toBe("bypassPermissions");
+    expect(options.allowDangerouslySkipPermissions).toBe(true);
+    // Hard denies still run first, in the PreToolUse hook.
+    expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+  });
+
+  test("omits canUseTool when no permission broker is bound", () => {
+    const abortController = new AbortController();
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const options = buildQueryRuntimeOptions({
+      model: "claude-sonnet-4-5-20250929",
+      cwd: "/tmp",
+      systemPrompt: "system",
+      mcpServers: {},
+      maxThinkingTokens: 10000,
+      additionalDirectories: [],
+      resumeSessionId: null,
+      abortController,
+      hooks,
+    });
+
+    expect(options.canUseTool).toBeUndefined();
+    expect(options.permissionMode).toBe("bypassPermissions");
+  });
 });
 
 describe("query-runtime execution", () => {
@@ -846,6 +911,70 @@ describe("query-runtime execution", () => {
       "fallback text from provider orchestrator runtime"
     );
     expect(result.queryCompleted).toBe(true);
+  });
+
+  // Issue #79: production runs through the provider orchestrator, so the
+  // permission callback must survive that hop or the Telegram round trip is
+  // dead code in production.
+  test("forwards canUseTool to the provider boundary", async () => {
+    const canUseTool: CanUseTool = async () => ({
+      behavior: "deny",
+      message: "test",
+    });
+    let forwarded: unknown = "not-called";
+
+    const orchestrator = {
+      executeProviderQuery: async (params: {
+        input: { queryId: string; canUseTool?: unknown };
+        onEvent: (event: {
+          providerId: string;
+          queryId: string;
+          timestamp: number;
+          type: string;
+          reason?: "completed" | "aborted" | "failed";
+        }) => Promise<void>;
+      }) => {
+        forwarded = params.input.canUseTool;
+        await params.onEvent({
+          providerId: "anthropic",
+          queryId: params.input.queryId,
+          timestamp: Date.now(),
+          type: "done",
+          reason: "completed",
+        });
+        return { providerId: "anthropic", attempts: 1 };
+      },
+    } as const;
+
+    await executeQueryRuntime({
+      prompt: "hello",
+      options: {
+        model: "claude-opus-4-7",
+        cwd: "/tmp",
+        abortController: new AbortController(),
+        canUseTool,
+      },
+      statusCallback: async () => {},
+      queryGeneration: 1,
+      getCurrentGeneration: () => 1,
+      shouldStop: () => false,
+      onSessionId: () => {},
+      onToolDisplay: () => {},
+      onRefreshContextWindowUsageFromTranscript: async () => null,
+      queryStartedMs: Date.now(),
+      providerExecution: {
+        orchestrator:
+          orchestrator as unknown as import("../../providers/orchestrator").ProviderOrchestrator,
+        identity: createSessionIdentity({
+          tenantId: "default",
+          channelId: "chat-1",
+          threadId: "main",
+        }),
+        primaryProviderId: "anthropic",
+      },
+    });
+
+    expect(forwarded).toBe(canUseTool);
   });
 
   test("BUG soma-wzyw: provider runtime keeps assistant-turn context and aggregate billing separate", async () => {
