@@ -16,7 +16,7 @@ describe("sendMessageStreaming re-entrancy guard (soma-fkx2)", () => {
     (session as any)._queryState = "running";
 
     await expect(
-      session.sendMessageStreaming("test", async () => {}, 1)
+      session.sendMessageStreaming("test", async () => {}, { chatId: 1, userId: 1 })
     ).rejects.toThrow("sendMessageStreaming is already running");
   });
 
@@ -42,7 +42,7 @@ describe("sendMessageStreaming re-entrancy guard (soma-fkx2)", () => {
       expect(session.isRunning).toBe(true);
 
       await expect(
-        session.sendMessageStreaming("test", async () => {}, 1)
+        session.sendMessageStreaming("test", async () => {}, { chatId: 1, userId: 1 })
       ).rejects.toThrow("already running");
 
       // Reset for next iteration

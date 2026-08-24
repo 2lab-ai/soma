@@ -7,6 +7,7 @@ const RESTART_MARKER_FILE = "/tmp/soma-restart-marker.json";
 const CRASH_MARKER_FILE = "/tmp/soma-crash-marker.json";
 import { createProviderOrchestrator } from "../providers/create-orchestrator";
 import type { ProviderRetryPolicyMap } from "../providers/retry-policy";
+import type { QueryContext } from "../types/runtime";
 import { addSystemReaction, sendSystemMessage } from "../utils/system-message";
 import { PendingFormStore } from "../stores/pending-form-store";
 import { sessionManager } from "../core/session/session-manager";
@@ -74,9 +75,7 @@ interface SessionPort {
       segmentId?: number,
       metadata?: unknown
     ) => Promise<void>,
-    chatId?: number,
-    modelContext?: string,
-    queryUserId?: number
+    context: QueryContext
   ): Promise<string>;
 }
 
@@ -372,9 +371,7 @@ export async function bootstrapApplication(
               await session.sendMessageStreaming(
                 fixPrompt,
                 async () => {},
-                userId,
-                "general",
-                userId,
+                { chatId: userId, userId, modelContext: "general" }
               );
             } catch (e) {
               console.error(`[SUPERPOWER] Proactive fix trigger failed:`, e);
@@ -546,6 +543,11 @@ export async function bootstrapApplication(
     stopScheduler();
     // Nobody can answer a permission prompt once polling stops — fail closed
     // instead of leaving a query blocked on a dead keyboard (issue #79).
+    // Unbind FIRST: cancelAll only drains what is already pending, and a query
+    // still winding down can reach canUseTool afterwards. With the transport
+    // still bound it would post a keyboard into a chat nobody is polling and
+    // then wait out the full 10-minute timeout.
+    permissionBroker.setPromptSender(null);
     const cancelledPrompts = permissionBroker.cancelAll("the bot is shutting down");
     if (cancelledPrompts > 0) {
       console.log(

@@ -1,4 +1,24 @@
+import type { ConfigContext } from "../config/model";
 import type { Provider } from "./provider";
+
+/**
+ * Who and where a query runs for — passed to every `sendMessageStreaming`.
+ *
+ * `userId` is **required**, deliberately. It used to be an optional 5th
+ * positional argument, and every media handler forgot it once (issue #79): in
+ * a group chat the tool-permission prompt then silently fell back to
+ * chat-level authorization, so any authorized member could approve another
+ * member's tool call. A required property turns that omission into a compile
+ * error; `userId: undefined` remains expressible, but only on purpose.
+ */
+export interface QueryContext {
+  /** Telegram chat the query belongs to. Undefined = no chat routed. */
+  chatId: number | undefined;
+  /** Telegram user who caused this query — the only valid approver. */
+  userId: number | undefined;
+  /** Model-selection context. Defaults to "general". */
+  modelContext?: ConfigContext;
+}
 
 // Query metadata for response footer
 export interface UsageSnapshot {

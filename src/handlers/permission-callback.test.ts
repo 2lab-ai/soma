@@ -137,6 +137,44 @@ describe("handlePermissionCallback", () => {
     expect(mock.edits[0]).toContain("거부");
   });
 
+  test("the post-decision message keeps what was approved (PR #80 review)", async () => {
+    // A generic "✅ 승인됨" erases the only record of what the button
+    // authorized — the audit trail must survive the click.
+    const { broker, prompts } = makeBroker();
+    const { pending, prompt } = await ask(broker, prompts);
+    const mock = makeContext();
+
+    await handlePermissionCallback(
+      mock.ctx,
+      prompt.approveData,
+      CHAT_ID,
+      USER_ID,
+      broker
+    );
+    await pending;
+
+    const digest = /sha256:([0-9a-f]{12})/.exec(prompt.text)?.[1];
+    expect(digest).toMatch(/^[0-9a-f]{12}$/);
+    expect(mock.edits[0]).toContain("승인");
+    expect(mock.edits[0]).toContain("Bash");
+    expect(mock.edits[0]).toContain(digest!);
+    expect(mock.edits[0]).toContain("echo hi");
+  });
+
+  test("the post-decision message on deny also keeps the refused input", async () => {
+    const { broker, prompts } = makeBroker();
+    const { pending, prompt } = await ask(broker, prompts);
+    const mock = makeContext();
+
+    await handlePermissionCallback(mock.ctx, prompt.denyData, CHAT_ID, USER_ID, broker);
+    await pending;
+
+    const digest = /sha256:([0-9a-f]{12})/.exec(prompt.text)?.[1];
+    expect(mock.edits[0]).toContain("거부");
+    expect(mock.edits[0]).toContain(digest!);
+    expect(mock.edits[0]).toContain("echo hi");
+  });
+
   test("a different user's click is refused and leaves the request pending", async () => {
     const { broker, prompts } = makeBroker();
     const { prompt } = await ask(broker, prompts);

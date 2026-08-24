@@ -14,6 +14,7 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
 import type { Context } from "grammy";
 import { ClaudeSession } from "../../core/session/session";
+import type { QueryContext } from "../../types/runtime";
 import { handleSteeringGate } from "./interrupt-flow";
 import { runQueryFlow } from "./query-flow";
 
@@ -147,12 +148,7 @@ describe("Integration: Steering message flow (soma-uqb9)", () => {
     let callCount = 0;
     const originalSendMessage = session.sendMessageStreaming.bind(session);
     session.sendMessageStreaming = mock(
-      async (
-        message: string,
-        statusCallback: any,
-        chatId?: number,
-        modelContext?: any
-      ) => {
+      async (message: string, statusCallback: any, _context: QueryContext) => {
         callCount++;
         queriesSentToClaude.push(message);
 
