@@ -203,15 +203,13 @@ async function processImageDocuments(
     try {
       const response = await withPoisonedResumeRecovery(
         session,
-        // queryUserId binds tool-permission prompts to the asking user —
+        // context.userId binds tool-permission prompts to the asking user —
         // in a group, chat-level authorization is not a user binding.
         () =>
           session.sendMessageStreaming(
             addTimestamp(prompt),
             statusCallback,
-            chatId,
-            "general",
-            userId
+            { chatId, userId, modelContext: "general" }
           ),
         {
           label: "document",
@@ -285,15 +283,13 @@ async function processMixedDocumentInputs(
     try {
       const response = await withPoisonedResumeRecovery(
         session,
-        // queryUserId binds tool-permission prompts to the asking user —
+        // context.userId binds tool-permission prompts to the asking user —
         // in a group, chat-level authorization is not a user binding.
         () =>
           session.sendMessageStreaming(
             addTimestamp(prompt),
             statusCallback,
-            chatId,
-            "general",
-            userId
+            { chatId, userId, modelContext: "general" }
           ),
         {
           label: "document",
@@ -512,15 +508,13 @@ ${contentsStr}`;
 
       const response = await withPoisonedResumeRecovery(
         session,
-        // queryUserId binds tool-permission prompts to the asking user —
+        // context.userId binds tool-permission prompts to the asking user —
         // in a group, chat-level authorization is not a user binding.
         () =>
           session.sendMessageStreaming(
             addTimestamp(prompt),
             statusCallback,
-            chatId,
-            "general",
-            userId
+            { chatId, userId, modelContext: "general" }
           ),
         {
           label: "document",
@@ -642,15 +636,13 @@ ${docList}`;
     try {
       const response = await withPoisonedResumeRecovery(
         session,
-        // queryUserId binds tool-permission prompts to the asking user —
+        // context.userId binds tool-permission prompts to the asking user —
         // in a group, chat-level authorization is not a user binding.
         () =>
           session.sendMessageStreaming(
             addTimestamp(prompt),
             statusCallback,
-            chatId,
-            "general",
-            userId
+            { chatId, userId, modelContext: "general" }
           ),
         {
           label: "document",

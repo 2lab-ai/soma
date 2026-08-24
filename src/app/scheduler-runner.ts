@@ -1,6 +1,5 @@
 import type { Api } from "grammy";
-import type { ConfigContext } from "../config/model";
-import type { StatusCallback } from "../types/runtime";
+import type { QueryContext, StatusCallback } from "../types/runtime";
 import {
   configureSchedulerRuntime,
   type SchedulerExecutionRequest,
@@ -11,8 +10,7 @@ interface SchedulerSession {
   sendMessageStreaming(
     prompt: string,
     statusCallback: StatusCallback,
-    chatId?: number,
-    modelContext?: ConfigContext
+    context: QueryContext
   ): Promise<string>;
 }
 
@@ -51,7 +49,14 @@ export function createSchedulerExecute(
       manager.resetSessionByKey(sessionKey);
     }
     const session = manager.getSessionByKey(sessionKey);
-    return session.sendMessageStreaming(prompt, statusCallback, userId, modelContext);
+    // The cron owner is BOTH the destination chat (a private chat's id is its
+    // user's id) and the actor who may approve a tool prompt. Naming the actor
+    // explicitly keeps that from resting on a `chatId > 0` guess downstream.
+    return session.sendMessageStreaming(prompt, statusCallback, {
+      chatId: userId,
+      userId,
+      modelContext,
+    });
   };
 }
 

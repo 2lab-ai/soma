@@ -16,14 +16,17 @@
 import { describe, expect, mock, test } from "bun:test";
 import { createSchedulerExecute } from "./scheduler-runner";
 import type { SchedulerExecutionRequest } from "../scheduler/runtime-boundary";
+import type { QueryContext } from "../types/runtime";
 
 function setup() {
   const calls: string[] = [];
   const session = {
-    sendMessageStreaming: mock(async () => {
-      calls.push("send");
-      return "ok";
-    }),
+    sendMessageStreaming: mock(
+      async (_prompt: string, _cb: unknown, _ctx: QueryContext) => {
+        calls.push("send");
+        return "ok";
+      }
+    ),
   };
   const manager = {
     getGlobalStats: () => ({ sessions: [] }),
@@ -36,7 +39,7 @@ function setup() {
       calls.push(`reset:${key}`);
     },
   };
-  return { calls, manager };
+  return { calls, manager, session };
 }
 
 function buildRequest(
@@ -91,5 +94,19 @@ describe("scheduler execute — fresh session handling", () => {
     );
 
     expect(calls.some((c) => c.startsWith("reset:"))).toBe(false);
+  });
+});
+
+describe("scheduler execute — query identity (PR #80 review)", () => {
+  test("names the owner as the actor instead of leaning on chatId === userId", async () => {
+    // The scheduler used to pass the owner id in the CHAT slot and nothing in
+    // the actor slot, relying on a `chatId > 0 ⇒ chatId is the user` guess.
+    const { manager, session } = setup();
+    const execute = createSchedulerExecute(manager);
+
+    await execute(buildRequest({ userId: 4242, modelContext: "cron" }));
+
+    const context = session.sendMessageStreaming.mock.calls[0]?.[2];
+    expect(context).toEqual({ chatId: 4242, userId: 4242, modelContext: "cron" });
   });
 });

@@ -146,9 +146,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
           const response = await session.sendMessageStreaming(
             messageWithTimestamp,
             statusCallback,
-            chatId,
-            "general",
-            userId
+            { chatId, userId, modelContext: "general" }
           );
 
           await auditLog(userId, username, "TEXT", message, response);
@@ -280,9 +278,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             const followUpResponse = await session.sendMessageStreaming(
               followUpMessage,
               followUpCallback,
-              chatId,
-              "general",
-              userId
+              { chatId, userId, modelContext: "general" }
             );
             console.log(
               `[AUTO-CONTINUE] Round ${autoContinueRound}: Follow-up complete, response length: ${followUpResponse.length}`
@@ -352,9 +348,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
             const saveResponse = await session.sendMessageStreaming(
               "Context limit reached. Execute: Skill tool with skill='oh-my-claude:save'",
               async () => {},
-              chatId,
-              "general",
-              userId
+              { chatId, userId, modelContext: "general" }
             );
 
             const saveIdMatch = saveResponse.match(
@@ -623,9 +617,7 @@ export async function runQueryFlow(params: QueryFlowParams): Promise<void> {
               const retryResponse = await session.sendMessageStreaming(
                 messageWithTimestamp,
                 statusCallback,
-                chatId,
-                "general",
-                userId
+                { chatId, userId, modelContext: "general" }
               );
               await auditLog(userId, username, "TEXT_FALLBACK", message, retryResponse);
               try {

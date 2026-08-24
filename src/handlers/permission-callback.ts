@@ -54,17 +54,31 @@ export async function handlePermissionCallback(
       await ctx.answerCallbackQuery({
         text: answer === "allow" ? "승인됨" : "거부됨",
       });
-      const text =
+      // Keep the approved content in place. Replacing the body with a generic
+      // "✅ 승인됨" would erase the only record of WHAT was authorized, which
+      // is the half of the audit trail the chat log is supposed to hold.
+      const header =
         answer === "allow"
-          ? "✅ 승인됨 — Claude가 이어서 실행합니다."
-          : "🚫 거부됨 — 도구를 실행하지 않습니다.";
+          ? "✅ <b>승인됨</b> — 아래 내용 그대로 실행합니다."
+          : "🚫 <b>거부됨</b> — 아래 도구를 실행하지 않습니다.";
+      const text = `${header}\n\n${resolution.approved.body}`;
       try {
-        await ctx.editMessageText(text);
+        await ctx.editMessageText(text, { parse_mode: "HTML" });
       } catch (error) {
         console.warn(
           `[PERMISSION] Failed to update prompt message (messageId: ${getCallbackMessageId(ctx)}):`,
           error
         );
+        // Last resort: a plain-text receipt that still names the tool and the
+        // input digest, rather than losing the decision record entirely.
+        try {
+          await ctx.editMessageText(
+            `${answer === "allow" ? "✅ 승인됨" : "🚫 거부됨"} — ` +
+              `${resolution.approved.toolName} · sha256:${resolution.approved.digest}`
+          );
+        } catch (fallbackError) {
+          console.warn("[PERMISSION] Receipt fallback also failed:", fallbackError);
+        }
       }
       return;
     }

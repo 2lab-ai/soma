@@ -46,7 +46,12 @@ import type {
   TokenUsage,
 } from "../../types/session";
 import { PENDING_RECOVERY_TIMEOUT_MS } from "../../types/session";
-import type { QueryMetadata, StatusCallback, UsageSnapshot } from "../../types/runtime";
+import type {
+  QueryContext,
+  QueryMetadata,
+  StatusCallback,
+  UsageSnapshot,
+} from "../../types/runtime";
 import type {
   ChoiceState,
   DirectInputState,
@@ -675,13 +680,22 @@ export class ClaudeSession {
     return false;
   }
 
+  /**
+   * Run one query for `context`'s chat + user.
+   *
+   * The identity arrives as one REQUIRED object rather than trailing optional
+   * positionals: `context.userId` is what binds a tool-permission prompt to a
+   * single approver, and when it was optional every media handler dropped it
+   * (issue #79), silently downgrading group approvals to chat level.
+   */
   async sendMessageStreaming(
     message: string,
     statusCallback: StatusCallback,
-    chatId?: number,
-    modelContext: ConfigContext = "general",
-    queryUserId?: number
+    context: QueryContext
   ): Promise<string> {
+    const { chatId, userId: queryUserId } = context;
+    const modelContext: ConfigContext = context.modelContext ?? "general";
+
     // Re-entrancy guard: prevent concurrent calls from corrupting session state
     if (this.isRunning) {
       console.warn(
@@ -859,11 +873,10 @@ export class ClaudeSession {
       // process-global chat id, which would race across sessions.
       canUseTool: permissionBroker.createCanUseTool({
         chatId,
-        // Cron/scheduler runs carry no query user but do carry the owner's
-        // private chat id (scheduler-runner passes ALLOWED_USERS[0] as
-        // chatId), where chat id === user id. A group has no such
-        // equivalence, so fall back to chat-level authorization only.
-        userId: queryUserId ?? (chatId !== undefined && chatId > 0 ? chatId : undefined),
+        // Passed through verbatim: the broker owns the private-chat fallback
+        // (chat id === user id) and the group fail-closed rule, so there is
+        // exactly one place that decides who may answer a prompt.
+        userId: queryUserId,
         threadId: resolveTelegramTopicId(this.sessionKey, chatId),
         sessionKey: this.sessionKey,
         abortSignal: this.abortController.signal,

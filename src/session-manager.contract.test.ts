@@ -246,7 +246,8 @@ describe("SessionManager canonical contract", () => {
     const session = manager.getSession(uniqueChatId(9), 33);
     const response = await session.sendMessageStreaming(
       "run provider orchestrator path",
-      async () => {}
+      async () => {},
+      { chatId: uniqueChatId(9), userId: 33 }
     );
 
     expect(executeCalls).toBe(1);

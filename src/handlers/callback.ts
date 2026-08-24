@@ -108,7 +108,11 @@ async function sendMessageToClaude(
     const response = await withPoisonedResumeRecovery(
       session,
       () =>
-        session.sendMessageStreaming(message, statusCallback, chatId, "general", userId),
+        session.sendMessageStreaming(message, statusCallback, {
+          chatId,
+          userId,
+          modelContext: "general",
+        }),
       {
         label: "callback",
         canRecover: () =>

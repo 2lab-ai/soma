@@ -2,11 +2,14 @@
  * Tests: media/direct-input entrypoints bind the querying Telegram user
  * (issue #79).
  *
- * `sendMessageStreaming(prompt, cb, chatId, modelContext, queryUserId)` — the
- * 5th argument is what binds a permission prompt to a specific user. Photo,
- * voice and document handlers passed only `chatId`, so in a GROUP (where chat
- * id !== user id) the prompt fell back to chat-level authorization: any
- * authorized member could answer another member's prompt.
+ * `sendMessageStreaming(prompt, cb, { chatId, userId, modelContext })` — the
+ * context object's `userId` is what binds a permission prompt to a specific
+ * user. Photo, voice and document handlers passed only `chatId`, so in a GROUP
+ * (where chat id !== user id) the prompt fell back to chat-level
+ * authorization: any authorized member could answer another member's prompt.
+ *
+ * `userId` is a REQUIRED property (PR #80 review): omitting the actor is a
+ * compile-time error, not a silent downgrade.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import { mkdirSync } from "fs";
@@ -15,6 +18,7 @@ import { ALLOWED_GROUPS, ALLOWED_USERS, TEMP_DIR } from "../config";
 import { sessionManager } from "../core/session/session-manager";
 import { rateLimiter } from "../security";
 import type { ClaudeSession } from "../core/session/session";
+import type { QueryContext } from "../types/runtime";
 import { handlePhoto } from "./photo";
 import { handleDocument } from "./document";
 import { botUsername } from "./text";
@@ -55,16 +59,10 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-/** Full arity so `.mock.calls[n][4]` (queryUserId) is typed and observable. */
+/** Full arity so `.mock.calls[n][2]` (the query context) is typed and observable. */
 function makeSendMessageStreamingMock() {
   return mock(
-    async (
-      prompt: string,
-      _statusCallback?: unknown,
-      _chatId?: number,
-      _modelContext?: string,
-      _queryUserId?: number
-    ) => prompt
+    async (prompt: string, _statusCallback: unknown, _context: QueryContext) => prompt
   );
 }
 
@@ -160,8 +158,8 @@ describe("media entrypoints bind the querying user", () => {
     await handlePhoto(ctx);
 
     expect(sendMessageStreaming).toHaveBeenCalledTimes(1);
-    expect(sendMessageStreaming.mock.calls[0]?.[2]).toBe(GROUP_CHAT_ID);
-    expect(sendMessageStreaming.mock.calls[0]?.[4]).toBe(TEST_USER_ID);
+    expect(sendMessageStreaming.mock.calls[0]?.[2]?.chatId).toBe(GROUP_CHAT_ID);
+    expect(sendMessageStreaming.mock.calls[0]?.[2]?.userId).toBe(TEST_USER_ID);
   });
 
   test("handleDocument forwards ctx.from.id as queryUserId", async () => {
@@ -180,8 +178,8 @@ describe("media entrypoints bind the querying user", () => {
     await handleDocument(ctx);
 
     expect(sendMessageStreaming).toHaveBeenCalledTimes(1);
-    expect(sendMessageStreaming.mock.calls[0]?.[2]).toBe(GROUP_CHAT_ID);
-    expect(sendMessageStreaming.mock.calls[0]?.[4]).toBe(TEST_USER_ID);
+    expect(sendMessageStreaming.mock.calls[0]?.[2]?.chatId).toBe(GROUP_CHAT_ID);
+    expect(sendMessageStreaming.mock.calls[0]?.[2]?.userId).toBe(TEST_USER_ID);
   });
 
   test("handleVoice forwards ctx.from.id as queryUserId", async () => {
@@ -201,8 +199,8 @@ describe("media entrypoints bind the querying user", () => {
     await handleVoice(ctx);
 
     expect(sendMessageStreaming).toHaveBeenCalledTimes(1);
-    expect(sendMessageStreaming.mock.calls[0]?.[2]).toBe(GROUP_CHAT_ID);
-    expect(sendMessageStreaming.mock.calls[0]?.[4]).toBe(TEST_USER_ID);
+    expect(sendMessageStreaming.mock.calls[0]?.[2]?.chatId).toBe(GROUP_CHAT_ID);
+    expect(sendMessageStreaming.mock.calls[0]?.[2]?.userId).toBe(TEST_USER_ID);
   });
 
   test("handlePendingDirectInput forwards the answering user as queryUserId", async () => {
@@ -236,7 +234,7 @@ describe("media entrypoints bind the querying user", () => {
     });
 
     expect(sendMessageStreaming).toHaveBeenCalledTimes(1);
-    expect(sendMessageStreaming.mock.calls[0]?.[2]).toBe(GROUP_CHAT_ID);
-    expect(sendMessageStreaming.mock.calls[0]?.[4]).toBe(TEST_USER_ID);
+    expect(sendMessageStreaming.mock.calls[0]?.[2]?.chatId).toBe(GROUP_CHAT_ID);
+    expect(sendMessageStreaming.mock.calls[0]?.[2]?.userId).toBe(TEST_USER_ID);
   });
 });
