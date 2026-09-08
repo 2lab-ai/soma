@@ -19,7 +19,8 @@ export const RESPOND_WITHOUT_MENTION = parseEnvBool("RESPOND_WITHOUT_MENTION", f
 
 export const WORKING_DIR = resolveWorkingDir();
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-export const STT_URL = process.env.STT_URL || "http://localhost:8787/v1/audio/transcriptions";
+export const STT_URL =
+  process.env.STT_URL || "http://localhost:8787/v1/audio/transcriptions";
 export const CLAUDE_CLI_PATH = findClaudeCli();
 
 let MCP_SERVERS: Record<string, McpServerConfig> = {};
@@ -64,7 +65,19 @@ export const ALLOWED_PATHS = allowedPathsEnv.length
   ? allowedPathsEnv
   : defaultAllowedPaths;
 
-export const SAFETY_PROMPT = buildSafetyPrompt(ALLOWED_PATHS);
+// Bot-owned temp roots.
+//   TEMP_DIR = the single directory the Telegram handlers stage attachments
+//     under (src/handlers/photo.ts:61, document.ts:126/132, voice.ts:104).
+//     This is the ONLY temp root the model-facing safety prompt advertises.
+//   TEMP_PATHS = broader runtime-compat roots that src/security.ts:isPathAllowed
+//     and core/session/query-runtime.ts permit at the executable layer (e.g.
+//     macOS /private/tmp/ and /var/folders/). They are NOT surfaced to the
+//     model — advertising them would over-broaden the prompt's read carve-out
+//     relative to what the bot actually creates.
+export const TEMP_DIR = "/tmp/soma";
+export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
+
+export const SAFETY_PROMPT = buildSafetyPrompt(ALLOWED_PATHS, [TEMP_DIR]);
 
 export const UI_ASKUSER_INSTRUCTIONS = `
 # UIAskUserQuestion - Interactive Choice System
@@ -236,7 +249,10 @@ export const TELEGRAM_MESSAGE_LIMIT = 4096;
 export const TELEGRAM_SAFE_LIMIT = 4000;
 export const STREAMING_THROTTLE_MS = 500;
 export const USE_NATIVE_STREAMING = parseEnvBool("USE_NATIVE_STREAMING", true);
-export const NATIVE_STREAMING_THROTTLE_MS = parseEnvInt("NATIVE_STREAMING_THROTTLE_MS", 100);
+export const NATIVE_STREAMING_THROTTLE_MS = parseEnvInt(
+  "NATIVE_STREAMING_THROTTLE_MS",
+  100
+);
 export const BUTTON_LABEL_MAX_LENGTH = 30;
 
 export const AUDIT_LOG_PATH = process.env.AUDIT_LOG_PATH || "/tmp/soma-audit.log";
@@ -247,8 +263,9 @@ export const RATE_LIMIT_REQUESTS = parseEnvInt("RATE_LIMIT_REQUESTS", 20);
 export const RATE_LIMIT_WINDOW = parseEnvInt("RATE_LIMIT_WINDOW", 60);
 
 export const RESTART_FILE = "/tmp/soma-restart.json";
-export const TEMP_DIR = "/tmp/soma";
-export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
+// TEMP_DIR / TEMP_PATHS are declared above (ahead of SAFETY_PROMPT) so the
+// safety prompt can reference the same bot-generated attachment roots that
+// src/security.ts already permits at the isPathAllowed layer.
 
 export const CHAT_HISTORY_ENABLED = parseEnvBool("CHAT_HISTORY_ENABLED", true);
 export const CHAT_HISTORY_DATA_DIR =

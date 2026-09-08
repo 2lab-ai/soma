@@ -46,9 +46,20 @@ describe("checkToolInputSafety", () => {
     expect(result).toEqual({ allowed: true });
   });
 
-  test("allows Write to temp paths", () => {
+  test("blocks Write to temp paths outside ALLOWED_PATHS", () => {
+    // Bot-generated attachments under TEMP_PATHS are readable but not general
+    // working directories — Write must not be permitted just because the path
+    // is inside /tmp.
     const result = checkToolInputSafety("Write", { file_path: "/tmp/out.ts" });
-    expect(result).toEqual({ allowed: true });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("File access blocked");
+    }
+  });
+
+  test("blocks Edit to temp paths outside ALLOWED_PATHS", () => {
+    const result = checkToolInputSafety("Edit", { file_path: "/tmp/out.ts" });
+    expect(result.allowed).toBe(false);
   });
 
   // --- Path traversal tests (Issue #9) ---
@@ -133,12 +144,17 @@ describe("checkToolInputSafety", () => {
     }
   });
 
-  test("allows Grep with path in temp directories", () => {
+  test("blocks Grep with path in temp directories outside ALLOWED_PATHS", () => {
+    // TEMP_PATHS are runtime-compat roots for bot-owned attachments, not
+    // general working directories — Grep must not enumerate them.
     const result = checkToolInputSafety("Grep", {
       path: "/tmp/project",
       pattern: "TODO",
     });
-    expect(result).toEqual({ allowed: true });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("Grep path blocked");
+    }
   });
 
   test("allows Grep without path parameter", () => {
@@ -172,11 +188,16 @@ describe("checkToolInputSafety", () => {
     expect(result.allowed).toBe(false);
   });
 
-  test("allows Bash cat of file in temp paths", () => {
+  test("blocks Bash cat of file in temp paths outside ALLOWED_PATHS", () => {
+    // Same policy as Write/Grep: bot-owned attachments under /tmp are not a
+    // general working directory the model can enumerate via bash.
     const result = checkToolInputSafety("Bash", {
       command: "cat /tmp/output.log",
     });
-    expect(result).toEqual({ allowed: true });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("Bash command accesses blocked path");
+    }
   });
 
   test("allows Bash echo (no file access)", () => {
@@ -273,12 +294,42 @@ describe("checkToolInputSafety", () => {
     expect(result.allowed).toBe(false);
   });
 
-  test("allows Glob with path in temp directories", () => {
+  test("blocks Glob with path in temp directories outside ALLOWED_PATHS", () => {
     const result = checkToolInputSafety("Glob", {
       path: "/tmp/project",
       pattern: "*.ts",
     });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("Glob path blocked");
+    }
+  });
+
+  // --- Temp policy: Read stays permitted (bot-owned attachments) ---
+
+  test("allows Read of file under /tmp (bot-owned attachment)", () => {
+    const result = checkToolInputSafety("Read", {
+      file_path: "/tmp/soma/photo-123.jpg",
+    });
     expect(result).toEqual({ allowed: true });
+  });
+
+  test("allows Read of file under /private/tmp (bot-owned attachment)", () => {
+    const result = checkToolInputSafety("Read", {
+      file_path: "/private/tmp/soma/doc-456.pdf",
+    });
+    expect(result).toEqual({ allowed: true });
+  });
+
+  // --- Temp policy: sibling-prefix must not leak through containment ---
+
+  test("blocks Write with sibling-prefix path (not a true child of TEMP root)", () => {
+    // Guard against unsafe sibling-prefix matching: "/tmp" prefix must not
+    // accidentally match "/tmpx/foo" style paths.
+    const result = checkToolInputSafety("Write", {
+      file_path: "/tmpx/foo.txt",
+    });
+    expect(result.allowed).toBe(false);
   });
 });
 
@@ -301,7 +352,9 @@ describe("extractBashFilePaths", () => {
   });
 
   test("skips quoted arguments (awk patterns)", () => {
-    expect(extractBashFilePaths("awk '{print $1}' /etc/passwd")).toEqual(["/etc/passwd"]);
+    expect(extractBashFilePaths("awk '{print $1}' /etc/passwd")).toEqual([
+      "/etc/passwd",
+    ]);
   });
 
   test("extracts paths from piped commands", () => {
@@ -372,7 +425,7 @@ describe("query-runtime hooks", () => {
 
     expect(result.decision).toBe("block");
     expect(typeof result.reason).toBe("string");
-    expect((result.reason as string)).toContain("File access blocked");
+    expect(result.reason as string).toContain("File access blocked");
   });
 
   test("pre hook blocks unsafe Bash command with decision:block", async () => {
@@ -395,7 +448,7 @@ describe("query-runtime hooks", () => {
 
     expect(result.decision).toBe("block");
     expect(typeof result.reason).toBe("string");
-    expect((result.reason as string)).toContain("Unsafe command blocked");
+    expect(result.reason as string).toContain("Unsafe command blocked");
   });
 
   test("pre hook blocks path traversal via /tmp/../etc/passwd", async () => {
@@ -417,7 +470,7 @@ describe("query-runtime hooks", () => {
     );
 
     expect(result.decision).toBe("block");
-    expect((result.reason as string)).toContain("File access blocked");
+    expect(result.reason as string).toContain("File access blocked");
   });
 
   test("pre hook allows tool with valid path (does not block)", async () => {
@@ -513,7 +566,9 @@ describe("query-runtime options", () => {
       hooks,
     });
 
-    expect((options as { maxThinkingTokens?: number }).maxThinkingTokens).toBeUndefined();
+    expect(
+      (options as { maxThinkingTokens?: number }).maxThinkingTokens
+    ).toBeUndefined();
     expect((options as { thinking?: { type: string } }).thinking).toEqual({
       type: "adaptive",
     });
