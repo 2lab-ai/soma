@@ -9,6 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
+import { WORKING_DIR } from "../../config";
 import {
   createTelegramPromptSender,
   PERMISSION_CALLBACK_PREFIX,
@@ -556,10 +557,14 @@ describe("TelegramPermissionBroker — approval fidelity (PR #80 review)", () =>
 
   test("Write/Edit content is shown head+tail, not silently cut", async () => {
     const { prompts, canUseTool } = makeHarness();
+    // Path must live under ALLOWED_PATHS so the hard-deny (which blocks Write
+    // to unpermitted roots like /tmp before a prompt is ever built) doesn't
+    // preempt the head+tail rendering this test is actually about. WORKING_DIR
+    // is the first entry of the default ALLOWED_PATHS list (src/config/index.ts).
     void canUseTool(
       "Write",
       {
-        file_path: "/tmp/soma-test/notes.txt",
+        file_path: `${WORKING_DIR}/soma-test-notes.txt`,
         content: `HEAD_MARKER_AA${"z".repeat(4000)}TAIL_MARKER_BB`,
       },
       makeToolOptions()

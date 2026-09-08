@@ -8,8 +8,9 @@ import type { ProviderOrchestrator } from "../../providers/orchestrator";
 import type { ProviderEvent, ProviderQueryInput } from "../../providers/types.models";
 import { applyModelSpecificOverrides } from "../../providers/claude-options";
 import { buildProviderEnv } from "../../config/llmux";
-import { resolve } from "path";
-import { STREAMING_THROTTLE_MS, TEMP_PATHS } from "../../config";
+import { resolve, dirname, basename, join } from "path";
+import { realpathSync } from "fs";
+import { ALLOWED_PATHS, STREAMING_THROTTLE_MS, TEMP_PATHS } from "../../config";
 import { escapeHtml, formatToolStatus } from "../../formatting";
 import { checkCommandSafety, isPathAllowed } from "../../security";
 import type { QueryMetadata, StatusCallback, UsageSnapshot } from "../../types/runtime";
@@ -167,7 +168,9 @@ export function buildQueryRuntimeOptions(
           hooks: [
             async () => {
               try {
-                console.log("[HOOK] PreCompact fired — SDK auto-compaction in progress");
+                console.log(
+                  "[HOOK] PreCompact fired — SDK auto-compaction in progress"
+                );
                 return {
                   // Inject context-preservation instructions into compaction summary
                   systemMessage:
@@ -263,9 +266,7 @@ function toTokenUsageFromProviderUsage(usage: {
   };
 }
 
-type ToolInputValidation =
-  | { allowed: true }
-  | { allowed: false; reason: string };
+type ToolInputValidation = { allowed: true } | { allowed: false; reason: string };
 
 /**
  * Pure, non-throwing validation of tool input.
@@ -274,8 +275,18 @@ type ToolInputValidation =
  */
 // Commands whose file-path arguments must be validated.
 const BASH_FILE_COMMANDS = new Set([
-  "cat", "head", "tail", "less", "more", "cp", "mv",
-  "tee", "wc", "sort", "sed", "awk",
+  "cat",
+  "head",
+  "tail",
+  "less",
+  "more",
+  "cp",
+  "mv",
+  "tee",
+  "wc",
+  "sort",
+  "sed",
+  "awk",
 ]);
 
 // Matches an absolute path token (starts with /)
@@ -321,6 +332,69 @@ export function extractBashFilePaths(command: string): string[] {
   return paths;
 }
 
+/**
+ * True iff `resolvedPath` sits inside an explicit ALLOWED_PATHS root.
+ *
+ * Distinct from security.ts:isPathAllowed(), which ALSO greenlights any
+ * TEMP_PATHS root so the bot can read its own attachments. That broader
+ * predicate is only correct for Read — Write/Edit/Grep/Glob and Bash file
+ * commands must not treat bot-owned temp dirs as general working directories
+ * (config/safety-prompt.ts advertises them as read-only).
+ *
+ * Symlink policy: authorize the telegram thread-workdirs alias
+ * `/tmp/soma-thread-workdirs-*` → WORKING_DIR (src/core/session/thread-workdir.ts)
+ * for not-yet-created children, while still rejecting terminal symlinks whose
+ * realpath escapes any allowed root. Fail closed rather than authorize a raw
+ * lexical path when canonicalization is impossible.
+ */
+function tryRealpath(p: string): string | null {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+// macOS autofs mounts /home and /net on demand — calling realpath on them
+// blocks trying to reach an NFS server. Fail closed on exactly those trees,
+// before touching realpath. Nothing under them is ever an allowed root.
+function isMacOsAutofsPath(p: string): boolean {
+  if (process.platform !== "darwin") return false;
+  return (
+    p === "/home" || p === "/net" || p.startsWith("/home/") || p.startsWith("/net/")
+  );
+}
+
+function canonicalizeInput(resolvedPath: string): string | null {
+  if (isMacOsAutofsPath(resolvedPath)) return null;
+  const missing: string[] = [];
+  let cursor = resolvedPath;
+  while (true) {
+    const real = tryRealpath(cursor);
+    if (real !== null) {
+      return missing.length ? join(real, ...missing) : real;
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) return null;
+    missing.unshift(basename(cursor));
+    cursor = parent;
+  }
+}
+
+function isPathInAllowedRoots(resolvedPath: string): boolean {
+  if (isMacOsAutofsPath(resolvedPath)) return false;
+  const canonical = canonicalizeInput(resolvedPath);
+  if (canonical === null) return false;
+  for (const allowed of ALLOWED_PATHS) {
+    const lexical = resolve(allowed);
+    // Prefer canonical-vs-canonical; only fall back to lexical when the
+    // allowed root itself cannot be realpathed (missing on disk).
+    const root = tryRealpath(lexical) ?? lexical;
+    if (canonical === root || canonical.startsWith(root + "/")) return true;
+  }
+  return false;
+}
+
 export function checkToolInputSafety(
   toolName: string,
   toolInput: Record<string, unknown>
@@ -332,11 +406,13 @@ export function checkToolInputSafety(
       return { allowed: false, reason: `Unsafe command blocked: ${reason}` };
     }
 
-    // Validate ALL absolute paths found in file-accessing commands
+    // Validate ALL absolute paths found in file-accessing commands.
+    // Bash file commands enumerate/mutate content, so TEMP_PATHS does NOT
+    // count as "allowed" here — only explicit ALLOWED_PATHS roots do.
     const filePaths = extractBashFilePaths(command);
     for (const extractedPath of filePaths) {
       const resolvedPath = resolve(extractedPath);
-      if (!isPathAllowed(resolvedPath)) {
+      if (!isPathInAllowedRoots(resolvedPath)) {
         return {
           allowed: false,
           reason: `Bash command accesses blocked path: ${extractedPath} — outside allowed directories.`,
@@ -352,12 +428,21 @@ export function checkToolInputSafety(
       // traversal attacks like /tmp/../etc/passwd → /etc/passwd
       const resolvedPath = resolve(filePath);
 
+      // Read carve-out: bot-owned attachments under TEMP_PATHS (and any
+      // /.claude/ config path) remain readable even when they are not
+      // inside ALLOWED_PATHS. Write/Edit do NOT get this carve-out.
       const isTmpRead =
         toolName === "Read" &&
         (TEMP_PATHS.some((p) => resolvedPath.startsWith(p)) ||
           resolvedPath.includes("/.claude/"));
 
-      if (!isTmpRead && !isPathAllowed(resolvedPath)) {
+      const permitted =
+        isTmpRead ||
+        (toolName === "Read"
+          ? isPathAllowed(resolvedPath)
+          : isPathInAllowedRoots(resolvedPath));
+
+      if (!permitted) {
         return {
           allowed: false,
           reason: `File access blocked: ${filePath} — path is outside allowed directories. Try an alternative approach or ask the user to share the file content directly.`,
@@ -366,12 +451,14 @@ export function checkToolInputSafety(
     }
   }
 
-  // Validate path parameter for Grep and Glob tools
+  // Validate path parameter for Grep and Glob tools.
+  // These enumerate directories, so TEMP_PATHS containment is not enough —
+  // only explicit ALLOWED_PATHS roots grant access.
   if (["Grep", "Glob"].includes(toolName)) {
     const toolPath = String(toolInput.path || "");
     if (toolPath) {
       const resolvedPath = resolve(toolPath);
-      if (!isPathAllowed(resolvedPath)) {
+      if (!isPathInAllowedRoots(resolvedPath)) {
         return {
           allowed: false,
           reason: `${toolName} path blocked: ${toolPath} — outside allowed directories.`,
@@ -554,10 +641,7 @@ async function executeProviderRuntime(
 
       const now = Date.now();
       const throttle = input.streamingThrottleMs ?? STREAMING_THROTTLE_MS;
-      if (
-        now - lastTextUpdate > throttle &&
-        currentSegmentText.length > 20
-      ) {
+      if (now - lastTextUpdate > throttle && currentSegmentText.length > 20) {
         await input.statusCallback("text", currentSegmentText, currentSegmentId);
         lastTextUpdate = now;
       }
@@ -820,10 +904,7 @@ export async function executeQueryRuntime(
 
           const now = Date.now();
           const throttle = input.streamingThrottleMs ?? STREAMING_THROTTLE_MS;
-          if (
-            now - lastTextUpdate > throttle &&
-            currentSegmentText.length > 20
-          ) {
+          if (now - lastTextUpdate > throttle && currentSegmentText.length > 20) {
             await input.statusCallback("text", currentSegmentText, currentSegmentId);
             lastTextUpdate = now;
           }
@@ -847,9 +928,9 @@ export async function executeQueryRuntime(
         "error_max_budget_usd",
         "error_max_structured_output_retries",
       ]);
-      const isErrorResult = resultSubtype !== undefined && (
-        SDK_ERROR_SUBTYPES.has(resultSubtype) || resultIsError === true
-      );
+      const isErrorResult =
+        resultSubtype !== undefined &&
+        (SDK_ERROR_SUBTYPES.has(resultSubtype) || resultIsError === true);
 
       if (isErrorResult) {
         // Build error message with maximum context for downstream classification.
@@ -866,7 +947,9 @@ export async function executeQueryRuntime(
         } else {
           errorMsg = `SDK execution error: ${resultSubtype}`;
         }
-        console.error(`[SDK-RESULT-ERROR] subtype=${resultSubtype}, is_error=${resultIsError}, errors=${JSON.stringify(resultErrors ?? [])}, accumulatedText=${accumulatedText.slice(-200)}`);
+        console.error(
+          `[SDK-RESULT-ERROR] subtype=${resultSubtype}, is_error=${resultIsError}, errors=${JSON.stringify(resultErrors ?? [])}, accumulatedText=${accumulatedText.slice(-200)}`
+        );
         queryCompleted = false;
         // Throw so session.ts catch block captures this as a real error
         throw new Error(errorMsg);
