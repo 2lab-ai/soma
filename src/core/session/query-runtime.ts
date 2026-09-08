@@ -8,7 +8,8 @@ import type { ProviderOrchestrator } from "../../providers/orchestrator";
 import type { ProviderEvent, ProviderQueryInput } from "../../providers/types.models";
 import { applyModelSpecificOverrides } from "../../providers/claude-options";
 import { buildProviderEnv } from "../../config/llmux";
-import { resolve } from "path";
+import { resolve, dirname, basename, join } from "path";
+import { realpathSync } from "fs";
 import { ALLOWED_PATHS, STREAMING_THROTTLE_MS, TEMP_PATHS } from "../../config";
 import { escapeHtml, formatToolStatus } from "../../formatting";
 import { checkCommandSafety, isPathAllowed } from "../../security";
@@ -340,19 +341,56 @@ export function extractBashFilePaths(command: string): string[] {
  * commands must not treat bot-owned temp dirs as general working directories
  * (config/safety-prompt.ts advertises them as read-only).
  *
- * Uses exact-root or root+"/" containment to avoid unsafe sibling-prefix
- * matches (e.g. an ALLOWED_PATHS entry `/tmp/soma` must not authorize
- * `/tmp/somaOther`).
+ * Symlink policy: authorize the telegram thread-workdirs alias
+ * `/tmp/soma-thread-workdirs-*` → WORKING_DIR (src/core/session/thread-workdir.ts)
+ * for not-yet-created children, while still rejecting terminal symlinks whose
+ * realpath escapes any allowed root. Fail closed rather than authorize a raw
+ * lexical path when canonicalization is impossible.
  */
-function isPathInAllowedRoots(resolvedPath: string): boolean {
-  for (const allowed of ALLOWED_PATHS) {
-    const allowedResolved = resolve(allowed);
-    if (
-      resolvedPath === allowedResolved ||
-      resolvedPath.startsWith(allowedResolved + "/")
-    ) {
-      return true;
+function tryRealpath(p: string): string | null {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+// macOS autofs mounts /home and /net on demand — calling realpath on them
+// blocks trying to reach an NFS server. Fail closed on exactly those trees,
+// before touching realpath. Nothing under them is ever an allowed root.
+function isMacOsAutofsPath(p: string): boolean {
+  if (process.platform !== "darwin") return false;
+  return (
+    p === "/home" || p === "/net" || p.startsWith("/home/") || p.startsWith("/net/")
+  );
+}
+
+function canonicalizeInput(resolvedPath: string): string | null {
+  if (isMacOsAutofsPath(resolvedPath)) return null;
+  const missing: string[] = [];
+  let cursor = resolvedPath;
+  while (true) {
+    const real = tryRealpath(cursor);
+    if (real !== null) {
+      return missing.length ? join(real, ...missing) : real;
     }
+    const parent = dirname(cursor);
+    if (parent === cursor) return null;
+    missing.unshift(basename(cursor));
+    cursor = parent;
+  }
+}
+
+function isPathInAllowedRoots(resolvedPath: string): boolean {
+  if (isMacOsAutofsPath(resolvedPath)) return false;
+  const canonical = canonicalizeInput(resolvedPath);
+  if (canonical === null) return false;
+  for (const allowed of ALLOWED_PATHS) {
+    const lexical = resolve(allowed);
+    // Prefer canonical-vs-canonical; only fall back to lexical when the
+    // allowed root itself cannot be realpathed (missing on disk).
+    const root = tryRealpath(lexical) ?? lexical;
+    if (canonical === root || canonical.startsWith(root + "/")) return true;
   }
   return false;
 }

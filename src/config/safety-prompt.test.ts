@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildSafetyPrompt } from "./safety-prompt";
+import { SAFETY_PROMPT } from "./index";
 
 // Regression: agi-2ry
 //
@@ -22,7 +23,7 @@ describe("buildSafetyPrompt (agi-2ry telegram temp-policy)", () => {
   const TEMP_DIR = "/tmp/soma";
   const TEMP = [TEMP_DIR];
 
-  test("agi-2ry: prompt distinguishes bot temp attachment root from ALLOWED_PATHS", () => {
+  test("BUG agi-2ry: prompt distinguishes bot temp attachment root from ALLOWED_PATHS", () => {
     const prompt = buildSafetyPrompt(ALLOWED, TEMP);
 
     // 1) Temp attachment policy must be explicitly stated (bot-generated
@@ -44,7 +45,7 @@ describe("buildSafetyPrompt (agi-2ry telegram temp-policy)", () => {
 
     // 3) Broader runtime-compat roots MUST NOT leak into the model-facing
     //    prompt — those are executable-layer only (src/security.ts:98-103,
-    //    core/session/query-runtime.ts:355-358).
+    //    src/core/session/query-runtime.ts `checkToolInputSafety`).
     expect(prompt).not.toContain("/private/tmp/");
     expect(prompt).not.toContain("/var/folders/");
 
@@ -53,5 +54,32 @@ describe("buildSafetyPrompt (agi-2ry telegram temp-policy)", () => {
     //    swept into the refusal.
     const blanketRefusal = /REFUSE any file operations outside these paths\s*$/m;
     expect(prompt).not.toMatch(blanketRefusal);
+  });
+});
+
+// Regression: agi-2ry (exported wiring)
+//
+// buildSafetyPrompt is only the shape; the exported SAFETY_PROMPT is what the
+// live session.ts hands to the model (src/core/session/session.ts:862). The
+// shape test above is worthless if config/index.ts wires it with the wrong
+// input — e.g. passing TEMP_PATHS (["/tmp/","/private/tmp/","/var/folders/"])
+// instead of [TEMP_DIR] would silently re-broaden the model-facing carve-out.
+// Assert the actual exported string here.
+describe("SAFETY_PROMPT (exported wiring)", () => {
+  test("BUG agi-2ry: advertises /tmp/soma as the sole attachment root, hides runtime-compat roots", () => {
+    // Bot-generated attachment root that the Telegram handlers stage under
+    // must appear (trailing-slash tolerant).
+    expect(SAFETY_PROMPT).toMatch(/\/tmp\/soma\/?/);
+
+    // Runtime-compat siblings (executable-layer only) MUST NOT leak into the
+    // model-facing prompt.
+    expect(SAFETY_PROMPT).not.toContain("/private/tmp");
+    expect(SAFETY_PROMPT).not.toContain("/var/folders");
+
+    // Attachment policy must explicitly narrow reads to attachments called
+    // out in the current message and mark them read-only. Without both, the
+    // carve-out drifts back into "general working directory" territory.
+    expect(SAFETY_PROMPT).toContain("referenced in the current message");
+    expect(SAFETY_PROMPT).toContain("read-only");
   });
 });

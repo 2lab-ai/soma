@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { CanUseTool, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { createSessionIdentity } from "../routing/session-key";
 import {
   buildQueryRuntimeMetadata,
@@ -46,7 +49,7 @@ describe("checkToolInputSafety", () => {
     expect(result).toEqual({ allowed: true });
   });
 
-  test("blocks Write to temp paths outside ALLOWED_PATHS", () => {
+  test("BUG agi-2ry: blocks Write to temp paths outside ALLOWED_PATHS", () => {
     // Bot-generated attachments under TEMP_PATHS are readable but not general
     // working directories — Write must not be permitted just because the path
     // is inside /tmp.
@@ -57,7 +60,7 @@ describe("checkToolInputSafety", () => {
     }
   });
 
-  test("blocks Edit to temp paths outside ALLOWED_PATHS", () => {
+  test("BUG agi-2ry: blocks Edit to temp paths outside ALLOWED_PATHS", () => {
     const result = checkToolInputSafety("Edit", { file_path: "/tmp/out.ts" });
     expect(result.allowed).toBe(false);
   });
@@ -144,7 +147,7 @@ describe("checkToolInputSafety", () => {
     }
   });
 
-  test("blocks Grep with path in temp directories outside ALLOWED_PATHS", () => {
+  test("BUG agi-2ry: blocks Grep with path in temp directories outside ALLOWED_PATHS", () => {
     // TEMP_PATHS are runtime-compat roots for bot-owned attachments, not
     // general working directories — Grep must not enumerate them.
     const result = checkToolInputSafety("Grep", {
@@ -188,7 +191,7 @@ describe("checkToolInputSafety", () => {
     expect(result.allowed).toBe(false);
   });
 
-  test("blocks Bash cat of file in temp paths outside ALLOWED_PATHS", () => {
+  test("BUG agi-2ry: blocks Bash cat of file in temp paths outside ALLOWED_PATHS", () => {
     // Same policy as Write/Grep: bot-owned attachments under /tmp are not a
     // general working directory the model can enumerate via bash.
     const result = checkToolInputSafety("Bash", {
@@ -294,7 +297,7 @@ describe("checkToolInputSafety", () => {
     expect(result.allowed).toBe(false);
   });
 
-  test("blocks Glob with path in temp directories outside ALLOWED_PATHS", () => {
+  test("BUG agi-2ry: blocks Glob with path in temp directories outside ALLOWED_PATHS", () => {
     const result = checkToolInputSafety("Glob", {
       path: "/tmp/project",
       pattern: "*.ts",
@@ -305,29 +308,153 @@ describe("checkToolInputSafety", () => {
     }
   });
 
-  // --- Temp policy: Read stays permitted (bot-owned attachments) ---
+  // Read carve-out for bot-owned attachments must survive the Write/Edit block.
 
-  test("allows Read of file under /tmp (bot-owned attachment)", () => {
+  test("BUG agi-2ry: allows Read of file under /tmp (bot-owned attachment)", () => {
     const result = checkToolInputSafety("Read", {
       file_path: "/tmp/soma/photo-123.jpg",
     });
     expect(result).toEqual({ allowed: true });
   });
 
-  test("allows Read of file under /private/tmp (bot-owned attachment)", () => {
+  test("BUG agi-2ry: allows Read of file under /private/tmp (bot-owned attachment)", () => {
     const result = checkToolInputSafety("Read", {
       file_path: "/private/tmp/soma/doc-456.pdf",
     });
     expect(result).toEqual({ allowed: true });
   });
 
-  // --- Temp policy: sibling-prefix must not leak through containment ---
-
-  test("blocks Write with sibling-prefix path (not a true child of TEMP root)", () => {
-    // Guard against unsafe sibling-prefix matching: "/tmp" prefix must not
-    // accidentally match "/tmpx/foo" style paths.
+  // "/tmp" prefix must not accidentally match "/tmpx/foo".
+  test("BUG agi-2ry: blocks Write with sibling-prefix path (not a true child of TEMP root)", () => {
     const result = checkToolInputSafety("Write", {
       file_path: "/tmpx/foo.txt",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  // Symlink whose textual path is inside an allowed root but whose realpath
+  // escapes must be rejected (parallels src/security.ts:90-96); otherwise any
+  // symlink under an allowed dir becomes a universal escape hatch. Control
+  // case: a regular sibling stays allowed, proving the block is driven by
+  // realpath and not by the parent directory.
+  describe("symlink target follows realpath (existing paths)", () => {
+    const scratchDir = join(import.meta.dir, ".query-runtime-symlink-test");
+    let outsideDir = "";
+    let outsideTarget = "";
+    const symlinkPath = join(scratchDir, "link-to-outside.txt");
+    const regularPath = join(scratchDir, "regular-inside.txt");
+
+    beforeAll(() => {
+      rmSync(scratchDir, { recursive: true, force: true });
+      mkdirSync(scratchDir, { recursive: true });
+      outsideDir = mkdtempSync(join(tmpdir(), "soma-symlink-test-"));
+      outsideTarget = join(outsideDir, "target.txt");
+      writeFileSync(outsideTarget, "outside\n");
+      writeFileSync(regularPath, "inside\n");
+      // realpathSync only follows the link when both link AND target exist.
+      symlinkSync(outsideTarget, symlinkPath);
+    });
+
+    afterAll(() => {
+      rmSync(scratchDir, { recursive: true, force: true });
+      if (outsideDir) {
+        rmSync(outsideDir, { recursive: true, force: true });
+      }
+    });
+
+    test("BUG agi-2ry: Write to symlink inside allowed root is blocked when realpath escapes", () => {
+      const result = checkToolInputSafety("Write", { file_path: symlinkPath });
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) {
+        expect(result.reason).toContain("File access blocked");
+      }
+    });
+
+    test("BUG agi-2ry: Write to regular file at the same allowed parent stays allowed", () => {
+      // Control against the block above.
+      const result = checkToolInputSafety("Write", { file_path: regularPath });
+      expect(result.allowed).toBe(true);
+    });
+  });
+
+  // thread-workdir.ts:8,29-36 stages each Telegram thread as a directory
+  // symlink `/tmp/soma-thread-workdirs-*/…` → WORKING_DIR. A Write to a
+  // not-yet-created child under that alias must resolve via the deepest
+  // EXISTING ancestor (the alias itself → WORKING_DIR) and be permitted; a
+  // child that is itself a symlink whose realpath escapes must still be
+  // rejected. Both directions are load-bearing.
+  describe("BUG agi-2ry: thread-workdirs alias containment", () => {
+    const aliasParent = join(
+      tmpdir(),
+      `soma-agi2ry-alias-${process.pid}-${Date.now()}`
+    );
+    const aliasDir = join(aliasParent, "tenant__channel__thread");
+    // process.cwd() is under HOME → ALLOWED_PATHS by default.
+    const allowedRootTarget = process.cwd();
+    const notYetCreatedThroughAlias = join(aliasDir, "agi-2ry-new-file.md");
+    let escapeOutsideDir = "";
+    let escapeOutsideTarget = "";
+    const escapeLinkThroughAlias = join(aliasDir, "agi-2ry-escape-link.txt");
+
+    beforeAll(() => {
+      mkdirSync(aliasParent, { recursive: true });
+      symlinkSync(allowedRootTarget, aliasDir, "dir");
+      escapeOutsideDir = mkdtempSync(join(tmpdir(), "soma-agi2ry-escape-"));
+      escapeOutsideTarget = join(escapeOutsideDir, "outside.txt");
+      writeFileSync(escapeOutsideTarget, "outside\n");
+      // Symlinks created through the alias physically land inside the target
+      // worktree — the afterAll cleanup order below reflects that.
+      symlinkSync(escapeOutsideTarget, escapeLinkThroughAlias);
+    });
+
+    afterAll(() => {
+      // Escape symlink lives inside the worktree via the alias — remove
+      // first, then the alias, then the parents.
+      rmSync(escapeLinkThroughAlias, { force: true });
+      rmSync(aliasDir, { force: true });
+      rmSync(aliasParent, { recursive: true, force: true });
+      if (escapeOutsideDir) {
+        rmSync(escapeOutsideDir, { recursive: true, force: true });
+      }
+    });
+
+    test("BUG agi-2ry: Write to not-yet-created child through legitimate alias symlink is permitted", () => {
+      const result = checkToolInputSafety("Write", {
+        file_path: notYetCreatedThroughAlias,
+      });
+      expect(result.allowed).toBe(true);
+    });
+
+    test("BUG agi-2ry: Write to existing symlink child through the alias whose target escapes is rejected", () => {
+      // Parent realpaths to an allowed root, but the final component is a
+      // symlink whose realpath escapes — the whole input must be realpathed.
+      const result = checkToolInputSafety("Write", {
+        file_path: escapeLinkThroughAlias,
+      });
+      expect(result.allowed).toBe(false);
+      if (!result.allowed) {
+        expect(result.reason).toContain("File access blocked");
+      }
+    });
+  });
+
+  // macOS autofs: /home and /net are demand-mounted, so realpath on them
+  // blocks trying to reach an NFS server. The guard must reject the input
+  // before it hits realpath. We assert the observable outcome (blocked); the
+  // non-blocking-realpath property is exercised by not hanging.
+  test("BUG agi-2ry: Write to /home/** path is fail-closed without touching realpath", () => {
+    const result = checkToolInputSafety("Write", {
+      file_path: "/home/nonexistent-agi2ry/x.txt",
+    });
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.reason).toContain("File access blocked");
+    }
+  });
+
+  test("BUG agi-2ry: Write to /net/** path is fail-closed without touching realpath", () => {
+    const result = checkToolInputSafety("Write", {
+      file_path: "/net/some-host/share/x.txt",
     });
     expect(result.allowed).toBe(false);
   });
