@@ -16,14 +16,16 @@ import { AVAILABLE_MODELS } from "./model";
 import {
   __testResetCatalog,
   __testSeedCatalog,
+  __testSetFetchedAt,
   getCatalogMaxContext,
   getCatalogModels,
   getDisplayName,
   getSelectableModels,
   isKnownModel,
   loadSnapshotSync,
-  maybeRefreshInBackground,
   refreshCatalog,
+  refreshCatalogIfStale,
+  REFRESH_TTL_MS_FOR_TESTS,
   setCatalogFetcher,
   setSnapshotPathForTests,
 } from "./model-catalog";
@@ -244,6 +246,215 @@ describe("refresh", () => {
   });
 });
 
+describe("BUG agi-9m7: refreshCatalogIfStale (awaitable stale-refresh gate)", () => {
+  test("BUG agi-9m7: stale catalog awaits the underlying refresh", async () => {
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+    await refreshCatalogIfStale();
+    expect(calls).toBe(1);
+    expect(isKnownModel("grok-4.5")).toBe(true);
+  });
+
+  test("BUG agi-9m7: a fresh snapshot short-circuits without refetching", async () => {
+    // __testSeedCatalog marks fetchedAt = Date.now() → inside TTL.
+    __testSeedCatalog(WIRE_ENTRIES);
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+    await refreshCatalogIfStale();
+    expect(calls).toBe(0);
+    expect(isKnownModel("grok-4.5")).toBe(true);
+  });
+
+  test("BUG agi-9m7: TTL boundary — a snapshot exactly at TTL is treated as stale", async () => {
+    __testSeedCatalog(WIRE_ENTRIES);
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+
+    // Safe pre-TTL margin (1s) so a few ms of clock drift between this
+    // Date.now() and the one inside refreshCatalogIfStale cannot flip the
+    // comparison. The exact-at-TTL branch below still pins the strict-`<`
+    // contract because it uses `-TTL` (not `-(TTL-1)`).
+    __testSetFetchedAt(Date.now() - (REFRESH_TTL_MS_FOR_TESTS - 1_000));
+    await refreshCatalogIfStale();
+    expect(calls).toBe(0);
+
+    // Exactly TTL old — stale (Date.now() - fetchedAt is NOT `<` TTL).
+    __testSetFetchedAt(Date.now() - REFRESH_TTL_MS_FOR_TESTS);
+    await refreshCatalogIfStale();
+    expect(calls).toBe(1);
+  });
+
+  test("BUG agi-9m7: REFRESH_TTL_MS_FOR_TESTS is exactly 10 minutes", () => {
+    // Independent literal pin — the boundary test above proves the constant
+    // is threaded to the runtime, this one pins its actual value so a silent
+    // TTL change (e.g. shortened to 60_000 for debugging) trips a red.
+    expect(REFRESH_TTL_MS_FOR_TESTS).toBe(600_000);
+  });
+});
+
+describe("BUG agi-9m7: empty/malformed refresh never downgrades", () => {
+  test("BUG agi-9m7: an empty wire response does NOT replace previously-known entries or bump fetchedAt", async () => {
+    // Seed a known-good roster, then rewind fetchedAt PAST the TTL so the
+    // snapshot is already stale. If the empty refresh below wrongly bumps
+    // fetchedAt to `now`, the subsequent refreshCatalogIfStale will short-circuit
+    // (calls === 0) — a green stale-check is the ground-truth proof that
+    // fetchedAt was NOT bumped, without the test resetting it itself.
+    __testSeedCatalog(WIRE_ENTRIES);
+    __testSetFetchedAt(Date.now() - (REFRESH_TTL_MS_FOR_TESTS + 60_000));
+
+    setCatalogFetcher(async () => []); // llmux answered, but with nothing.
+    const result = await refreshCatalog({ force: true });
+
+    // The refresh reports non-ok and the previously-known roster survives.
+    expect(result.ok).toBe(false);
+    expect(isKnownModel("grok-4.5")).toBe(true);
+    expect(getCatalogModels().map((m) => m.id)).toEqual(WIRE_ENTRIES.map((e) => e.id));
+
+    // Ground-truth check: the next stale-open MUST refetch (fetchedAt still
+    // reads as older than TTL, because the empty refresh did not bump it).
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+    await refreshCatalogIfStale();
+    expect(calls).toBe(1);
+  });
+
+  test("BUG agi-9m7: a malformed-success payload that normalizes to empty is treated the same", async () => {
+    __testSeedCatalog(WIRE_ENTRIES);
+    // Everything gets dropped by normalizeEntries: no usable id.
+    setCatalogFetcher(async () => [
+      { name: "no id" },
+      { id: 42 },
+      null,
+      "not-an-object",
+    ]);
+    const result = await refreshCatalog({ force: true });
+    expect(result.ok).toBe(false);
+    expect(getCatalogModels().map((m) => m.id)).toEqual(WIRE_ENTRIES.map((e) => e.id));
+  });
+
+  test("BUG agi-9m7: a cold empty response leaves static roster and is retryable", async () => {
+    // No prior entries. An empty answer must not mark the catalog fresh, or
+    // the next open would falsely believe llmux has been consulted recently.
+    setCatalogFetcher(async () => []);
+    const result = await refreshCatalog({ force: true });
+    expect(result.ok).toBe(false);
+    expect(getSelectableModels().map((m) => m.id)).toEqual([...AVAILABLE_MODELS]);
+
+    // The very next stale-check must refetch (fetchedAt was NOT set).
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+    await refreshCatalogIfStale();
+    expect(calls).toBe(1);
+    expect(isKnownModel("grok-4.5")).toBe(true);
+  });
+});
+
+describe("BUG agi-9m7: legacy invalid snapshot never falsely marks catalog fresh", () => {
+  const snapshotFile = () => join(tmpDir, "model-catalog.json");
+
+  test("BUG agi-9m7: a recent VALID snapshot short-circuits the stale gate (fetches 0)", async () => {
+    // Baseline: a snapshot with usable rows and a fresh timestamp SHOULD keep
+    // refreshCatalogIfStale from calling the fetcher. This pins the
+    // "well-formed recent snapshot" contract that the empty-snapshot cases
+    // must not accidentally satisfy.
+    writeFileSync(
+      snapshotFile(),
+      JSON.stringify({ fetchedAt: Date.now(), models: WIRE_ENTRIES }),
+      "utf-8"
+    );
+    loadSnapshotSync();
+    expect(isKnownModel("grok-4.5")).toBe(true);
+
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+    await refreshCatalogIfStale();
+    expect(calls).toBe(0);
+  });
+
+  test("BUG agi-9m7: a recent EMPTY snapshot must NOT be treated as fresh (fetches 1)", async () => {
+    // Legacy on-disk snapshot with an empty models[] but a recent fetchedAt:
+    // if loadSnapshotSync trusts it, refreshCatalogIfStale short-circuits and
+    // the user sees the static-only roster forever.
+    writeFileSync(
+      snapshotFile(),
+      JSON.stringify({ fetchedAt: Date.now(), models: [] }),
+      "utf-8"
+    );
+    loadSnapshotSync();
+
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+    await refreshCatalogIfStale();
+    expect(calls).toBe(1);
+  });
+
+  test("BUG agi-9m7: a recent ALL-MALFORMED snapshot must NOT be treated as fresh (fetches 1)", async () => {
+    // Every entry drops out of normalizeEntries → normalized.length === 0.
+    // Same failure mode as the empty snapshot above.
+    writeFileSync(
+      snapshotFile(),
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        models: [{ name: "no id" }, { id: 42 }, null, "not-an-object"],
+      }),
+      "utf-8"
+    );
+    loadSnapshotSync();
+
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+    await refreshCatalogIfStale();
+    expect(calls).toBe(1);
+  });
+
+  test("BUG agi-9m7: a mixed payload with >=1 usable row is still accepted", async () => {
+    // Extend-only contract: partial malformation must not strict-reject the
+    // whole snapshot. The usable row survives, fetchedAt is trusted.
+    writeFileSync(
+      snapshotFile(),
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        models: [{ name: "no id" }, { id: "grok-4.5", name: "Grok 4.5" }, null],
+      }),
+      "utf-8"
+    );
+    loadSnapshotSync();
+    expect(isKnownModel("grok-4.5")).toBe(true);
+
+    let calls = 0;
+    setCatalogFetcher(async () => {
+      calls += 1;
+      return WIRE_ENTRIES;
+    });
+    await refreshCatalogIfStale();
+    expect(calls).toBe(0);
+  });
+});
+
 describe("snapshot persistence", () => {
   test("round-trips through disk", async () => {
     setCatalogFetcher(async () => WIRE_ENTRIES);
@@ -312,7 +523,9 @@ describe("auth-mode gate (AUTH_MODE=oauth)", () => {
     expect(result.ok).toBe(false);
     expect(result.skipped).toBe(true);
     expect(calls).toBe(0);
-    maybeRefreshInBackground();
+    // refreshCatalogIfStale delegates the oauth decision to refreshCatalog,
+    // so the same no-op invariant holds without duplicating the branch here.
+    await refreshCatalogIfStale();
     expect(calls).toBe(0);
   });
 
