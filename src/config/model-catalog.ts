@@ -79,7 +79,7 @@ const DEFAULT_LLMUX_API_KEY = "llmux-local-placeholder";
 const FETCH_TIMEOUT_MS = 5_000;
 /** Min gap between two fetch attempts (success or failure). */
 const REFRESH_COOLDOWN_MS = 60_000;
-/** Stale-while-revalidate TTL for {@link maybeRefreshInBackground}. */
+/** Stale-while-revalidate TTL for {@link refreshCatalogIfStale}. */
 const REFRESH_TTL_MS = 10 * 60_000;
 
 function snapshotPath(): string {
@@ -215,7 +215,18 @@ export function loadSnapshotSync(): void {
         console.warn(`[ModelCatalog] Snapshot has no models array, ignoring: ${candidate}`);
         continue;
       }
-      setEntries(normalizeEntries(parsed.models));
+      const normalized = normalizeEntries(parsed.models);
+      if (normalized.length === 0) {
+        // A recent-but-empty (or all-malformed) snapshot must not mark the
+        // catalog fresh — refreshCatalogIfStale would short-circuit and the
+        // static-only roster would be shown forever. Fall through to the
+        // `.bak` (or leave entries alone if that is also empty).
+        console.warn(
+          `[ModelCatalog] Snapshot has no usable entries after normalize, ignoring: ${candidate}`
+        );
+        continue;
+      }
+      setEntries(normalized);
       fetchedAt = typeof parsed.fetchedAt === "number" ? parsed.fetchedAt : null;
       return;
     } catch (error) {
@@ -278,12 +289,29 @@ export function refreshCatalog(opts?: RefreshOptions): Promise<RefreshResult> {
   if (!opts?.force && now - lastAttemptAt < REFRESH_COOLDOWN_MS) {
     return Promise.resolve({ ok: false, count: entries.length, skipped: true, error: "cooldown" });
   }
+  const previousAttemptAt = lastAttemptAt;
   lastAttemptAt = now;
 
   inFlight = (async (): Promise<RefreshResult> => {
     try {
       const models = await fetcher();
-      setEntries(normalizeEntries(Array.isArray(models) ? models : []));
+      const normalized = normalizeEntries(Array.isArray(models) ? models : []);
+      if (normalized.length === 0) {
+        // Empty (or all-malformed) response is not a fresh snapshot: keep the
+        // previously-known entries and DO NOT bump `fetchedAt`, so the next
+        // `refreshCatalogIfStale` refetches instead of trusting the emptiness.
+        // Restore `lastAttemptAt` too so the retry isn't wedged behind cooldown.
+        lastAttemptAt = previousAttemptAt;
+        console.warn(
+          `[ModelCatalog] Refresh returned no usable entries (keeping ${entries.length} known models)`
+        );
+        return {
+          ok: false,
+          count: entries.length,
+          error: "empty or malformed catalog response",
+        };
+      }
+      setEntries(normalized);
       fetchedAt = Date.now();
       saveSnapshot();
       console.log(`[ModelCatalog] Refreshed llmux catalog (${entries.length} models)`);
@@ -302,16 +330,15 @@ export function refreshCatalog(opts?: RefreshOptions): Promise<RefreshResult> {
 }
 
 /**
- * Fire-and-forget refresh when the catalog is stale (> 10 min). Callers (the
- * `/model` menu) must never block or fail on catalog freshness, so every error
- * is swallowed.
+ * Awaitable TTL gate over {@link refreshCatalog}. Callers (`/model` menu open)
+ * `await` this so a just-fetched roster lands in THIS render, not the next
+ * open. The oauth / no-fetcher / cooldown / in-flight / failure branches all
+ * live in `refreshCatalog`, so this layer only decides "snapshot too old to
+ * trust?" and never rejects.
  */
-export function maybeRefreshInBackground(): void {
-  if (!isLlmuxMode()) return;
+export async function refreshCatalogIfStale(): Promise<void> {
   if (fetchedAt !== null && Date.now() - fetchedAt < REFRESH_TTL_MS) return;
-  void refreshCatalog().catch(() => {
-    /* refreshCatalog never rejects; defensive */
-  });
+  await refreshCatalog();
 }
 
 // ------------------------------------------------------------------ accessors
@@ -405,6 +432,15 @@ export function __testSeedCatalog(raw: unknown[]): void {
   setEntries(normalizeEntries(raw));
   fetchedAt = Date.now();
 }
+
+/** TEST ONLY — pin the internal `fetchedAt` (used to exercise the TTL boundary). */
+export function __testSetFetchedAt(value: number | null): void {
+  fetchedAt = value;
+}
+
+/** TEST ONLY — the stale-while-revalidate TTL (10 min), exposed so boundary tests
+ *  pin the exact constant without duplicating the literal. */
+export const REFRESH_TTL_MS_FOR_TESTS: number = REFRESH_TTL_MS;
 
 /** TEST ONLY — redirect the snapshot file (`null` restores the default path). */
 export function setSnapshotPathForTests(filePath: string | null): void {

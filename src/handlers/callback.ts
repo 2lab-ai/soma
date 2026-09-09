@@ -28,7 +28,7 @@ import {
   type ModelId,
   type ReasoningLevel,
 } from "../config/model";
-import { getDisplayName, maybeRefreshInBackground } from "../config/model-catalog";
+import { getDisplayName, refreshCatalogIfStale } from "../config/model-catalog";
 import {
   buildModelMenuRows,
   decodeModelId,
@@ -295,30 +295,46 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
     }
 
     if (action === "context") {
-      // Context selection - show model selection
       const context = parts[2] as ConfigContext;
       const config = getCurrentConfig();
       const currentModel = config.contexts[context]?.model || config.defaults.model;
 
-      // Opening the menu is the natural refresh point for the llmux catalog:
-      // fire-and-forget, so a dead llmux costs nothing but a stale-by-one-open
-      // roster (and never less than the static roster).
-      maybeRefreshInBackground();
+      // Ack before await: the fetch can take up to FETCH_TIMEOUT_MS (5s) and
+      // the Telegram spinner is held until the ack.
+      await ctx.answerCallbackQuery();
 
-      const keyboard = new InlineKeyboard();
-      for (const row of buildModelMenuRows(context, currentModel)) {
-        keyboard.text(row.text, row.callbackData).row();
-      }
-      keyboard.text("« Back", "model:back");
+      // Post-ack failures must be handled locally: the outer catch would
+      // answer the callback a second time (already acked) — the user just
+      // needs a plain fallback reply and a hint to reopen /model.
+      try {
+        // Menu-open = the refresh point. Await so a just-added catalog id
+        // lands in THIS render, not the next open.
+        await refreshCatalogIfStale();
 
-      await ctx.editMessageText(
-        `🤖 <b>Select Model for ${context.charAt(0).toUpperCase() + context.slice(1)}</b>\n\n` +
-          `Current: ${getDisplayName(currentModel)}`,
-        {
-          parse_mode: "HTML",
-          reply_markup: keyboard,
+        const keyboard = new InlineKeyboard();
+        for (const row of buildModelMenuRows(context, currentModel)) {
+          keyboard.text(row.text, row.callbackData).row();
         }
-      );
+        keyboard.text("« Back", "model:back");
+
+        await ctx.editMessageText(
+          `🤖 <b>Select Model for ${context.charAt(0).toUpperCase() + context.slice(1)}</b>\n\n` +
+            `Current: ${getDisplayName(currentModel)}`,
+          {
+            parse_mode: "HTML",
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error("[ERROR:MODEL_CONTEXT_RENDER_FAILED]", error);
+        try {
+          await ctx.reply("❌ Failed to show model selection. Re-open /model.");
+        } catch (replyError) {
+          console.warn("[MODEL_CONTEXT] fallback reply failed:", replyError);
+        }
+      }
+      // Early return — trailing ack below would double-ack this branch.
+      return;
     } else if (action === "model") {
       // Model selection - show reasoning selection
       const context = parts[2] as ConfigContext;
