@@ -12,9 +12,10 @@
  *    model after every refresh.
  *
  * Current contract: the callback data carries the model id verbatim (the
- * longest catalog id today is 18 bytes; `model:save:<ctx>:<id>:<level>` stays
- * well inside Telegram's 64-byte limit) and decoding validates the id against
- * the known set (static roster ∪ catalog) instead of an array position.
+ * longest id in play today is `claude-fable-5-1[1m]` at 20 bytes;
+ * `model:save:<ctx>:<id>:<level>` stays well inside Telegram's 64-byte limit)
+ * and decoding validates the id against the known set (static roster ∪
+ * catalog) instead of an array position.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { AVAILABLE_MODELS } from "../config/model";
@@ -135,6 +136,36 @@ describe("buildModelMenuRows", () => {
       .map((r) => r.model);
     expect(ids.some((id) => id?.startsWith("overlong-"))).toBe(false);
     expect(ids).toContain("grok-4.5");
+  });
+
+  test("the fable row is the 1M id and its payload fits Telegram", () => {
+    const rows = buildModelMenuRows("general", "claude-opus-4-8");
+    const modelRows = rows.filter((r) => r.kind === "model");
+    expect(modelRows[0]?.model).toBe("claude-fable-5-1[1m]");
+    expect(modelRows[0]?.text).toBe("Fable 5.1 (1M)");
+    expect(callbackDataFits("general", "claude-fable-5-1[1m]")).toBe(true);
+  });
+
+  test("a twinned catalog model offers only its [1m] row (shorthand means 1M)", () => {
+    // llmux hangs the `astra` / `gpt-6` aliases on the [1m] row, so the menu
+    // must not also show the 272k base — picking "astra" would be a coin flip.
+    __testSeedCatalog([
+      ...CATALOG_ENTRIES,
+      { id: "gpt-6-astra", aliases: [], name: "GPT-6 Astra", group: "codex" },
+      {
+        id: "gpt-6-astra[1m]",
+        aliases: ["astra", "gpt-6"],
+        name: "GPT-6 Astra (1M)",
+        group: "codex",
+      },
+    ]);
+    const ids = buildModelMenuRows("general", "claude-opus-4-8")
+      .filter((r) => r.kind === "model")
+      .map((r) => r.model);
+    expect(ids).toContain("gpt-6-astra[1m]");
+    expect(ids).not.toContain("gpt-6-astra");
+    // The hidden row is still decodable for a stale keyboard already in a chat.
+    expect(decodeModelId("gpt-6-astra")).toBe("gpt-6-astra");
   });
 
   test("catalog outage still renders the full static roster (extend-only)", () => {

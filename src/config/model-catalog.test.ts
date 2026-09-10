@@ -146,6 +146,198 @@ describe("extend-only selection", () => {
   });
 });
 
+describe("shorthand means 1M — alias-driven hiding of a base row", () => {
+  // Operator rule (2026-09-10): soma's menu selects by id, so when llmux hangs
+  // its shorthand (`astra`, `opus`, `fable`) on the `[1m]` row, offering the
+  // base row too makes "pick astra" a coin flip between 272k and 1M. The
+  // predicate is llmux's own alias metadata, NOT the id text — live today the
+  // aliases sit on the [1m] twin for astra/opus-5/sonnet-5 but on the BASE row
+  // for sol/terra, and only the former pair is ambiguous.
+  const TWINNED_ENTRIES = [
+    // Aliases on the [1m] row → the base is ambiguous and gets hidden.
+    {
+      id: "gpt-6-astra",
+      aliases: [],
+      name: "GPT-6 Astra",
+      group: "codex",
+      max_context: 272_000,
+    },
+    {
+      id: "gpt-6-astra[1m]",
+      aliases: ["astra", "gpt-6"],
+      name: "GPT-6 Astra (1M)",
+      group: "codex",
+      max_context: 1_000_000,
+    },
+    // Aliases on the BASE row → shorthand already means the base; both stay.
+    {
+      id: "gpt-5.6-sol",
+      aliases: ["sol", "gpt-5.6"],
+      name: "GPT-5.6 Sol",
+      group: "codex",
+      max_context: 400_000,
+    },
+    {
+      id: "gpt-5.6-sol[1m]",
+      aliases: [],
+      name: "GPT-5.6 Sol (1M)",
+      group: "codex",
+      max_context: 1_000_000,
+    },
+    {
+      id: "grok-4.5",
+      aliases: [],
+      name: "Grok 4.5",
+      group: "grok",
+      max_context: 256_000,
+    },
+  ];
+
+  test("normalizeEntries keeps aliases and defaults them to []", () => {
+    __testSeedCatalog([
+      { id: "gpt-6-astra[1m]", aliases: ["astra", " GPT-6 ", "", 42] },
+      { id: "grok-4.5" },
+      { id: "gpt-5.6-sol", aliases: "sol" },
+    ]);
+    const byId = new Map(getCatalogModels().map((m) => [m.id, m.aliases]));
+    expect(byId.get("gpt-6-astra[1m]")).toEqual(["astra", "gpt-6"]);
+    expect(byId.get("grok-4.5")).toEqual([]);
+    expect(byId.get("gpt-5.6-sol")).toEqual([]);
+  });
+
+  test("the astra base is hidden but the sol base (aliases on the base) survives", () => {
+    __testSeedCatalog(TWINNED_ENTRIES);
+    const ids = getSelectableModels().map((m) => m.id);
+
+    expect(ids.slice(0, AVAILABLE_MODELS.length)).toEqual([...AVAILABLE_MODELS]);
+    expect(ids.slice(AVAILABLE_MODELS.length)).toEqual([
+      "gpt-6-astra[1m]",
+      "gpt-5.6-sol",
+      "gpt-5.6-sol[1m]",
+      "grok-4.5",
+    ]);
+    expect(ids).not.toContain("gpt-6-astra");
+  });
+
+  test("a [1m] twin with NO aliases hides nothing (the sol/terra shape)", () => {
+    // Same ids as the astra case, only the alias metadata moved. If the rule
+    // were textual ("a [1m] twin exists"), this base would vanish too.
+    __testSeedCatalog([
+      { id: "gpt-5.6-terra", aliases: ["terra"], name: "Terra", group: "codex" },
+      { id: "gpt-5.6-terra[1m]", aliases: [], name: "Terra (1M)", group: "codex" },
+    ]);
+    const ids = getSelectableModels().map((m) => m.id);
+    expect(ids.slice(AVAILABLE_MODELS.length)).toEqual([
+      "gpt-5.6-terra",
+      "gpt-5.6-terra[1m]",
+    ]);
+  });
+
+  test("only the TWIN's aliases decide — the base's own aliases do not rescue it", () => {
+    // Pins the exact predicate: `X[1m]` offered AND `X[1m]` has >=1 alias.
+    // No live row carries aliases on both sides today; if one ever does, the
+    // 1M row still wins the menu slot and this test says so out loud.
+    __testSeedCatalog([
+      { id: "gpt-6-astra", aliases: ["astra-272k"], name: "Astra", group: "codex" },
+      { id: "gpt-6-astra[1m]", aliases: ["astra"], name: "Astra (1M)", group: "codex" },
+    ]);
+    const ids = getSelectableModels().map((m) => m.id);
+    expect(ids.slice(AVAILABLE_MODELS.length)).toEqual(["gpt-6-astra[1m]"]);
+  });
+
+  test("the hidden base id stays a KNOWN model (existing sessions keep resolving)", () => {
+    __testSeedCatalog(TWINNED_ENTRIES);
+    expect(isKnownModel("gpt-6-astra")).toBe(true);
+    expect(isKnownModel("GPT-6-ASTRA")).toBe(true);
+    expect(getDisplayName("gpt-6-astra")).toBe("GPT-6 Astra");
+    expect(getCatalogMaxContext("gpt-6-astra")).toBe(272_000);
+  });
+
+  test("the suffix match is case-insensitive", () => {
+    __testSeedCatalog([
+      { id: "gpt-6-astra", aliases: [], name: "GPT-6 Astra", group: "codex" },
+      {
+        id: "GPT-6-Astra[1M]",
+        aliases: ["astra"],
+        name: "GPT-6 Astra (1M)",
+        group: "codex",
+      },
+    ]);
+    const ids = getSelectableModels().map((m) => m.id);
+    expect(ids.slice(AVAILABLE_MODELS.length)).toEqual(["GPT-6-Astra[1M]"]);
+  });
+
+  test("a [1m] twin that exists ONLY in the static roster carries no alias metadata, so the base stays", () => {
+    // `claude-fable-5-1[1m]` is a roster id. With no catalog row describing it
+    // there are no aliases to key off, so the rule stays silent rather than
+    // guessing from the id text.
+    __testSeedCatalog([
+      {
+        id: "claude-fable-5-1",
+        aliases: [],
+        name: "Claude Fable 5.1 (272k)",
+        group: "claude",
+      },
+    ]);
+    expect(getSelectableModels().map((m) => m.id)).toContain("claude-fable-5-1");
+  });
+
+  test("…but a catalog row for that roster twin supplies the aliases and hides the base", () => {
+    __testSeedCatalog([
+      {
+        id: "claude-fable-5-1",
+        aliases: [],
+        name: "Claude Fable 5.1 (272k)",
+        group: "claude",
+      },
+      {
+        id: "claude-fable-5-1[1m]",
+        aliases: ["fable", "fable-5-1"],
+        name: "Claude Fable 5.1",
+        group: "claude",
+      },
+    ]);
+    const ids = getSelectableModels().map((m) => m.id);
+    expect(ids).not.toContain("claude-fable-5-1");
+    // The roster already lists the [1m] row, so the catalog copy adds no dupe.
+    expect(ids).toEqual([...AVAILABLE_MODELS]);
+  });
+
+  test("a static roster id is never hidden (extend-only floor)", () => {
+    __testSeedCatalog(TWINNED_ENTRIES);
+    const ids = getSelectableModels().map((m) => m.id);
+    expect(ids).toContain("claude-opus-4-8");
+    expect(ids).toContain("claude-opus-4-8[1m]");
+  });
+});
+
+describe("superseded ids never re-enter the menu through the catalog", () => {
+  test("a catalog claude-fable-5 row is not selectable but stays a known model", () => {
+    // MODEL_MIGRATIONS rewrites `claude-fable-5` → `claude-fable-5-1[1m]` on
+    // load, so offering it in the menu hands the user a pick that the next
+    // config load silently changes underneath them.
+    __testSeedCatalog([
+      { id: "claude-fable-5", aliases: [], name: "Claude Fable 5", group: "claude" },
+      { id: "grok-4.5", aliases: [], name: "Grok 4.5", group: "grok" },
+    ]);
+    const ids = getSelectableModels().map((m) => m.id);
+    expect(ids).not.toContain("claude-fable-5");
+    expect(ids).toContain("grok-4.5");
+
+    // …but a stale keyboard / open session pointing at it still decodes.
+    expect(isKnownModel("claude-fable-5")).toBe(true);
+    expect(getDisplayName("claude-fable-5")).toBe("Fable 5 (1M)");
+  });
+
+  test("the other migration source (claude-opus-4-6) is filtered too", () => {
+    __testSeedCatalog([
+      { id: "claude-opus-4-6", aliases: [], name: "Claude Opus 4.6", group: "claude" },
+    ]);
+    expect(getSelectableModels().map((m) => m.id)).toEqual([...AVAILABLE_MODELS]);
+    expect(isKnownModel("claude-opus-4-6")).toBe(true);
+  });
+});
+
 describe("isKnownModel / getDisplayName", () => {
   test("static models are known without any catalog", () => {
     expect(isKnownModel("claude-opus-4-8[1m]")).toBe(true);
@@ -174,10 +366,10 @@ describe("isKnownModel / getDisplayName", () => {
     // name win made the two menu rows read the same.
     __testSeedCatalog([
       { id: "claude-opus-4-8[1m]", name: "Claude Opus 4.8", group: "claude" },
-      { id: "claude-fable-5", name: "Claude Fable 5", group: "claude" },
+      { id: "claude-fable-5-1[1m]", name: "Claude Fable 5.1", group: "claude" },
     ]);
     expect(getDisplayName("claude-opus-4-8[1m]")).toBe("Opus 4.8 (1M)");
-    expect(getDisplayName("claude-fable-5")).toBe("Fable 5 (1M)");
+    expect(getDisplayName("claude-fable-5-1[1m]")).toBe("Fable 5.1 (1M)");
 
     const labels = getSelectableModels().map((m) => m.displayName);
     expect(labels).toContain("Opus 4.8 (1M)");

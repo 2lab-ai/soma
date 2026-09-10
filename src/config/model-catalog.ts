@@ -17,6 +17,30 @@
  * list falls back to the on-disk snapshot and then to the static roster — the
  * selectable set never shrinks below `AVAILABLE_MODELS`.
  *
+ * **"Shorthand means 1M" (operator rule 2026-09-10).** llmux publishes many
+ * models as a twin pair — `gpt-6-astra` (272k) and `gpt-6-astra[1m]` (1M) —
+ * and hangs its shorthand ALIASES on exactly one of the two. soma has no alias
+ * layer: the `/model` menu picks by id, so when the operator's shorthand
+ * (`astra`, `opus`, `fable`) resolves to the `[1m]` row, offering the base row
+ * as well makes "pick astra" a coin flip between two context windows.
+ *
+ * The predicate is llmux's own metadata, not the id text: a catalog base row
+ * `X` is hidden only when `X[1m]` is also offered AND that `[1m]` row carries
+ * at least one alias. Live today that hides `gpt-6-astra`, `claude-opus-5` and
+ * `claude-sonnet-5` (aliases live on their `[1m]` twins) while `gpt-5.6-sol`
+ * and `gpt-5.6-terra` stay visible (there the aliases sit on the BASE row, so
+ * the shorthand already means the base and nothing is ambiguous).
+ *
+ * Two carve-outs: static roster rows are never hidden (they are the floor, and
+ * `claude-opus-4-8` + `claude-opus-4-8[1m]` are both there on purpose), and the
+ * hide is menu-only — {@link isKnownModel} still accepts every base id so a
+ * session or config already holding one keeps resolving.
+ *
+ * Superseded ids are also dropped from the menu: a catalog row whose id is a
+ * `MODEL_MIGRATIONS` source (`claude-fable-5`) would otherwise re-enter the
+ * menu through the catalog and hand the user a selection that `normalizeConfig`
+ * immediately rewrites on the next load.
+ *
  * Layering: this module imports `model.ts` (roster + labels) and nothing else
  * from the app, so importing it can never drag in the bot runtime. The llmux
  * fetch is a module-level injectable (`setCatalogFetcher`) with an HTTP
@@ -32,7 +56,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { isLlmuxMode } from "./llmux";
-import { AVAILABLE_MODELS, MODEL_DISPLAY_NAMES } from "./model";
+import { AVAILABLE_MODELS, isMigratedModelId, MODEL_DISPLAY_NAMES } from "./model";
 
 /** Normalized catalog entry (`max_context` → `maxContext`, efforts lowercased). */
 export interface CatalogModel {
@@ -40,6 +64,13 @@ export interface CatalogModel {
   name: string;
   group: string;
   efforts: string[];
+  /**
+   * llmux's shorthand names for this row (`astra`, `fable`, `opus-5`, …),
+   * lowercased. Empty when the row has none. This is the ground truth behind
+   * the "shorthand means 1M" rule — llmux, not soma, decides which row an
+   * operator's shorthand resolves to.
+   */
+  aliases: string[];
   maxContext: number | null;
 }
 
@@ -81,6 +112,8 @@ const FETCH_TIMEOUT_MS = 5_000;
 const REFRESH_COOLDOWN_MS = 60_000;
 /** Stale-while-revalidate TTL for {@link refreshCatalogIfStale}. */
 const REFRESH_TTL_MS = 10 * 60_000;
+/** llmux's 1M-context id suffix, lowercased (see the "shorthand means 1M" rule). */
+const ONE_M_SUFFIX = "[1m]";
 
 function snapshotPath(): string {
   if (snapshotPathOverride) return snapshotPathOverride;
@@ -122,6 +155,13 @@ function normalizeEntries(raw: unknown[]): CatalogModel[] {
           .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
           .map((x) => x.trim().toLowerCase())
       : [];
+    // Wire and snapshot use the same `aliases` spelling; anything that is not
+    // a non-blank string is dropped, and a row without the field gets [].
+    const aliases = Array.isArray(e.aliases)
+      ? e.aliases
+          .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+          .map((x) => x.trim().toLowerCase())
+      : [];
     const rawWindow = e.max_context ?? e.maxContext;
     const maxContext =
       typeof rawWindow === "number" && Number.isFinite(rawWindow) && rawWindow > 0
@@ -136,6 +176,7 @@ function normalizeEntries(raw: unknown[]): CatalogModel[] {
       name: typeof e.name === "string" && e.name.trim().length > 0 ? e.name.trim() : id,
       group,
       efforts,
+      aliases,
       maxContext,
     });
   }
@@ -373,9 +414,18 @@ export function getSelectableModels(): SelectableModel[] {
     out.push({ id, displayName: getDisplayName(id), group: lookup(id)?.group ?? inferGroup(id) });
   }
   if (!isLlmuxMode()) return out;
+  // Every id on offer → the twin test below sees roster rows too. The value is
+  // the catalog row carrying the alias metadata (`null` for a roster id llmux
+  // does not describe — no metadata, so no hiding decision can be made).
+  const offered = new Map<string, CatalogModel | null>();
+  for (const id of AVAILABLE_MODELS) offered.set(id.toLowerCase(), lookup(id));
+  for (const model of entries) offered.set(model.id.toLowerCase(), model);
+
   for (const model of entries) {
     const key = model.id.toLowerCase();
     if (seen.has(key)) continue;
+    if (isMigratedModelId(model.id)) continue;
+    if (shorthandResolvesToOneMTwin(key, offered)) continue;
     seen.add(key);
     out.push({ id: model.id, displayName: getDisplayName(model.id), group: model.group });
   }
@@ -383,10 +433,31 @@ export function getSelectableModels(): SelectableModel[] {
 }
 
 /**
+ * True when `key` (an already-lowercased id) is a base id whose 1M twin is on
+ * offer AND carries llmux aliases — the "shorthand means 1M" rule from the
+ * module doc. An id that already ends in `[1m]` is never hidden by its own
+ * base, and a twin with no aliases hides nothing: there the shorthand (if any)
+ * points at the base row, so both windows stay reachable.
+ */
+function shorthandResolvesToOneMTwin(
+  key: string,
+  offered: ReadonlyMap<string, CatalogModel | null>
+): boolean {
+  if (key.endsWith(ONE_M_SUFFIX)) return false;
+  const twin = offered.get(`${key}${ONE_M_SUFFIX}`);
+  return twin != null && twin.aliases.length > 0;
+}
+
+/**
  * True for the static roster ∪ the current catalog (case-insensitive).
  * In oauth mode only the static roster counts — same reason as
  * {@link getSelectableModels}: an unroutable id must not pass validation
  * (callback decode, persisted `lastUsedModel`).
+ *
+ * Deliberately WIDER than {@link getSelectableModels}: an id the menu hides
+ * (shorthand-twin base, superseded migration source) is still routable, so an
+ * already-persisted config, an open session, or a keyboard already sitting in
+ * a chat must keep validating.
  */
 export function isKnownModel(id: string): boolean {
   if (typeof id !== "string") return false;

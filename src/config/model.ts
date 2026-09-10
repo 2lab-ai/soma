@@ -14,7 +14,7 @@ import { parse, stringify } from "yaml";
  * so a dead llmux still leaves every model here selectable.
  */
 export const AVAILABLE_MODELS: readonly string[] = [
-  "claude-fable-5",
+  "claude-fable-5-1[1m]",
   "claude-sonnet-4-5-20250929",
   "claude-opus-4-8[1m]",
   "claude-opus-4-8",
@@ -32,8 +32,14 @@ export type ModelId = string;
 
 /** Curated labels for the static roster. Catalog models bring their own name. */
 export const MODEL_DISPLAY_NAMES: Record<string, string> = {
-  // Fable 5 serves 1M context on the bare id (no `[1m]` suffix, no beta header
-  // — see lookupContextWindowSize); the "(1M)" label communicates that window.
+  // llmux serves the fable line under the literal `[1m]` id (the SDK strips the
+  // suffix before the API call); the shorthand aliases llmux advertises
+  // (`fable`, `fable-5-1`) point at that same row, which is why the roster
+  // carries the suffixed id and not the bare one.
+  "claude-fable-5-1[1m]": "Fable 5.1 (1M)",
+  // Kept as a label fallback only: `claude-fable-5` is no longer selectable
+  // (MODEL_MIGRATIONS rolls it forward), but a catalog row or an in-flight
+  // session may still need to render it.
   "claude-fable-5": "Fable 5 (1M)",
   "claude-sonnet-4-5-20250929": "Sonnet 4.5",
   "claude-opus-4-8[1m]": "Opus 4.8 (1M)",
@@ -69,8 +75,10 @@ export function isOpusFamily(model: string): boolean {
 /**
  * Predicate for the "adaptive-thinking" contract: models that always run
  * adaptive thinking + `xhigh` effort and REJECT a `budget_tokens` thinking
- * budget at the SDK layer (400). Opus 4.x AND Fable 5 share this contract
- * (Fable 5: adaptive thinking always-on, extended thinking unsupported).
+ * budget at the SDK layer (400). Opus 4.x AND the whole fable line share this
+ * contract (fable: adaptive thinking always-on, extended thinking
+ * unsupported). The prefix is `claude-fable-`, so it covers both the bare ids
+ * and the suffixed `claude-fable-5-1[1m]` the roster now carries.
  *
  * This is the single source of truth for the four call sites that previously
  * keyed off `isOpusFamily` directly (claude-options, normalizeConfig,
@@ -89,10 +97,32 @@ export function usesAdaptiveThinking(model: string): boolean {
  * 4.7 → 4.8 is NOT migrated here: an explicit Opus 4.7 selection is a
  * user choice and we don't silently roll it forward. Only the default
  * (DEFAULT_MODEL above) follows "latest opus".
+ *
+ * `claude-fable-5` → `claude-fable-5-1[1m]` IS migrated, unlike opus 4.7:
+ * the operator asked for it explicitly (2026-09-10, "fable → fable-5-1[1m]"),
+ * so picking fable always means the 1M profile — including for configs
+ * persisted before the roster changed.
  */
 const MODEL_MIGRATIONS: Record<string, ModelId> = {
   "claude-opus-4-6": "claude-opus-4-7",
+  "claude-fable-5": "claude-fable-5-1[1m]",
 };
+
+/**
+ * True when `id` is a superseded model id that {@link normalizeConfig} rolls
+ * forward. The `/model` menu uses this to drop such an id when the llmux
+ * catalog still serves it: selecting it would hand the user a choice the next
+ * config load silently rewrites. Validation (`isKnownModel`) deliberately does
+ * NOT use it — a stale keyboard or an open session holding the old id must
+ * still decode.
+ *
+ * Compared case-insensitively, matching how catalog ids are deduped.
+ */
+export function isMigratedModelId(id: string): boolean {
+  if (typeof id !== "string") return false;
+  const key = id.trim().toLowerCase();
+  return Object.keys(MODEL_MIGRATIONS).some((m) => m.toLowerCase() === key);
+}
 
 export type ReasoningLevel = "none" | "minimal" | "medium" | "high" | "xhigh";
 
@@ -162,7 +192,7 @@ function getDefaultConfig(): ModelConfig {
 /**
  * Walks `defaults.model` and every `contexts.*.model`, upgrading any model ID
  * present in `MODEL_MIGRATIONS` to its replacement. For any context that
- * resolves to an adaptive-thinking model (Opus 4.x, Fable 5, …), coerces
+ * resolves to an adaptive-thinking model (Opus 4.x, fable, …), coerces
  * `reasoning` to `"xhigh"` — those models use adaptive thinking + xhigh effort
  * and ignore the per-context reasoning-token budget at the SDK layer, so we
  * persist a value that matches actual behavior.

@@ -10,7 +10,10 @@
  *      5s refresh, so `answerCallbackQuery` fires before we start awaiting the
  *      fetch. Observed by driving the fetch with a promise WE resolve.
  *   2. Same-open Astra — once the fetch resolves, the keyboard the user sees
- *      contains the fresh Astra rows.
+ *      contains the fresh Astra row. Since 2026-09-10 that is the `[1m]` row
+ *      ONLY: the wire still carries both twins, but llmux hangs the `astra`
+ *      aliases on the [1m] row, so the menu hides the 272k base (see the
+ *      "shorthand means 1M" rule in `config/model-catalog.ts`).
  */
 import {
   afterAll,
@@ -40,15 +43,19 @@ const WIRE_WITH_ASTRA = [
   {
     id: "gpt-6-astra",
     name: "GPT-6-Astra",
+    // Live llmux contract (verified 2026-09-07/09-10): the shorthand aliases
+    // sit on the [1m] row, the base row has none — which is what makes the
+    // base row ambiguous and hides it from the menu.
+    aliases: [],
     efforts: ["medium", "high"],
-    // Live llmux contract: base astra window is 272k (verified 2026-09-07),
-    // not the 400k that the earlier draft carried.
+    // Base astra window is 272k, not the 400k that the earlier draft carried.
     max_context: 272_000,
     group: "codex",
   },
   {
     id: "gpt-6-astra[1m]",
     name: "GPT-6-Astra [1M]",
+    aliases: ["astra", "gpt-6"],
     efforts: ["medium", "high"],
     max_context: 1_000_000,
     group: "codex",
@@ -192,8 +199,10 @@ describe("BUG agi-9m7: /model context-open awaits catalog refresh", () => {
     expect(cap.editedKeyboards.length).toBe(1);
     const labels = buttonTexts(cap.editedKeyboards[0]!);
     expect(labels.some((t) => t.startsWith("GPT-6-Astra [1M]"))).toBe(true);
+    // Only the [1M] twin: llmux hangs the `astra` alias on it, so the 272k base
+    // row is hidden by the "shorthand means 1M" rule in model-catalog.ts.
     expect(labels.some((t) => t.startsWith("GPT-6-Astra") && !t.includes("[1M]"))).toBe(
-      true
+      false
     );
   });
 
