@@ -28,6 +28,12 @@ export interface ProviderQueryInput {
   tools?: ReadonlyArray<ProviderToolDefinition>;
   metadata?: Readonly<Record<string, unknown>>;
   permissionMode?: QueryPermissionMode;
+  /**
+   * Filesystem settings the provider may load. An empty array is the SDK's
+   * isolation mode — the bot must not inherit the operator's `~/.claude`
+   * permission defaults or command hooks.
+   */
+  settingSources?: ReadonlyArray<string>;
   hooks?: unknown;
   pathToClaudeCodeExecutable?: string;
   allowDangerouslySkipPermissions?: boolean;

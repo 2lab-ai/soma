@@ -66,6 +66,11 @@ function toClaudeOptions(
       : undefined,
     resume: input.resumeSessionId,
     permissionMode,
+    // Dropping this would silently restore filesystem settings loading, so the
+    // runtime's isolation (settingSources: []) has to survive the adapter hop.
+    settingSources: input.settingSources
+      ? ([...input.settingSources] as Options["settingSources"])
+      : undefined,
     allowDangerouslySkipPermissions: input.allowDangerouslySkipPermissions ?? true,
     // Exceptional permission prompts still reach canUseTool under
     // bypassPermissions (issue #79). Dropping it here would make the Telegram

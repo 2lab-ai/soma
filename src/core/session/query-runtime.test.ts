@@ -600,7 +600,10 @@ describe("query-runtime hooks", () => {
     expect(result.reason as string).toContain("File access blocked");
   });
 
-  test("pre hook allows tool with valid path (does not block)", async () => {
+  // An empty hook result is NOT an allow: the SDK treats "neither allow nor
+  // ask" as "run the full permission pipeline", so every safe tool fell
+  // through to canUseTool and asked the user on Telegram.
+  test("pre hook allows tool with valid path (explicit allow, not empty)", async () => {
     const hooks = createQueryRuntimeHooks({
       getStopRequested: () => false,
       getSteeringCount: () => 0,
@@ -618,7 +621,12 @@ describe("query-runtime hooks", () => {
       null
     );
 
-    expect(result).toEqual({});
+    expect(result).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+      },
+    });
     expect(result.decision).toBeUndefined();
   });
 
@@ -669,6 +677,34 @@ describe("query-runtime options", () => {
     expect(options.pathToClaudeCodeExecutable).toBe("/usr/local/bin/claude");
     expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
     expect(options.hooks?.PostToolUse?.[0]?.hooks).toHaveLength(1);
+  });
+
+  // The bot is its own permission domain: loading ~/.claude/settings.json would
+  // import the operator's defaultMode and PermissionRequest/PreToolUse command
+  // hooks into every Telegram query.
+  test("loads no filesystem settings (SDK isolation)", () => {
+    const abortController = new AbortController();
+    const hooks = createQueryRuntimeHooks({
+      getStopRequested: () => false,
+      getSteeringCount: () => 0,
+      trackBufferedMessagesForInjection: () => 0,
+      consumeSteering: () => null,
+      getInjectedCount: () => 0,
+    });
+
+    const options = buildQueryRuntimeOptions({
+      model: "claude-sonnet-4-5-20250929",
+      cwd: "/tmp",
+      systemPrompt: "system",
+      mcpServers: {},
+      maxThinkingTokens: 10000,
+      additionalDirectories: [],
+      resumeSessionId: null,
+      abortController,
+      hooks,
+    });
+
+    expect(options.settingSources).toEqual([]);
   });
 
   test("Opus 4.7 strips maxThinkingTokens and applies adaptive + xhigh", () => {
@@ -1104,10 +1140,15 @@ describe("query-runtime execution", () => {
       message: "test",
     });
     let forwarded: unknown = "not-called";
+    let forwardedSettingSources: unknown = "not-called";
 
     const orchestrator = {
       executeProviderQuery: async (params: {
-        input: { queryId: string; canUseTool?: unknown };
+        input: {
+          queryId: string;
+          canUseTool?: unknown;
+          settingSources?: ReadonlyArray<string>;
+        };
         onEvent: (event: {
           providerId: string;
           queryId: string;
@@ -1117,6 +1158,7 @@ describe("query-runtime execution", () => {
         }) => Promise<void>;
       }) => {
         forwarded = params.input.canUseTool;
+        forwardedSettingSources = params.input.settingSources;
         await params.onEvent({
           providerId: "anthropic",
           queryId: params.input.queryId,
@@ -1135,6 +1177,7 @@ describe("query-runtime execution", () => {
         cwd: "/tmp",
         abortController: new AbortController(),
         canUseTool,
+        settingSources: [],
       },
       statusCallback: async () => {},
       queryGeneration: 1,
@@ -1157,6 +1200,9 @@ describe("query-runtime execution", () => {
     });
 
     expect(forwarded).toBe(canUseTool);
+    // Isolation must survive the same hop, or the adapter re-reads the
+    // operator's ~/.claude settings for every production query.
+    expect(forwardedSettingSources).toEqual([]);
   });
 
   test("BUG soma-wzyw: provider runtime keeps assistant-turn context and aggregate billing separate", async () => {
