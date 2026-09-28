@@ -36,7 +36,7 @@ const TELEGRAM_COMMANDS = [
   { command: "status", description: "Show session details" },
   { command: "stats", description: "Token usage & cost statistics" },
   { command: "context", description: "Context window usage (200K limit)" },
-  { command: "model", description: "Configure model & reasoning settings" },
+  { command: "model", description: "Configure model & effort (/model fable xhigh)" },
   { command: "help", description: "Show all available commands" },
   { command: "resume", description: "Resume last saved session" },
   { command: "restart", description: "Restart the bot process" },

@@ -53,7 +53,14 @@
  * catalog before the first refresh returns.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "fs";
 import { dirname, join, resolve } from "path";
 import {
   type CatalogModel,
@@ -65,6 +72,7 @@ import {
   SDK_EFFORT_LEVELS,
 } from "soma-lib";
 import { isLlmuxMode } from "./llmux";
+import { type ModelAliasResolution, resolveModelAlias } from "./model-alias";
 import {
   AVAILABLE_MODELS,
   isMigratedModelId,
@@ -135,7 +143,8 @@ function snapshotPath(): string {
  */
 function inferGroup(id: string): string {
   if (id.startsWith("claude-")) return "claude";
-  if (id.startsWith("gpt-") || id.startsWith("o1") || id.startsWith("o3")) return "codex";
+  if (id.startsWith("gpt-") || id.startsWith("o1") || id.startsWith("o3"))
+    return "codex";
   if (id.startsWith("grok")) return "grok";
   return "other";
 }
@@ -219,9 +228,13 @@ export function loadSnapshotSync(): void {
   for (const candidate of [file, `${file}.bak`]) {
     try {
       if (!existsSync(candidate)) continue;
-      const parsed = JSON.parse(readFileSync(candidate, "utf-8")) as Partial<SnapshotShape>;
+      const parsed = JSON.parse(
+        readFileSync(candidate, "utf-8")
+      ) as Partial<SnapshotShape>;
       if (!Array.isArray(parsed?.models)) {
-        console.warn(`[ModelCatalog] Snapshot has no models array, ignoring: ${candidate}`);
+        console.warn(
+          `[ModelCatalog] Snapshot has no models array, ignoring: ${candidate}`
+        );
         continue;
       }
       const normalized = normalizeEntries(parsed.models);
@@ -296,7 +309,12 @@ export function refreshCatalog(opts?: RefreshOptions): Promise<RefreshResult> {
   }
   const now = Date.now();
   if (!opts?.force && now - lastAttemptAt < REFRESH_COOLDOWN_MS) {
-    return Promise.resolve({ ok: false, count: entries.length, skipped: true, error: "cooldown" });
+    return Promise.resolve({
+      ok: false,
+      count: entries.length,
+      skipped: true,
+      error: "cooldown",
+    });
   }
   const previousAttemptAt = lastAttemptAt;
   lastAttemptAt = now;
@@ -379,7 +397,11 @@ export function getSelectableModels(): SelectableModel[] {
   const seen = new Set<string>();
   for (const id of AVAILABLE_MODELS) {
     seen.add(id.toLowerCase());
-    out.push({ id, displayName: getDisplayName(id), group: lookup(id)?.group ?? inferGroup(id) });
+    out.push({
+      id,
+      displayName: getDisplayName(id),
+      group: lookup(id)?.group ?? inferGroup(id),
+    });
   }
   if (!isLlmuxMode()) return out;
   // Every id on offer → the twin test below sees roster rows too. The value is
@@ -395,7 +417,11 @@ export function getSelectableModels(): SelectableModel[] {
     if (isMigratedModelId(model.id)) continue;
     if (shorthandResolvesToOneMTwin(key, offered)) continue;
     seen.add(key);
-    out.push({ id: model.id, displayName: getDisplayName(model.id), group: model.group });
+    out.push({
+      id: model.id,
+      displayName: getDisplayName(model.id),
+      group: model.group,
+    });
   }
   return out;
 }
@@ -431,8 +457,47 @@ export function isKnownModel(id: string): boolean {
   if (typeof id !== "string") return false;
   const key = id.trim().toLowerCase();
   if (key.length === 0) return false;
-  if ((AVAILABLE_MODELS as readonly string[]).some((m) => m.toLowerCase() === key)) return true;
+  if ((AVAILABLE_MODELS as readonly string[]).some((m) => m.toLowerCase() === key))
+    return true;
   return isLlmuxMode() && byId.has(key);
+}
+
+// ------------------------------------------------------------- alias resolving
+
+/**
+ * The universe `/model <token>` resolves against: the static roster first (in
+ * its curated order, no aliases of its own), then the catalog rows with the
+ * aliases llmux advertises. Deliberately the same set as {@link isKnownModel} —
+ * a token must never resolve to an id that would then fail validation — which
+ * is also why the catalog contributes nothing in oauth mode.
+ */
+function resolutionUniverse(): Array<{ id: string; aliases: readonly string[] }> {
+  const universe: Array<{ id: string; aliases: readonly string[] }> = (
+    AVAILABLE_MODELS as readonly string[]
+  ).map((id) => ({ id, aliases: [] as readonly string[] }));
+  if (!isLlmuxMode()) return universe;
+  for (const model of entries) universe.push({ id: model.id, aliases: model.aliases });
+  return universe;
+}
+
+/**
+ * Resolve a `/model` argument (`fable`, `opus-5`, an exact id) against the live
+ * roster. Rules live in `config/model-alias.ts`; this is only the wiring.
+ */
+export function resolveModelInput(token: string): ModelAliasResolution {
+  return resolveModelAlias(token, resolutionUniverse());
+}
+
+/** Every shorthand the current roster answers to, sorted — for error replies. */
+export function getKnownAliases(): string[] {
+  const out = new Set<string>();
+  for (const row of resolutionUniverse()) {
+    for (const alias of row.aliases) {
+      const key = alias.trim().toLowerCase();
+      if (key.length > 0) out.add(key);
+    }
+  }
+  return [...out].sort();
 }
 
 /**
