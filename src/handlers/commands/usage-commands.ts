@@ -1,8 +1,21 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import { ensureConfigExists, getCurrentConfig } from "../../config/model";
-import { getDisplayName } from "../../config/model-catalog";
-import { contextEffortSummary } from "../effort-display";
+import { EFFORT_LEVELS, type EffortLevel, isEffortLevel } from "soma-lib";
+import {
+  ensureConfigExists,
+  getCurrentConfig,
+  getEffortForContext,
+  updateContextModel,
+} from "../../config/model";
+import { isLlmuxMode } from "../../config/llmux";
+import {
+  getDisplayName,
+  getKnownAliases,
+  getSupportedEfforts,
+  refreshCatalogIfStale,
+  resolveModelInput,
+} from "../../config/model-catalog";
+import { contextEffortSummary, effortSummary } from "../effort-display";
 import { type ChatType, isAuthorizedForChat } from "../../security";
 import { sessionManager } from "../../core/session/session-manager";
 import {
@@ -256,8 +269,120 @@ export async function handleSkills(ctx: Context): Promise<void> {
   }
 }
 
+/** Escape the three characters Telegram's HTML parse mode reads as markup. */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /**
- * /model - Configure model and reasoning settings
+ * `/model <model> [effort]` — set the CHAT (general) context in one message.
+ *
+ * `<model>` may be an exact id or a shorthand, in which case it resolves to the
+ * newest `[1m]` model of that family (`fable` → `claude-fable-5-1[1m]`); see
+ * `config/model-alias.ts` for the rules. `[effort]` is the level to persist as
+ * typed — the clamp onto what the model actually supports is displayed, not
+ * saved, exactly like the keyboard's save path in `callback.ts`.
+ *
+ * Nothing is persisted on any rejected input.
+ */
+async function applyModelArguments(ctx: Context, tokens: string[]): Promise<void> {
+  if (tokens.length > 2) {
+    await ctx.reply(
+      `❓ Usage: /model &lt;model&gt; [effort]\n\n` +
+        `Example: <code>/model fable xhigh</code>`,
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+
+  // "Newest" has to mean newest NOW, so ask llmux before resolving. A dead or
+  // slow proxy is not fatal: fall back to the snapshot the module already holds.
+  if (isLlmuxMode()) {
+    try {
+      await refreshCatalogIfStale();
+    } catch (error) {
+      console.warn(
+        "[Model] Catalog refresh failed, resolving against the last snapshot:",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+  }
+
+  const token = tokens[0] ?? "";
+  const resolution = resolveModelInput(token);
+
+  if (resolution.kind === "unknown") {
+    // In oauth mode the catalog contributes nothing, so there is no shorthand to
+    // suggest — an empty list ("Try one of:  or an exact model id") would read
+    // as a bug in the bot rather than as an answer.
+    const aliases = getKnownAliases();
+    await ctx.reply(
+      aliases.length > 0
+        ? `❓ Unknown model <code>${escapeHtml(token)}</code>. Try one of: ` +
+            `${escapeHtml(aliases.join(", "))} or an exact model id.`
+        : `❓ Unknown model <code>${escapeHtml(token)}</code>. Use an exact model id.`,
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+  if (resolution.kind === "ambiguous") {
+    await ctx.reply(
+      `❓ <code>${escapeHtml(token)}</code> matches more than one family. Be more specific:\n` +
+        resolution.candidates.map((id) => `<code>${escapeHtml(id)}</code>`).join("\n"),
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+
+  const modelId = resolution.id;
+  const effortToken = tokens[1];
+  let effort: EffortLevel | undefined;
+  if (effortToken !== undefined) {
+    const level = effortToken.trim().toLowerCase();
+    if (!isEffortLevel(level)) {
+      await ctx.reply(
+        `❓ Unknown effort <code>${escapeHtml(effortToken)}</code>. ` +
+          `Levels: ${EFFORT_LEVELS.join(", ")}.`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+    effort = level;
+  }
+
+  // A model with no effort menu is driven by the message-keyword thinking
+  // budget, so an effort argument for it is reported back, not persisted (the
+  // keyboard does the same via its `-` sentinel).
+  const hasEffortMenu = getSupportedEfforts(modelId).length > 0;
+  await updateContextModel("general", modelId, hasEffortMenu ? effort : undefined);
+
+  const lines = [
+    `✅ <b>Chat model</b> → ${escapeHtml(getDisplayName(modelId))} <code>${escapeHtml(modelId)}</code>`,
+    effortSummary(modelId, getEffortForContext("general")),
+  ];
+  if (
+    resolution.kind === "resolved" &&
+    modelId.toLowerCase() !== token.trim().toLowerCase()
+  ) {
+    const what = modelId.toLowerCase().endsWith("[1m]")
+      ? `newest 1M of the ${resolution.family} family`
+      : `newest of the ${resolution.family} family`;
+    lines.push(`<i>${escapeHtml(token)} → ${what}</i>`);
+  }
+  if (effort !== undefined && !hasEffortMenu) {
+    lines.push(
+      `<i>Effort ${effort} ignored — this model takes its thinking budget from ` +
+        `message keywords.</i>`
+    );
+  }
+  await ctx.reply(lines.join("\n"), { parse_mode: "HTML" });
+}
+
+/**
+ * /model - Configure model and reasoning settings.
+ *
+ * Bare `/model` opens the 3-context keyboard; `/model <model> [effort]` sets the
+ * chat context straight away ({@link applyModelArguments}).
  */
 export async function handleModel(ctx: Context): Promise<void> {
   const userId = ctx.from?.id;
@@ -274,6 +399,15 @@ export async function handleModel(ctx: Context): Promise<void> {
   try {
     // Ensure config file exists
     await ensureConfigExists();
+
+    // `/model` and `/model@botname` both carry their arguments after the
+    // command word (same stripping convention as /cron).
+    const text = ctx.message?.text || "";
+    const args = text.replace(/^\/model(@\S+)?/i, "").trim();
+    if (args.length > 0) {
+      await applyModelArguments(ctx, args.split(/\s+/));
+      return;
+    }
 
     // Get current config
     const config = getCurrentConfig();

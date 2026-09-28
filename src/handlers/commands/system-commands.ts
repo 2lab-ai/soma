@@ -63,8 +63,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
         `/status - Show current session details\n` +
         `/stats - Token usage & cost statistics\n` +
         `/context - Context window usage (200K limit)\n` +
-        `/model - Configure model & reasoning settings\n` +
-        `   <i>Note: Opus 4.7 ignores thinking-keyword controls.</i>\n` +
+        `/model [model] [effort] - Configure model &amp; effort (e.g. /model fable xhigh)\n` +
         `/skills - Quick access to SuperClaude skills\n` +
         `/help - Show this command list\n\n` +
         `<b>Utilities:</b>\n` +
