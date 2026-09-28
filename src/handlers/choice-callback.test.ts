@@ -128,6 +128,10 @@ function twoQuestionForm(): ChoiceState {
   };
 }
 
+function transportError(method: string): Error {
+  return new Error(`Network request for '${method}' failed!`);
+}
+
 function q1Callback(optionId: string): string {
   const key = TelegramChoiceBuilder.compressSessionKey(sessionManager.deriveKey(CHAT_ID));
   return `c:${key}:q1:${optionId}`;
@@ -150,7 +154,9 @@ afterAll(() => {
 });
 
 afterEach(() => {
-  sessionManager.getSession(CHAT_ID).clearChoiceState();
+  const session = sessionManager.getSession(CHAT_ID);
+  session.clearChoiceState();
+  session.clearDirectInput();
 });
 
 describe("multi-form choice callback: non-final question", () => {
@@ -180,15 +186,37 @@ describe("multi-form choice callback: non-final question", () => {
     session.choiceState = twoQuestionForm();
 
     const fake = makeContext(q1Callback("my"), {
-      editMessageTextThrows: notModifiedError("editMessageText"),
+      editMessageTextThrows: transportError("editMessageText"),
     });
     await expect(handleCallback(fake.ctx)).resolves.toBeUndefined();
 
     expect(fake.answers.length).toBe(1);
     expect(fake.answers[0]?.text?.startsWith("Selected:")).toBe(true);
+    // The edit never landed, so the keyboard is still on the message.
+    expect(fake.textEdits).toEqual([]);
+    expect(fake.markup.current?.length).toBe(1);
     expect(session.choiceState?.selections?.q1).toEqual({
       choiceId: "my",
       label: "MySQL",
+    });
+  });
+});
+
+describe("multi-form choice callback: direct input", () => {
+  test("a failing UI edit is best-effort: direct input armed, callback answered once", async () => {
+    const session = sessionManager.getSession(CHAT_ID);
+    session.choiceState = twoQuestionForm();
+
+    const fake = makeContext(q1Callback("__direct"), {
+      editMessageTextThrows: transportError("editMessageText"),
+    });
+    await expect(handleCallback(fake.ctx)).resolves.toBeUndefined();
+
+    expect(fake.answers).toEqual([{ text: "Type your answer:" }]);
+    expect(session.pendingDirectInput).toMatchObject({
+      type: "multi",
+      questionId: "q1",
+      messageId: Q1_MESSAGE_ID,
     });
   });
 });
