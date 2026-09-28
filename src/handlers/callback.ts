@@ -214,7 +214,14 @@ async function handleChoiceCallback(
       questionId
     );
     await ctx.answerCallbackQuery({ text: "Type your answer:" });
-    await ctx.editMessageText("✏️ Waiting for your input...");
+    try {
+      await ctx.editMessageText("✏️ Waiting for your input...");
+    } catch (error) {
+      console.warn(
+        `Failed to update choice message (messageId: ${callbackMessageId}):`,
+        error
+      );
+    }
     return;
   }
 
@@ -240,10 +247,18 @@ async function handleChoiceCallback(
 
       if (transition.status === "pending") {
         session.choiceState = transition.nextChoiceState;
-        await ctx.editMessageText(
-          `${transition.questionText}\n\n✓ ${transition.selectedLabel}`
-        );
-        await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+        // editMessageText without reply_markup already drops the keyboard; a
+        // separate editMessageReplyMarkup would 400 "message is not modified".
+        try {
+          await ctx.editMessageText(
+            `${transition.questionText}\n\n✓ ${transition.selectedLabel}`
+          );
+        } catch (error) {
+          console.warn(
+            `Failed to update choice message (messageId: ${callbackMessageId}):`,
+            error
+          );
+        }
         await ctx.answerCallbackQuery({
           text: `Selected: ${transition.selectedLabel.slice(0, 50)}`,
         });
