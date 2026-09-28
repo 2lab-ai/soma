@@ -1,11 +1,15 @@
 /**
  * Model Configuration Management
  *
- * Manages dynamic model selection and reasoning token budgets via config.yaml.
+ * Manages dynamic model selection and per-context reasoning effort via
+ * model-config.yaml. Effort is a named level (shared vocabulary in soma-lib
+ * `domain/model-effort`), not a thinking-token budget — the token budget the
+ * file used to persist (`reasoning: minimal|medium|…`) is migrated on load.
  */
 
 import { existsSync, readFileSync, watch, writeFileSync } from "fs";
 import { resolve } from "path";
+import { type EffortLevel, isEffortLevel } from "soma-lib";
 import { parse, stringify } from "yaml";
 
 /**
@@ -73,21 +77,27 @@ export function isOpusFamily(model: string): boolean {
 }
 
 /**
- * Predicate for the "adaptive-thinking" contract: models that always run
- * adaptive thinking + `xhigh` effort and REJECT a `budget_tokens` thinking
- * budget at the SDK layer (400). Opus 4.x AND the whole fable line share this
- * contract (fable: adaptive thinking always-on, extended thinking
- * unsupported). The prefix is `claude-fable-`, so it covers both the bare ids
- * and the suffixed `claude-fable-5-1[1m]` the roster now carries.
+ * Predicate for the "adaptive-thinking" contract: models that run adaptive
+ * thinking, take a named `effort` level, and REJECT a `budget_tokens`
+ * thinking budget at the SDK layer (400). Opus 4.x/5.x, the whole fable line
+ * and the Sonnet 5 line share this contract. The prefixes cover both the bare
+ * ids and the suffixed `…[1m]` ids the roster/catalog carry.
  *
- * This is the single source of truth for the four call sites that previously
- * keyed off `isOpusFamily` directly (claude-options, normalizeConfig,
- * callback.ts ×2, usage-commands). `isOpusFamily` stays as the literal opus
- * membership check; use THIS one wherever the adaptive-thinking behavior
- * matters so new non-opus families (fable, …) are covered automatically.
+ * `claude-sonnet-5…` is matched with a negative lookahead so the non-adaptive
+ * `claude-sonnet-4-5-…` (thinking budget, no effort parameter) stays out.
+ *
+ * This is the single source of truth for the call sites that previously
+ * keyed off `isOpusFamily` directly (claude-options, callback.ts,
+ * usage-commands). `isOpusFamily` stays as the literal opus membership check;
+ * use THIS one wherever the adaptive-thinking behavior matters so new
+ * families are covered automatically.
  */
 export function usesAdaptiveThinking(model: string): boolean {
-  return isOpusFamily(model) || model.startsWith("claude-fable-");
+  return (
+    isOpusFamily(model) ||
+    model.startsWith("claude-fable-") ||
+    /^claude-sonnet-5(?!\d)/.test(model)
+  );
 }
 
 /**
@@ -124,37 +134,48 @@ export function isMigratedModelId(id: string): boolean {
   return Object.keys(MODEL_MIGRATIONS).some((m) => m.toLowerCase() === key);
 }
 
-export type ReasoningLevel = "none" | "minimal" | "medium" | "high" | "xhigh";
+export type { EffortLevel } from "soma-lib";
 
-export const REASONING_TOKENS: Record<ReasoningLevel, number> = {
-  none: 0,
-  minimal: 4096,
-  medium: 16384,
-  high: 65536,
-  xhigh: 131072,
+/**
+ * Effort applied when a context has none persisted. `xhigh` is what the
+ * adaptive-thinking models were hard-wired to before effort became a
+ * selection (2026-09-28), so an untouched config keeps its behavior.
+ */
+export const DEFAULT_EFFORT: EffortLevel = "xhigh";
+
+/**
+ * Legacy `reasoning` (thinking-token budget tier, persisted by configs written
+ * before 2026-09-28) → effort level. Budgets and levels are different axes,
+ * so this is an intent mapping, not a token conversion: `none`/`minimal`
+ * meant "spend little", `xhigh` meant "spend a lot".
+ */
+const LEGACY_REASONING_TO_EFFORT: Record<string, EffortLevel> = {
+  none: "low",
+  minimal: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
 };
 
-export const DEFAULT_REASONING: ReasoningLevel = "high";
+export interface ContextModelConfig {
+  model?: ModelId;
+  effort?: EffortLevel;
+  /** Pre-2026-09-28 field; read once by {@link normalizeConfig}, never written. */
+  reasoning?: string;
+}
 
 export interface ModelConfig {
   version: number;
   defaults: {
     model: ModelId;
-    reasoning: ReasoningLevel;
+    effort?: EffortLevel;
+    /** Pre-2026-09-28 field; read once by {@link normalizeConfig}, never written. */
+    reasoning?: string;
   };
   contexts: {
-    general?: {
-      model?: ModelId;
-      reasoning?: ReasoningLevel;
-    };
-    summary?: {
-      model?: ModelId;
-      reasoning?: ReasoningLevel;
-    };
-    cron?: {
-      model?: ModelId;
-      reasoning?: ReasoningLevel;
-    };
+    general?: ContextModelConfig;
+    summary?: ContextModelConfig;
+    cron?: ContextModelConfig;
   };
 }
 
@@ -170,32 +191,60 @@ function getDefaultConfig(): ModelConfig {
     version: 1,
     defaults: {
       model: DEFAULT_MODEL,
-      reasoning: DEFAULT_REASONING,
+      effort: DEFAULT_EFFORT,
     },
     contexts: {
       general: {
         model: DEFAULT_MODEL,
-        reasoning: "high",
+        effort: "xhigh",
       },
       summary: {
         model: "claude-sonnet-4-5-20250929",
-        reasoning: "minimal",
+        effort: "low",
       },
       cron: {
         model: "claude-haiku-4-5-20251001",
-        reasoning: "none",
+        effort: "low",
       },
     },
   };
 }
 
 /**
+ * Migrate one `{effort?, reasoning?}` pair in place. A valid `effort` wins;
+ * otherwise a legacy `reasoning` tier maps to a level; the `reasoning` key is
+ * dropped either way. Returns true when anything changed.
+ */
+function migrateEffortField(target: {
+  effort?: EffortLevel;
+  reasoning?: string;
+}): boolean {
+  let touched = false;
+  if (target.effort !== undefined && !isEffortLevel(target.effort)) {
+    // Hand-edited garbage — drop it so the default applies.
+    delete target.effort;
+    touched = true;
+  }
+  if (target.reasoning !== undefined) {
+    if (target.effort === undefined) {
+      const mapped = LEGACY_REASONING_TO_EFFORT[String(target.reasoning).toLowerCase()];
+      if (mapped) target.effort = mapped;
+    }
+    delete target.reasoning;
+    touched = true;
+  }
+  return touched;
+}
+
+/**
  * Walks `defaults.model` and every `contexts.*.model`, upgrading any model ID
- * present in `MODEL_MIGRATIONS` to its replacement. For any context that
- * resolves to an adaptive-thinking model (Opus 4.x, fable, …), coerces
- * `reasoning` to `"xhigh"` — those models use adaptive thinking + xhigh effort
- * and ignore the per-context reasoning-token budget at the SDK layer, so we
- * persist a value that matches actual behavior.
+ * present in `MODEL_MIGRATIONS` to its replacement, and converts the legacy
+ * per-context `reasoning` budget tier into an `effort` level.
+ *
+ * Effort is NOT clamped to the model here: which levels a model supports is
+ * catalog state (llmux) that changes at runtime, so the clamp happens where
+ * the query is built (`resolveEffortForModel`). The persisted value is the
+ * user's intent.
  *
  * Returns `changed: true` if any field was modified so callers can persist.
  */
@@ -215,12 +264,17 @@ export function normalizeConfig(config: ModelConfig): {
     next.defaults.model = migratedDefault;
     changed = true;
   }
+  if (migrateEffortField(next.defaults)) changed = true;
+  if (next.defaults.effort === undefined) {
+    next.defaults.effort = DEFAULT_EFFORT;
+    changed = true;
+  }
 
   const ctxKeys: ConfigContext[] = ["general", "summary", "cron"];
   for (const key of ctxKeys) {
     const ctx = next.contexts[key];
     if (!ctx) continue;
-    const updated = { ...ctx };
+    const updated: ContextModelConfig = { ...ctx };
     let touched = false;
     if (updated.model) {
       const migrated = MODEL_MIGRATIONS[updated.model as string];
@@ -229,11 +283,7 @@ export function normalizeConfig(config: ModelConfig): {
         touched = true;
       }
     }
-    const resolved = updated.model ?? next.defaults.model;
-    if (usesAdaptiveThinking(resolved) && updated.reasoning !== "xhigh") {
-      updated.reasoning = "xhigh";
-      touched = true;
-    }
+    if (migrateEffortField(updated)) touched = true;
     if (touched) {
       next.contexts[key] = updated;
       changed = true;
@@ -258,7 +308,13 @@ function loadConfig(): ModelConfig {
       void saveConfig(normalized);
     }
     return normalized;
-  } catch {
+  } catch (error) {
+    // Never fall back silently: a bot running on defaults because its config
+    // file is unreadable must be visible in the log (2026-09-28 p9 NUL tail).
+    console.error(
+      `[ModelConfig] Failed to load ${CONFIG_PATH}, using defaults:`,
+      error instanceof Error ? error.message : error
+    );
     return getDefaultConfig();
   }
 }
@@ -292,10 +348,23 @@ export function getModelForContext(context: ConfigContext): ModelId {
   return ctx?.model ?? currentConfig.defaults.model ?? DEFAULT_MODEL;
 }
 
+/**
+ * The effort level persisted for `context` (falling back to `defaults`).
+ * This is the user's intent, unclamped — pass it through
+ * `resolveEffortForModel` (config/model-catalog) before handing it to the SDK.
+ */
+export function getEffortForContext(context: ConfigContext): EffortLevel {
+  if (!currentConfig) {
+    currentConfig = loadConfig();
+  }
+  const ctx = currentConfig.contexts[context];
+  return ctx?.effort ?? currentConfig.defaults.effort ?? DEFAULT_EFFORT;
+}
+
 export async function updateContextModel(
   context: ConfigContext,
   model: ModelId,
-  reasoning?: ReasoningLevel
+  effort?: EffortLevel
 ): Promise<void> {
   if (!currentConfig) {
     currentConfig = loadConfig();
@@ -306,8 +375,8 @@ export async function updateContextModel(
   }
 
   currentConfig.contexts[context]!.model = model;
-  if (reasoning) {
-    currentConfig.contexts[context]!.reasoning = reasoning;
+  if (effort) {
+    currentConfig.contexts[context]!.effort = effort;
   }
 
   await saveConfig(currentConfig);

@@ -21,7 +21,10 @@ import {
   getCatalogModels,
   getDisplayName,
   getSelectableModels,
+  getSupportedEfforts,
   isKnownModel,
+  resolveEffortForModel,
+  supportsEffort,
   loadSnapshotSync,
   refreshCatalog,
   refreshCatalogIfStale,
@@ -112,6 +115,86 @@ describe("normalize", () => {
     expect(getCatalogMaxContext("a-model")).toBeNull();
     expect(getCatalogMaxContext("b-model")).toBeNull();
     expect(getCatalogMaxContext("c-model")).toBeNull();
+  });
+});
+
+describe("effort menu per model", () => {
+  test("catalog row decides the menu, in canonical order regardless of wire order", () => {
+    __testSeedCatalog([
+      {
+        id: "gpt-6-astra",
+        efforts: ["ultra", "high", "LOW", "xhigh", "bogus"],
+        group: "codex",
+      },
+    ]);
+    expect(getSupportedEfforts("gpt-6-astra")).toEqual([
+      "low",
+      "high",
+      "xhigh",
+      "ultra",
+    ]);
+    expect(supportsEffort("gpt-6-astra")).toBe(true);
+  });
+
+  test("adaptive Claude model without a catalog row falls back to the five SDK levels", () => {
+    expect(getSupportedEfforts("claude-opus-4-7")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(getSupportedEfforts("claude-fable-5-1[1m]")).toContain("max");
+    expect(getSupportedEfforts("claude-fable-5-1[1m]")).not.toContain("ultra");
+  });
+
+  test("adaptive Claude model with a catalog row uses the row (llmux may offer fewer)", () => {
+    __testSeedCatalog(WIRE_ENTRIES);
+    expect(getSupportedEfforts("claude-opus-5[1m]")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("non-adaptive Claude models never take an effort, even if the catalog lists levels", () => {
+    __testSeedCatalog([
+      { id: "claude-sonnet-4-5-20250929", efforts: ["low", "high"], group: "claude" },
+    ]);
+    expect(getSupportedEfforts("claude-sonnet-4-5-20250929")).toEqual([]);
+    expect(getSupportedEfforts("claude-haiku-4-5-20251001")).toEqual([]);
+    expect(supportsEffort("claude-haiku-4-5-20251001")).toBe(false);
+  });
+
+  test("unknown non-Claude id offers nothing", () => {
+    expect(getSupportedEfforts("mystery-model")).toEqual([]);
+  });
+
+  test("resolveEffortForModel clamps onto the menu (strongest ≤ requested, else weakest)", () => {
+    __testSeedCatalog(WIRE_ENTRIES);
+    // grok-4.5: [low, high]
+    expect(resolveEffortForModel("grok-4.5", "medium")).toBe("low");
+    expect(resolveEffortForModel("grok-4.5", "ultra")).toBe("high");
+    expect(resolveEffortForModel("grok-4.5", "high")).toBe("high");
+    // gpt-5.6-sol: [medium, high] — below the floor snaps up to the weakest
+    expect(resolveEffortForModel("gpt-5.6-sol", "low")).toBe("medium");
+    // opus-5 row: [low..xhigh] — max/ultra clamp down to xhigh
+    expect(resolveEffortForModel("claude-opus-5[1m]", "max")).toBe("xhigh");
+    expect(resolveEffortForModel("claude-opus-5[1m]", "ultra")).toBe("xhigh");
+  });
+
+  test("resolveEffortForModel is null for models without a menu or without a request", () => {
+    expect(resolveEffortForModel("claude-sonnet-4-5-20250929", "high")).toBeNull();
+    expect(resolveEffortForModel("claude-opus-4-7", undefined)).toBeNull();
+    expect(resolveEffortForModel("claude-opus-4-7", "  ")).toBeNull();
+  });
+
+  test("resolveEffortForModel tolerates case/whitespace in the request", () => {
+    expect(resolveEffortForModel("claude-opus-4-7", " XHigh ")).toBe("xhigh");
+    // garbage request → treated as no request (never forwarded to the CLI,
+    // which would reject the unknown `--effort` and fail the whole query)
+    expect(resolveEffortForModel("claude-opus-4-7", "turbo")).toBeNull();
   });
 });
 

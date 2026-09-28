@@ -8,7 +8,7 @@
  *    previously gated by `=== "claude-opus-4-7"` now covers 4.8 too. The
  *    contract is exposed as `isOpusFamily()` so a future generation (4.9)
  *    is a single edit there + AVAILABLE_MODELS / MODEL_DISPLAY_NAMES.
- *  - normalizeConfig coerces reasoning → "xhigh" for any opus-family
+ *  - normalizeConfig migrates a legacy reasoning tier to an effort level for any opus-family
  *    context, including 4.8.
  *
  * No `[1m]` suffix wiring: soma signals 1M context via the SDK init-event
@@ -86,8 +86,8 @@ describe("opus-4.8 — applyModelSpecificOverrides extends the 4.7 contract", ()
   });
 });
 
-describe("opus-4.8 — normalizeConfig coerces 4.8 reasoning to xhigh", () => {
-  test("general context on Opus 4.8 with high reasoning is bumped to xhigh", () => {
+describe("opus-4.8 — normalizeConfig migrates a legacy 4.8 reasoning tier to effort", () => {
+  test("general context on Opus 4.8 with legacy high reasoning becomes effort high", () => {
     const input: ModelConfig = {
       version: 1,
       defaults: { model: "claude-opus-4-8", reasoning: "xhigh" },
@@ -97,15 +97,16 @@ describe("opus-4.8 — normalizeConfig coerces 4.8 reasoning to xhigh", () => {
     };
     const { config, changed } = normalizeConfig(input);
     expect(changed).toBe(true);
-    expect(config.contexts.general?.reasoning).toBe("xhigh");
+    expect(config.contexts.general?.effort).toBe("high");
+    expect(config.contexts.general?.reasoning).toBeUndefined();
   });
 
-  test("Opus 4.7 with xhigh is unchanged (regression)", () => {
+  test("Opus 4.7 with effort xhigh is unchanged (regression)", () => {
     const input: ModelConfig = {
       version: 1,
-      defaults: { model: "claude-opus-4-7", reasoning: "xhigh" },
+      defaults: { model: "claude-opus-4-7", effort: "xhigh" },
       contexts: {
-        general: { model: "claude-opus-4-7", reasoning: "xhigh" },
+        general: { model: "claude-opus-4-7", effort: "xhigh" },
       },
     };
     const { changed } = normalizeConfig(input);

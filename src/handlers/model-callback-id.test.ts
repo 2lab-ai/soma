@@ -59,7 +59,7 @@ describe("model-callback-id — round-trip", () => {
     __testSeedCatalog(CATALOG_ENTRIES);
     for (const id of [...AVAILABLE_MODELS, ...CATALOG_ENTRIES.map((e) => e.id)]) {
       expect(callbackDataFits("general", id)).toBe(true);
-      const payload = `model:save:general:${encodeModelId(id)}:minimal`;
+      const payload = `model:save:general:${encodeModelId(id)}:medium`;
       expect(Buffer.byteLength(payload, "utf-8")).toBeLessThanOrEqual(64);
     }
   });

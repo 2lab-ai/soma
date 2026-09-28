@@ -1,14 +1,8 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import {
-  ensureConfigExists,
-  getCurrentConfig,
-  usesAdaptiveThinking,
-  REASONING_TOKENS,
-  type ModelId,
-  type ReasoningLevel,
-} from "../../config/model";
+import { ensureConfigExists, getCurrentConfig } from "../../config/model";
 import { getDisplayName } from "../../config/model-catalog";
+import { contextEffortSummary } from "../effort-display";
 import { type ChatType, isAuthorizedForChat } from "../../security";
 import { sessionManager } from "../../core/session/session-manager";
 import {
@@ -294,27 +288,15 @@ export async function handleModel(ctx: Context): Promise<void> {
 
     // Format current config display
     const generalModel = config.contexts.general?.model || config.defaults.model;
-    const generalReasoning =
-      config.contexts.general?.reasoning || config.defaults.reasoning;
     const summaryModel = config.contexts.summary?.model || config.defaults.model;
-    const summaryReasoning =
-      config.contexts.summary?.reasoning || config.defaults.reasoning;
     const cronModel = config.contexts.cron?.model || config.defaults.model;
-    const cronReasoning = config.contexts.cron?.reasoning || config.defaults.reasoning;
-
-    // Adaptive-thinking models (Opus 4.x, Fable 5) ignore per-context
-    // reasoning (always adaptive + xhigh).
-    const reasoningSummary = (model: ModelId, reasoning: ReasoningLevel): string =>
-      usesAdaptiveThinking(model)
-        ? `adaptive + xhigh (fixed)`
-        : `${reasoning}, ${REASONING_TOKENS[reasoning]} tokens`;
 
     await ctx.reply(
       `🤖 <b>Model Configuration</b>\n\n` +
         `<b>Current Settings:</b>\n\n` +
-        `💬 <b>Chat:</b> ${getDisplayName(generalModel)} (${reasoningSummary(generalModel, generalReasoning)})\n` +
-        `📝 <b>Summary:</b> ${getDisplayName(summaryModel)} (${reasoningSummary(summaryModel, summaryReasoning)})\n` +
-        `⏰ <b>Cron:</b> ${getDisplayName(cronModel)} (${reasoningSummary(cronModel, cronReasoning)})\n\n` +
+        `💬 <b>Chat:</b> ${getDisplayName(generalModel)} (${contextEffortSummary(config, "general")})\n` +
+        `📝 <b>Summary:</b> ${getDisplayName(summaryModel)} (${contextEffortSummary(config, "summary")})\n` +
+        `⏰ <b>Cron:</b> ${getDisplayName(cronModel)} (${contextEffortSummary(config, "cron")})\n\n` +
         `Select which context to configure:`,
       {
         parse_mode: "HTML",

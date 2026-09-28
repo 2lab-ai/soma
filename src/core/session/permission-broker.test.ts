@@ -15,6 +15,7 @@ import {
   PERMISSION_CALLBACK_PREFIX,
   TelegramPermissionBroker,
   type PermissionPrompt,
+  type TelegramCanUseTool,
 } from "./permission-broker";
 
 /**
@@ -40,6 +41,9 @@ function makeToolOptions(
   return {
     signal: new AbortController().signal,
     toolUseID: "toolu_test",
+    // SDK ≥0.3 (CLI 2.1.283) threads the CLI's own permission-request id
+    // through to the callback; the broker mints its own, so any value works.
+    requestId: "perm_test",
     ...overrides,
   };
 }
@@ -47,7 +51,7 @@ function makeToolOptions(
 interface Harness {
   broker: TelegramPermissionBroker;
   prompts: PermissionPrompt[];
-  canUseTool: CanUseTool;
+  canUseTool: TelegramCanUseTool;
 }
 
 function makeHarness(options?: {

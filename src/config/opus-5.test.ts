@@ -41,28 +41,28 @@ describe("normalizeConfig tolerates catalog model ids", () => {
   test("an llmux-only model id is preserved, not rejected or rewritten", () => {
     const input: ModelConfig = {
       version: 1,
-      defaults: { model: "grok-4.5", reasoning: "high" },
+      defaults: { model: "grok-4.5", effort: "high" },
       contexts: {
-        general: { model: "gpt-5.6-sol", reasoning: "high" },
+        general: { model: "gpt-5.6-sol", effort: "high" },
       },
     };
     const { config, changed } = normalizeConfig(input);
     expect(changed).toBe(false);
     expect(config.defaults.model).toBe("grok-4.5");
     expect(config.contexts.general?.model).toBe("gpt-5.6-sol");
-    expect(config.contexts.general?.reasoning).toBe("high");
+    expect(config.contexts.general?.effort).toBe("high");
   });
 
-  test("a catalog opus-5 context is coerced to xhigh (adaptive thinking)", () => {
+  test("a catalog opus-5 context keeps its effort choice (no xhigh coercion)", () => {
     const input: ModelConfig = {
       version: 1,
-      defaults: { model: "claude-opus-5[1m]", reasoning: "high" },
+      defaults: { model: "claude-opus-5[1m]", effort: "high" },
       contexts: {
-        general: { model: "claude-opus-5[1m]", reasoning: "high" },
+        general: { model: "claude-opus-5[1m]", effort: "high" },
       },
     };
     const { config, changed } = normalizeConfig(input);
-    expect(changed).toBe(true);
-    expect(config.contexts.general?.reasoning).toBe("xhigh");
+    expect(changed).toBe(false);
+    expect(config.contexts.general?.effort).toBe("high");
   });
 });

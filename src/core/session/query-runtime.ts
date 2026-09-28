@@ -127,6 +127,12 @@ export interface BuildQueryRuntimeOptionsInput {
   systemPrompt: string;
   mcpServers: Options["mcpServers"];
   maxThinkingTokens: number;
+  /**
+   * Persisted effort level for the query's context (`getEffortForContext`),
+   * unclamped. Omitted = legacy behavior (adaptive models run `xhigh`, other
+   * models get no effort parameter).
+   */
+  effort?: string;
   additionalDirectories: string[];
   resumeSessionId: string | null;
   pathToClaudeCodeExecutable?: string;
@@ -210,7 +216,7 @@ export function buildQueryRuntimeOptions(
     options.canUseTool = input.canUseTool;
   }
 
-  return applyModelSpecificOverrides(input.model, options);
+  return applyModelSpecificOverrides(input.model, options, input.effort);
 }
 
 export interface QueryRuntimeExecutionInput {
@@ -236,6 +242,17 @@ export interface QueryRuntimeExecutionInput {
     options: Options & { abortController: AbortController };
   }) => AsyncGenerator<SDKMessage>;
   providerExecution?: QueryRuntimeProviderExecutionInput;
+  /**
+   * The user's persisted effort level for this query's context — the same
+   * value handed to `buildQueryRuntimeOptions`. Required on the provider path
+   * because `options` is already resolved: a non-SDK level (`ultra`) lives
+   * in `options.env` (CLAUDE_CODE_EXTRA_BODY) and NOT in `options.effort`,
+   * and the provider adapter rebuilds `env` for auth routing, so forwarding
+   * `options.effort` alone would silently drop it (trinity R1 MUST-FIX,
+   * 2026-09-28). The adapter resolves the intent once more against the
+   * catalog itself, so the resolution is idempotent for SDK levels.
+   */
+  effort?: string;
 }
 
 export interface QueryRuntimeProviderExecutionInput {
@@ -576,6 +593,8 @@ async function executeProviderRuntime(
     workingDirectory: input.options.cwd,
     resumeSessionId: input.options.resume,
     maxThinkingTokens: input.options.maxThinkingTokens,
+    // Intent, not the resolved SDK option — see ExecuteQueryRuntimeInput.effort.
+    effort: input.effort ?? input.options.effort,
     mcpServers:
       (input.options.mcpServers as Readonly<Record<string, unknown>>) ?? undefined,
     additionalDirectories: input.options.additionalDirectories,

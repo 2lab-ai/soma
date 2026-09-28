@@ -13,6 +13,10 @@ import {
   extractBashFilePaths,
 } from "./query-runtime";
 import { isAbortError } from "../../utils/error-classification";
+import { __testResetCatalog, __testSeedCatalog } from "../../config/model-catalog";
+import { ClaudeProviderAdapter } from "../../providers/claude-adapter";
+import { createProviderOrchestrator } from "../../providers/create-orchestrator";
+import { EXTRA_BODY_ENV } from "../../providers/claude-options";
 
 function toAsyncGenerator(messages: SDKMessage[]): AsyncGenerator<SDKMessage> {
   return (async function* () {
@@ -1346,5 +1350,126 @@ describe("query-runtime metadata", () => {
     expect(metadata.currentProvider).toBe("anthropic");
     expect(metadata.modelDisplayName).toBe("Claude Opus");
     expect(metadata.toolDurations.Read?.count).toBe(1);
+  });
+});
+
+// trinity R1 (2026-09-28) MUST-FIX: production runs buildQueryRuntimeOptions →
+// executeQueryRuntime(providerExecution) → ProviderOrchestrator →
+// ClaudeProviderAdapter, and the adapter rebuilds `env` for auth routing. A
+// level the SDK `effort` option cannot carry (`ultra`) travels in env, so it
+// only survives if the adapter is handed the user's INTENT, not the resolved
+// option. These tests drive the real adapter with a capturing queryFactory.
+describe("effort survives the production provider hop", () => {
+  const successResult = {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "ok",
+    duration_ms: 1,
+    duration_api_ms: 1,
+    num_turns: 1,
+    total_cost_usd: 0,
+    usage: { input_tokens: 0, output_tokens: 0 },
+    modelUsage: {},
+    permission_denials: [],
+    session_id: "s-effort",
+  } as unknown as SDKMessage;
+
+  async function runThroughAdapter(model: string, effort: string) {
+    const recorded: Array<{ prompt: string; options: Record<string, unknown> }> = [];
+    const adapter = new ClaudeProviderAdapter(((payload: {
+      prompt: string;
+      options: Record<string, unknown>;
+    }) => {
+      recorded.push(payload);
+      return toAsyncGenerator([successResult]);
+    }) as unknown as ConstructorParameters<typeof ClaudeProviderAdapter>[0]);
+    const orchestrator = createProviderOrchestrator({ providers: [adapter] });
+
+    const options = buildQueryRuntimeOptions({
+      model,
+      cwd: "/tmp",
+      systemPrompt: "sys",
+      mcpServers: {},
+      maxThinkingTokens: 50000,
+      effort,
+      additionalDirectories: [],
+      resumeSessionId: null,
+      abortController: new AbortController(),
+      hooks: { preToolUseHook: async () => ({}), postToolUseHook: async () => ({}) },
+    });
+
+    await executeQueryRuntime({
+      prompt: "hello",
+      options,
+      effort,
+      statusCallback: async () => {},
+      queryGeneration: 1,
+      getCurrentGeneration: () => 1,
+      shouldStop: () => false,
+      onSessionId: () => {},
+      onToolDisplay: () => {},
+      onRefreshContextWindowUsageFromTranscript: async () => null,
+      queryStartedMs: Date.now(),
+      providerExecution: {
+        orchestrator,
+        identity: createSessionIdentity({
+          tenantId: "default",
+          channelId: "chat-effort",
+          threadId: "main",
+        }),
+        primaryProviderId: "anthropic",
+      },
+    });
+
+    expect(recorded.length).toBe(1);
+    return recorded[0]!.options as {
+      effort?: string;
+      thinking?: { type: string };
+      maxThinkingTokens?: number;
+      env?: Record<string, string>;
+    };
+  }
+
+  beforeAll(() => __testResetCatalog());
+  afterAll(() => __testResetCatalog());
+
+  test("ultra on a codex row reaches the SDK as CLAUDE_CODE_EXTRA_BODY, not as `effort`", async () => {
+    __testSeedCatalog([
+      {
+        id: "gpt-6-astra[1m]",
+        efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+        group: "codex",
+      },
+    ]);
+    const opts = await runThroughAdapter("gpt-6-astra[1m]", "ultra");
+    expect(opts.effort).toBeUndefined();
+    expect(JSON.parse(opts.env?.[EXTRA_BODY_ENV] ?? "null")).toEqual({
+      output_config: { effort: "ultra" },
+    });
+    expect(opts.maxThinkingTokens).toBeUndefined();
+  });
+
+  test("low on an adaptive Claude model reaches the SDK as `effort: low`", async () => {
+    const opts = await runThroughAdapter("claude-opus-5-5[1m]", "low");
+    expect(opts.effort).toBe("low");
+    expect(opts.thinking).toEqual({ type: "adaptive" });
+    expect(opts.env?.[EXTRA_BODY_ENV]).toBeUndefined();
+  });
+
+  test("max on a grok row is clamped to the row (xhigh) across the hop", async () => {
+    __testSeedCatalog([
+      { id: "grok-4.7", efforts: ["low", "medium", "high", "xhigh"], group: "grok" },
+    ]);
+    const opts = await runThroughAdapter("grok-4.7", "max");
+    expect(opts.effort).toBe("xhigh");
+    expect(opts.env?.[EXTRA_BODY_ENV]).toBeUndefined();
+  });
+
+  test("Sonnet 4.5 keeps the keyword budget and gets no effort across the hop", async () => {
+    const opts = await runThroughAdapter("claude-sonnet-4-5-20250929", "high");
+    expect(opts.effort).toBeUndefined();
+    expect(opts.maxThinkingTokens).toBe(50000);
+    expect(opts.env?.[EXTRA_BODY_ENV]).toBeUndefined();
   });
 });
