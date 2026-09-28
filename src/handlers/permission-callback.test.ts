@@ -6,11 +6,11 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Context } from "grammy";
-import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import { ALLOWED_USERS } from "../config";
 import {
   TelegramPermissionBroker,
   type PermissionPrompt,
+  type TelegramCanUseTool,
 } from "../core/session/permission-broker";
 import { handlePermissionCallback } from "./permission-callback";
 
@@ -80,7 +80,7 @@ async function ask(
   broker: TelegramPermissionBroker,
   prompts: PermissionPrompt[]
 ): Promise<{
-  pending: ReturnType<CanUseTool>;
+  pending: ReturnType<TelegramCanUseTool>;
   prompt: PermissionPrompt;
   input: Record<string, unknown>;
 }> {
@@ -93,6 +93,7 @@ async function ask(
   const pending = canUseTool("Bash", input, {
     signal: new AbortController().signal,
     toolUseID: "toolu_1",
+    requestId: "perm_1",
   });
   for (let i = 0; i < 50 && prompts.length === 0; i++) {
     await Bun.sleep(1);

@@ -53,3 +53,6 @@ install.txt
 # Chat history data (NDJSON files, summaries)
 data/
 .worktrees/
+
+# bun test scratch working dirs (test/preload.ts)
+.test-tmp

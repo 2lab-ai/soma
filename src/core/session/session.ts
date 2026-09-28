@@ -10,6 +10,7 @@ import {
   NATIVE_STREAMING_THROTTLE_MS,
 } from "../../config";
 import {
+  getEffortForContext,
   getModelForContext,
   type ConfigContext,
   type ModelId,
@@ -741,11 +742,15 @@ export class ClaudeSession {
 
     if (this.nextQueryContext) {
       if (this.nextQueryContext.userId === queryUserId) {
-        console.log(`[CONTEXT] Prepending recovered context from previous session (userId=${this.nextQueryContext.userId})`);
+        console.log(
+          `[CONTEXT] Prepending recovered context from previous session (userId=${this.nextQueryContext.userId})`
+        );
         messageToSend = `${this.nextQueryContext.context}\n\n${messageToSend}`;
         this.nextQueryContext = null;
       } else {
-        console.log(`[CONTEXT] Skipping recovered context: bound to userId=${this.nextQueryContext.userId}, current query userId=${queryUserId}`);
+        console.log(
+          `[CONTEXT] Skipping recovered context: bound to userId=${this.nextQueryContext.userId}, current query userId=${queryUserId}`
+        );
       }
     }
 
@@ -856,12 +861,21 @@ export class ClaudeSession {
       };
     }
 
+    // Per-context effort level from model-config.yaml (the /model menu), the
+    // user's intent unclamped. Resolved against the model's catalog menu at
+    // the SDK boundary (`applyModelSpecificOverrides`); models without an
+    // effort parameter ignore it and keep the keyword thinking budget. Passed
+    // to BOTH the option builder and the runtime executor: the provider
+    // adapter rebuilds the SDK env, so it needs the intent, not the result.
+    const requestedEffort = getEffortForContext(modelContext);
+
     const runtimeOptions = buildQueryRuntimeOptions({
       model: effectiveModel,
       cwd: this.workingDir,
       systemPrompt: `${SAFETY_PROMPT}\n\n${UI_ASKUSER_INSTRUCTIONS}\n\n${CHAT_HISTORY_ACCESS_INFO}${claudeMdSection}`,
       mcpServers: mcpServersForQuery,
       maxThinkingTokens: thinkingTokens,
+      effort: requestedEffort,
       additionalDirectories: ALLOWED_PATHS,
       resumeSessionId: this.sessionId,
       pathToClaudeCodeExecutable: process.env.CLAUDE_CODE_PATH,
@@ -929,13 +943,15 @@ export class ClaudeSession {
       // streaming.ts uses ctx.chat.type === "private" for the authoritative check.
       // A false positive here just reduces throttle without harm.
       const isPrivateChat = chatId !== undefined && chatId > 0;
-      const streamingThrottleMs = USE_NATIVE_STREAMING && isPrivateChat
-        ? NATIVE_STREAMING_THROTTLE_MS
-        : undefined;
+      const streamingThrottleMs =
+        USE_NATIVE_STREAMING && isPrivateChat
+          ? NATIVE_STREAMING_THROTTLE_MS
+          : undefined;
 
       runtimeResult = await executeQueryRuntime({
         prompt: messageToSend,
         options: runtimeOptions,
+        effort: requestedEffort,
         statusCallback,
         streamingThrottleMs,
         queryGeneration,

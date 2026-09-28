@@ -22,6 +22,12 @@ export interface ProviderQueryInput {
   workingDirectory?: string;
   resumeSessionId?: string;
   maxThinkingTokens?: number;
+  /**
+   * The user's persisted effort level for this query's context, unclamped.
+   * Adapters resolve it per model (`resolveEffortForModel`); models without
+   * an effort parameter ignore it and keep `maxThinkingTokens`.
+   */
+  effort?: string;
   mcpServers?: Readonly<Record<string, unknown>>;
   additionalDirectories?: ReadonlyArray<string>;
   systemPrompt?: string;

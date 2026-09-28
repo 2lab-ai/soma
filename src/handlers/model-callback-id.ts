@@ -15,13 +15,18 @@
  *     would not fit are dropped from the menu by {@link buildModelMenuRows}
  *     rather than truncated into an ambiguous prefix.
  */
+import { EFFORT_LEVELS } from "soma-lib";
 import { AVAILABLE_MODELS } from "../config/model";
 import { getSelectableModels, isKnownModel } from "../config/model-catalog";
 
 /** Telegram's hard limit on `callback_data`. */
 const CALLBACK_DATA_LIMIT_BYTES = 64;
-/** Longest reasoning level appended by the `model:save:` payload. */
-const LONGEST_REASONING_LEVEL = "minimal";
+/**
+ * Longest effort level appended by the `model:save:` payload (`medium`;
+ * the `-` no-effort sentinel is shorter). Derived, so a new level in the
+ * shared vocabulary cannot silently overflow the budget.
+ */
+const LONGEST_EFFORT_LEVEL = EFFORT_LEVELS.reduce((a, b) => (b.length > a.length ? b : a));
 /** Inert payload for the non-clickable group headers. */
 export const MODEL_MENU_NOOP_DATA = "model:noop";
 
@@ -56,7 +61,7 @@ export function decodeModelId(short: string): string | undefined {
  * measured.
  */
 export function callbackDataFits(context: string, modelId: string): boolean {
-  const worstCase = `model:save:${context}:${encodeModelId(modelId)}:${LONGEST_REASONING_LEVEL}`;
+  const worstCase = `model:save:${context}:${encodeModelId(modelId)}:${LONGEST_EFFORT_LEVEL}`;
   return Buffer.byteLength(worstCase, "utf-8") <= CALLBACK_DATA_LIMIT_BYTES;
 }
 

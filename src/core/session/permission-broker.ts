@@ -20,6 +20,17 @@
  */
 import { createHash } from "crypto";
 import type { CanUseTool, PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+
+/**
+ * SDK ≥0.3 lets a `canUseTool` resolve `null` ("no opinion — fall through
+ * to the CLI's own permission flow"). The Telegram broker never does that:
+ * every prompt ends in an explicit allow/deny, and callers/tests rely on the
+ * result being present. Keep the narrower contract as its own type so it
+ * stays assignable to the SDK's `CanUseTool` without loosening ours.
+ */
+export type TelegramCanUseTool = (
+  ...args: Parameters<CanUseTool>
+) => Promise<PermissionResult>;
 import { escapeHtml, formatToolStatus } from "../../formatting";
 import { checkToolInputSafety } from "./query-runtime";
 
@@ -544,7 +555,7 @@ export class TelegramPermissionBroker {
    * that started it (never a process-global chat id — concurrent sessions
    * would race).
    */
-  createCanUseTool(binding: PermissionRequestBinding): CanUseTool {
+  createCanUseTool(binding: PermissionRequestBinding): TelegramCanUseTool {
     return async (toolName, input, options): Promise<PermissionResult> => {
       if (toolName === ASK_USER_QUESTION_TOOL) {
         return { behavior: "deny", message: ASK_USER_QUESTION_REDIRECT };

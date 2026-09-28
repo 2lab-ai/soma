@@ -1,0 +1,3 @@
+[test]
+# Isolate tests from the live bot directory named in .env (see test/preload.ts).
+preload = ["./test/preload.ts"]

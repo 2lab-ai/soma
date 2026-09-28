@@ -85,17 +85,17 @@ describe("fable-5-1 — adaptive-thinking contract", () => {
     expect((out as { effort?: string }).effort).toBe("xhigh");
   });
 
-  test("normalizeConfig coerces a Fable context reasoning to xhigh", () => {
+  test("normalizeConfig keeps a Fable context's chosen effort (no xhigh coercion)", () => {
     const input: ModelConfig = {
       version: 1,
-      defaults: { model: FABLE, reasoning: "xhigh" },
+      defaults: { model: FABLE, effort: "xhigh" },
       contexts: {
-        general: { model: FABLE, reasoning: "high" },
+        general: { model: FABLE, effort: "high" },
       },
     };
     const { config, changed } = normalizeConfig(input);
-    expect(changed).toBe(true);
-    expect(config.contexts.general?.reasoning).toBe("xhigh");
+    expect(changed).toBe(false);
+    expect(config.contexts.general?.effort).toBe("high");
   });
 });
 
@@ -113,19 +113,20 @@ describe("fable-5-1 — persisted claude-fable-5 rolls forward", () => {
     expect(changed).toBe(true);
     expect(config.defaults.model).toBe(FABLE);
     expect(config.contexts.general?.model).toBe(FABLE);
-    // …and the migrated context inherits the adaptive-thinking coercion.
-    expect(config.contexts.general?.reasoning).toBe("xhigh");
-    // Untouched contexts keep their own model + reasoning.
+    // …and the legacy reasoning tier becomes an effort level (high → high).
+    expect(config.contexts.general?.effort).toBe("high");
+    expect(config.contexts.general?.reasoning).toBeUndefined();
+    // Untouched contexts keep their model; their tier migrates too.
     expect(config.contexts.summary?.model).toBe("claude-sonnet-4-5-20250929");
-    expect(config.contexts.summary?.reasoning).toBe("minimal");
+    expect(config.contexts.summary?.effort).toBe("low");
   });
 
   test("the opus 4.7 → 4.8 non-migration is unchanged (explicit picks stand)", () => {
     const input: ModelConfig = {
       version: 1,
-      defaults: { model: "claude-opus-4-7", reasoning: "xhigh" },
+      defaults: { model: "claude-opus-4-7", effort: "xhigh" },
       contexts: {
-        general: { model: "claude-opus-4-7", reasoning: "xhigh" },
+        general: { model: "claude-opus-4-7", effort: "xhigh" },
       },
     };
     const { config, changed } = normalizeConfig(input);

@@ -19,16 +19,25 @@ import {
 } from "../core/session/choice-flow";
 import { PERMISSION_CALLBACK_PREFIX } from "../core/session/permission-broker";
 import { handlePermissionCallback } from "./permission-callback";
+import { isEffortLevel } from "soma-lib";
 import {
   getCurrentConfig,
-  usesAdaptiveThinking,
+  getEffortForContext,
   updateContextModel,
-  REASONING_TOKENS,
   type ConfigContext,
-  type ModelId,
-  type ReasoningLevel,
 } from "../config/model";
-import { getDisplayName, refreshCatalogIfStale } from "../config/model-catalog";
+import {
+  getDisplayName,
+  getSupportedEfforts,
+  refreshCatalogIfStale,
+  resolveEffortForModel,
+} from "../config/model-catalog";
+import {
+  contextEffortSummary,
+  effortLabel,
+  effortSummary,
+  NO_EFFORT_SENTINEL,
+} from "./effort-display";
 import {
   buildModelMenuRows,
   decodeModelId,
@@ -281,7 +290,7 @@ async function handleChoiceCallback(
 
 /**
  * Handle model configuration callbacks
- * Format: model:context:general | model:model:general:opus | model:reasoning:general:high | model:save:general:opus:high
+ * Format: model:context:general | model:model:general:<id> | model:save:general:<id>:<effort|->
  */
 async function handleModelCallback(ctx: Context, callbackData: string): Promise<void> {
   try {
@@ -336,7 +345,7 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       // Early return — trailing ack below would double-ack this branch.
       return;
     } else if (action === "model") {
-      // Model selection - show reasoning selection
+      // Model selection - show the effort chooser for that model
       const context = parts[2] as ConfigContext;
       const modelShort = parts[3] || "";
       const modelId = decodeModelId(modelShort);
@@ -346,61 +355,50 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
         });
         return;
       }
-      const config = getCurrentConfig();
-      const currentReasoning =
-        config.contexts[context]?.reasoning || config.defaults.reasoning;
+      const currentEffort = getEffortForContext(context);
+      const supported = getSupportedEfforts(modelId);
+      const contextTitle = context.charAt(0).toUpperCase() + context.slice(1);
 
       const keyboard = new InlineKeyboard();
 
-      // Adaptive-thinking models (Opus 4.x, Fable 5) ignore per-context
-      // reasoning: they always run adaptive thinking + xhigh effort. Persist
-      // xhigh and skip the chooser.
-      if (usesAdaptiveThinking(modelId)) {
+      if (supported.length === 0) {
+        // No effort parameter on this model (Sonnet 4.5 / Haiku 4.5 …): its
+        // thinking budget comes from message keywords, so there is nothing
+        // to choose — save the model and keep the persisted effort as is.
         keyboard
-          .text(
-            "Save (xhigh)",
-            `model:save:${context}:${modelShort}:xhigh`
-          )
+          .text("Save", `model:save:${context}:${modelShort}:${NO_EFFORT_SENTINEL}`)
           .row();
         keyboard.text("« Back", `model:context:${context}`);
 
         await ctx.editMessageText(
-          `🧠 <b>Reasoning Budget</b>\n\n` +
+          `🧠 <b>Effort</b>\n\n` +
             `Model: ${getDisplayName(modelId)}\n` +
-            `Context: ${context.charAt(0).toUpperCase() + context.slice(1)}\n\n` +
-            `ℹ️ Opus 4.7 uses adaptive thinking + xhigh effort. ` +
-            `This setting is ignored.`,
+            `Context: ${contextTitle}\n\n` +
+            `ℹ️ This model has no effort levels; its thinking budget is set ` +
+            `per message by keyword.`,
           {
             parse_mode: "HTML",
             reply_markup: keyboard,
           }
         );
       } else {
-        const reasoningLevels: ReasoningLevel[] = [
-          "none",
-          "minimal",
-          "medium",
-          "high",
-          "xhigh",
-        ];
-        for (const level of reasoningLevels) {
-          const tokens = REASONING_TOKENS[level];
-          const current = level === currentReasoning ? " ✓" : "";
-          const display =
-            level === "xhigh" ? "X-High" : level.charAt(0).toUpperCase() + level.slice(1);
+        // The model's own menu (llmux catalog `efforts`, canonical order).
+        // The persisted level may sit outside it — the ✓ marks what it
+        // clamps to, so the user sees the level that is actually sent.
+        const effective = resolveEffortForModel(modelId, currentEffort);
+        for (const level of supported) {
+          const current = level === effective ? " ✓" : "";
           keyboard
-            .text(
-              `${display} (${tokens.toLocaleString()} tokens)${current}`,
-              `model:save:${context}:${modelShort}:${level}`
-            )
+            .text(`${effortLabel(level)}${current}`, `model:save:${context}:${modelShort}:${level}`)
             .row();
         }
         keyboard.text("« Back", `model:context:${context}`);
 
         await ctx.editMessageText(
-          `🧠 <b>Select Reasoning Budget</b>\n\n` +
+          `🧠 <b>Select Effort</b>\n\n` +
             `Model: ${getDisplayName(modelId)}\n` +
-            `Context: ${context.charAt(0).toUpperCase() + context.slice(1)}`,
+            `Context: ${contextTitle}\n\n` +
+            `Levels this model supports: ${supported.join(" · ")}`,
           {
             parse_mode: "HTML",
             reply_markup: keyboard,
@@ -411,7 +409,7 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
       // Save configuration
       const context = parts[2] as ConfigContext;
       const modelShort = parts[3] || "";
-      const reasoning = parts[4] as ReasoningLevel;
+      const rawEffort = parts[4] ?? NO_EFFORT_SENTINEL;
       const modelId = decodeModelId(modelShort);
       if (!modelId) {
         await ctx.answerCallbackQuery({
@@ -419,14 +417,17 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
         });
         return;
       }
+      // Anything that is not a known level (the `-` sentinel, or a stale
+      // pre-2026-09-28 `model:save:…:minimal` payload) saves the model only.
+      const effort = isEffortLevel(rawEffort) ? rawEffort : undefined;
 
-      await updateContextModel(context, modelId, reasoning);
+      await updateContextModel(context, modelId, effort);
 
       await ctx.editMessageText(
         `✅ <b>Configuration Saved!</b>\n\n` +
           `<b>${context.charAt(0).toUpperCase() + context.slice(1)}</b> now uses:\n` +
           `Model: ${getDisplayName(modelId)}\n` +
-          `Reasoning: ${reasoning} (${REASONING_TOKENS[reasoning].toLocaleString()} tokens)\n\n` +
+          `${effortSummary(modelId, getEffortForContext(context))}\n\n` +
           `Use /model to configure other contexts.`,
         { parse_mode: "HTML" }
       );
@@ -441,30 +442,15 @@ async function handleModelCallback(ctx: Context, callbackData: string): Promise<
         .text("⏰ Cron Model", "model:context:cron");
 
       const generalModel = config.contexts.general?.model || config.defaults.model;
-      const generalReasoning =
-        config.contexts.general?.reasoning || config.defaults.reasoning;
       const summaryModel = config.contexts.summary?.model || config.defaults.model;
-      const summaryReasoning =
-        config.contexts.summary?.reasoning || config.defaults.reasoning;
       const cronModel = config.contexts.cron?.model || config.defaults.model;
-      const cronReasoning =
-        config.contexts.cron?.reasoning || config.defaults.reasoning;
-
-      // Adaptive-thinking models (Opus 4.x, Fable 5) always run adaptive
-      // thinking + xhigh effort regardless of the persisted reasoning level.
-      // Render that fact instead of a token budget so the UI matches actual
-      // SDK behavior.
-      const reasoningSummary = (model: ModelId, reasoning: ReasoningLevel): string =>
-        usesAdaptiveThinking(model)
-          ? `adaptive + xhigh (fixed)`
-          : `${reasoning}, ${REASONING_TOKENS[reasoning]} tokens`;
 
       await ctx.editMessageText(
         `🤖 <b>Model Configuration</b>\n\n` +
           `<b>Current Settings:</b>\n\n` +
-          `💬 <b>Chat:</b> ${getDisplayName(generalModel)} (${reasoningSummary(generalModel, generalReasoning)})\n` +
-          `📝 <b>Summary:</b> ${getDisplayName(summaryModel)} (${reasoningSummary(summaryModel, summaryReasoning)})\n` +
-          `⏰ <b>Cron:</b> ${getDisplayName(cronModel)} (${reasoningSummary(cronModel, cronReasoning)})\n\n` +
+          `💬 <b>Chat:</b> ${getDisplayName(generalModel)} (${contextEffortSummary(config, "general")})\n` +
+          `📝 <b>Summary:</b> ${getDisplayName(summaryModel)} (${contextEffortSummary(config, "summary")})\n` +
+          `⏰ <b>Cron:</b> ${getDisplayName(cronModel)} (${contextEffortSummary(config, "cron")})\n\n` +
           `Select which context to configure:`,
         {
           parse_mode: "HTML",

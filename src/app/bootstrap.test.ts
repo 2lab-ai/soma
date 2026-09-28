@@ -200,7 +200,11 @@ describe("bootstrapApplication", () => {
     const result = await canUseTool(
       "Bash",
       { command: "echo after shutdown" },
-      { signal: new AbortController().signal, toolUseID: "toolu_shutdown" }
+      {
+        signal: new AbortController().signal,
+        toolUseID: "toolu_shutdown",
+        requestId: "perm_shutdown",
+      }
     );
 
     expect(result.behavior).toBe("deny");

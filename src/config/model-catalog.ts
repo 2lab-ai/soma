@@ -55,24 +55,31 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { dirname, join, resolve } from "path";
+import {
+  type CatalogModel,
+  clampEffortToSupported,
+  type EffortLevel,
+  normalizeCatalogEntries,
+  normalizeEffortInput,
+  rankSupportedEfforts,
+  SDK_EFFORT_LEVELS,
+} from "soma-lib";
 import { isLlmuxMode } from "./llmux";
-import { AVAILABLE_MODELS, isMigratedModelId, MODEL_DISPLAY_NAMES } from "./model";
+import {
+  AVAILABLE_MODELS,
+  isMigratedModelId,
+  MODEL_DISPLAY_NAMES,
+  usesAdaptiveThinking,
+} from "./model";
 
-/** Normalized catalog entry (`max_context` → `maxContext`, efforts lowercased). */
-export interface CatalogModel {
-  id: string;
-  name: string;
-  group: string;
-  efforts: string[];
-  /**
-   * llmux's shorthand names for this row (`astra`, `fable`, `opus-5`, …),
-   * lowercased. Empty when the row has none. This is the ground truth behind
-   * the "shorthand means 1M" rule — llmux, not soma, decides which row an
-   * operator's shorthand resolves to.
-   */
-  aliases: string[];
-  maxContext: number | null;
-}
+/**
+ * Normalized catalog entry — the shared soma-lib row shape (`max_context` →
+ * `maxContext`, efforts/aliases lowercased). `aliases` is llmux's shorthand
+ * list for the row (`astra`, `fable`, `opus-5`, …) and is the ground truth
+ * behind the "shorthand means 1M" rule — llmux, not soma, decides which row
+ * an operator's shorthand resolves to.
+ */
+export type { CatalogModel };
 
 /** One row of the `/model` menu: a model id plus the label to render. */
 export interface SelectableModel {
@@ -134,53 +141,14 @@ function inferGroup(id: string): string {
 }
 
 /**
- * Defensive normalization of the `/llmux/models` payload: entries without a
- * usable string `id` are dropped, ids are deduped case-insensitively, and both
- * the wire (`max_context`) and snapshot (`maxContext`) spellings are accepted.
+ * Defensive normalization of the `/llmux/models` payload (shared soma-lib
+ * normalizer): entries without a usable string `id` are dropped, ids are
+ * deduped case-insensitively, and both the wire (`max_context`) and snapshot
+ * (`maxContext`) spellings are accepted. soma's only local policy is the
+ * cosmetic group inference for rows llmux does not label.
  */
 function normalizeEntries(raw: unknown[]): CatalogModel[] {
-  const out: CatalogModel[] = [];
-  const seen = new Set<string>();
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object") continue;
-    const e = entry as Record<string, unknown>;
-    const id = typeof e.id === "string" ? e.id.trim() : "";
-    if (id.length === 0) continue;
-    const key = id.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    const efforts = Array.isArray(e.efforts)
-      ? e.efforts
-          .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-          .map((x) => x.trim().toLowerCase())
-      : [];
-    // Wire and snapshot use the same `aliases` spelling; anything that is not
-    // a non-blank string is dropped, and a row without the field gets [].
-    const aliases = Array.isArray(e.aliases)
-      ? e.aliases
-          .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-          .map((x) => x.trim().toLowerCase())
-      : [];
-    const rawWindow = e.max_context ?? e.maxContext;
-    const maxContext =
-      typeof rawWindow === "number" && Number.isFinite(rawWindow) && rawWindow > 0
-        ? rawWindow
-        : null;
-    const group = typeof e.group === "string" && e.group.trim().length > 0
-      ? e.group.trim().toLowerCase()
-      : inferGroup(id);
-
-    out.push({
-      id,
-      name: typeof e.name === "string" && e.name.trim().length > 0 ? e.name.trim() : id,
-      group,
-      efforts,
-      aliases,
-      maxContext,
-    });
-  }
-  return out;
+  return normalizeCatalogEntries(raw, { fallbackGroup: inferGroup });
 }
 
 // ---------------------------------------------------------------- module state
@@ -485,6 +453,55 @@ export function getDisplayName(id: string): string {
 /** Catalog-declared context window, or `null` when unknown. */
 export function getCatalogMaxContext(id: string): number | null {
   return lookup(id)?.maxContext ?? null;
+}
+
+// --------------------------------------------------------------------- effort
+
+/**
+ * The effort levels the `/model` menu may offer for `id`, canonically ordered.
+ *
+ * Source of truth is llmux's per-row `efforts` (it knows what each backend
+ * accepts — codex tiers add `ultra`, grok stops at `xhigh`). When the catalog
+ * has no row or an empty menu, the static contract decides: adaptive-thinking
+ * Claude models take the five SDK levels; every other model (Sonnet 4.5,
+ * Haiku 4.5, an unknown non-Claude id) offers none — those are driven by the
+ * keyword thinking budget instead, and sending `effort` to them is a 400.
+ *
+ * Non-adaptive Claude models are pinned to "none" even when the catalog lists
+ * levels for them: the upstream API rejects `output_config.effort` on Sonnet
+ * 4.5 / Haiku 4.5 regardless of what the proxy is willing to forward.
+ */
+export function getSupportedEfforts(id: string): EffortLevel[] {
+  if (id.startsWith("claude-") && !usesAdaptiveThinking(id)) return [];
+  const fromCatalog = lookup(id)?.efforts ?? [];
+  const ranked = rankSupportedEfforts(fromCatalog);
+  if (ranked.length > 0) return ranked;
+  return usesAdaptiveThinking(id) ? [...SDK_EFFORT_LEVELS] : [];
+}
+
+/** True when `id` takes a named effort level at all (see {@link getSupportedEfforts}). */
+export function supportsEffort(id: string): boolean {
+  return getSupportedEfforts(id).length > 0;
+}
+
+/**
+ * The effort to actually send for `id` given the user's persisted choice:
+ * `null` when the model takes no effort parameter, otherwise `requested`
+ * clamped onto the model's menu (soma-lib `clampEffortToSupported` — the
+ * strongest supported level ≤ requested, else the weakest supported one).
+ */
+export function resolveEffortForModel(
+  id: string,
+  requested: EffortLevel | string | null | undefined
+): EffortLevel | null {
+  const supported = getSupportedEfforts(id);
+  if (supported.length === 0) return null;
+  // A string that names no level (blank, or hand-edited garbage that slipped
+  // past normalizeConfig) is "no request" — never forwarded verbatim, since
+  // the CLI rejects an unknown `--effort` and the whole query would fail.
+  const want = normalizeEffortInput(requested ?? "");
+  if (!want) return null;
+  return clampEffortToSupported(supported, want) as EffortLevel;
 }
 
 // ----------------------------------------------------------------- test hooks

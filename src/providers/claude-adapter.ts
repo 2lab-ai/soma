@@ -83,7 +83,7 @@ function toClaudeOptions(
     env: buildProviderEnv(),
     abortController,
   };
-  return applyModelSpecificOverrides(input.modelId ?? "", base);
+  return applyModelSpecificOverrides(input.modelId ?? "", base, input.effort);
 }
 
 export class ClaudeProviderAdapter implements ProviderBoundary {
