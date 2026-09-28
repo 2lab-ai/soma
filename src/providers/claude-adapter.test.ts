@@ -306,12 +306,16 @@ describe("ClaudeProviderAdapter", () => {
       modelId: "claude-sonnet-4-5-20250929",
       permissionMode: "bypass",
       canUseTool,
+      settingSources: [],
     } as any);
     await adapter.streamEvents(handle, () => {});
 
     const opts = recorded[0]!.options as Record<string, unknown>;
     expect(opts.canUseTool).toBe(canUseTool);
     expect(opts.permissionMode).toBe("bypassPermissions");
+    // Dropping settingSources here would silently re-import the operator's
+    // ~/.claude/settings.json (defaultMode + command hooks) into the bot.
+    expect(opts.settingSources).toEqual([]);
   });
 
   test("Sonnet 4.5: forwards maxThinkingTokens without adaptive override", async () => {

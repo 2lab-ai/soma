@@ -21,6 +21,8 @@ This is intentional. The bot is designed for personal use from mobile, where con
 
 **This is not configurable** - the bot always runs in bypass mode. If you need permission prompts, use Claude Code directly instead.
 
+Ordinary tool calls are allowed by the bot's own `PreToolUse` hook once its safety check passes, and run without a round trip; inputs the hook hard-denies are still blocked there. If the SDK nonetheless routes a call to `canUseTool` while in bypass mode, that call becomes a Telegram approve/deny keyboard — the bot does not try to second-guess why the SDK asked. Critical-path `rm`/`rmdir` and similar destructive commands are blocked by the bot's own command safety check, not by an SDK prompt. The bot also loads no filesystem settings (`settingSources: []`), so the operator's own `~/.claude/settings.json` permission defaults and hooks never apply inside it.
+
 ## Threat Model
 
 The bot is designed for **personal use by trusted users**. The primary threats we defend against:

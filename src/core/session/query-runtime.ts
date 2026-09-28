@@ -75,7 +75,15 @@ export function createQueryRuntimeHooks(
       return { decision: "block", reason: validation.reason };
     }
 
-    return {};
+    // An empty result is NOT an allow: the SDK reads "neither allow nor ask"
+    // as "run the full permission pipeline", which hands every safe tool to
+    // canUseTool and asks the user on Telegram. Say allow explicitly.
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+      },
+    };
   };
 
   const postToolUseHook: QueryRuntimeToolHook = async (
@@ -141,7 +149,11 @@ export function buildQueryRuntimeOptions(
   const options: Options & { abortController: AbortController } = {
     model: input.model,
     cwd: input.cwd,
-    settingSources: ["user", "project"],
+    // SDK isolation: the bot is its own permission domain. Loading the
+    // operator's ~/.claude/settings.json (or a project one) would import their
+    // defaultMode and PermissionRequest/PreToolUse command hooks into every
+    // Telegram query. CLAUDE.md already reaches the model via systemPrompt.
+    settingSources: [],
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
@@ -572,6 +584,7 @@ async function executeProviderRuntime(
         ? input.options.systemPrompt
         : undefined,
     permissionMode: toProviderPermissionMode(input.options.permissionMode),
+    settingSources: input.options.settingSources,
     canUseTool: input.options.canUseTool,
     hooks: input.options.hooks,
     pathToClaudeCodeExecutable: input.options.pathToClaudeCodeExecutable,
