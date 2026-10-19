@@ -22,7 +22,7 @@ To achieve this, I set up a folder with a CLAUDE.md that teaches Claude about me
 ## Bot Features
 
 - 💬 **Text**: Ask questions, give instructions, have conversations
-- 🎤 **Voice**: Speak naturally - transcribed via OpenAI and processed by Claude
+- 🎤 **Voice**: Speak naturally - transcribed by a local speech-to-text server (`STT_URL`) and processed by Claude
 - 📸 **Photos**: Send screenshots, documents, or anything visual for analysis
 - 📄 **Documents**: PDFs, text files, and archives (ZIP, TAR) are extracted and analyzed
 - 🔄 **Session persistence**: Conversations continue across messages
@@ -48,7 +48,7 @@ bun run src/index.ts
 - **Bun 1.0+** - [Install Bun](https://bun.sh/)
 - **Claude Agent SDK** - `@anthropic-ai/claude-agent-sdk` (installed via bun install)
 - **Telegram Bot Token** from [@BotFather](https://t.me/BotFather)
-- **OpenAI API Key** (optional, for voice transcription)
+- **ffmpeg** and a local speech-to-text server (optional, for voice transcription; see `STT_URL`)
 
 ### Claude Authentication
 
@@ -99,7 +99,7 @@ TELEGRAM_ALLOWED_USERS=123456789           # Your Telegram user ID
 
 # Recommended
 CLAUDE_WORKING_DIR=/path/to/your/folder    # Where Claude runs (loads CLAUDE.md, skills, MCP)
-OPENAI_API_KEY=sk-...                      # For voice transcription
+STT_URL=http://localhost:8787/v1/audio/transcriptions  # Voice transcription server (this is the default)
 ```
 
 **Finding your Telegram user ID:** Message [@userinfobot](https://t.me/userinfobot) on Telegram.
@@ -212,8 +212,8 @@ Multiple layers protect against misuse:
 
 **Voice messages fail**
 
-- Ensure `OPENAI_API_KEY` is set in `.env`
-- Verify the key is valid and has credits
+- Ensure the speech-to-text server at `STT_URL` is running (default `http://localhost:8787/v1/audio/transcriptions`)
+- Ensure `ffmpeg` is on the bot's `PATH` (voice notes are converted to 16 kHz WAV before upload)
 
 **Claude can't access files**
 

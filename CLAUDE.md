@@ -117,7 +117,7 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 Each message type has a dedicated async handler:
 - **`commands/`** - `/start`, `/help`, `/new`, `/stop`, `/status`, `/stats`, `/resume`, `/cron`, `/restart`, `/retry`, `/sessions`, `/context`, `/skills`, `/model` (`session-commands.ts`, `system-commands.ts`, `usage-commands.ts`, re-exported by `commands/index.ts`)
 - **`text.ts`** - Text messages with intent filtering
-- **`voice.ts`** - Voice→text via OpenAI, then same flow as text
+- **`voice.ts`** - Voice→text via the local STT server (`STT_URL`, `src/utils/voice.ts`), then same flow as text
 - **`photo.ts`** - Image analysis with media group buffering (1s timeout for albums)
 - **`document.ts`** - PDF extraction (pdftotext CLI) and text file processing
 - **`callback.ts`** - Inline keyboard button handling for UIAskUserQuestion choice system
@@ -138,7 +138,7 @@ All config via `.env` (copy from `.env.example`). Key variables:
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` (required)
 - `CLAUDE_WORKING_DIR` - Working directory for Claude
 - `ALLOWED_PATHS` - Directories Claude can access
-- `OPENAI_API_KEY` - For voice transcription
+- `STT_URL` - Local speech-to-text server for voice messages (needs `ffmpeg`)
 
 MCP servers defined in `mcp-config.ts`.
 
