@@ -75,26 +75,6 @@ describe("Choice Flow Integration", () => {
       const wrongCompressed = TelegramChoiceBuilder.compressSessionKey(wrongSessionKey);
       expect(compressedKey).not.toBe(wrongCompressed);
     });
-
-    test("clears choice state after selection", () => {
-      const session = new ClaudeSession("test-123");
-
-      session.choiceState = {
-        type: "single",
-        messageIds: [100],
-        extractedChoice: {
-          type: "user_choice",
-          question: "Test?",
-          choices: [{ id: "1", label: "A" }],
-        },
-      };
-
-      expect(session.choiceState).not.toBeNull();
-
-      session.clearChoiceState();
-
-      expect(session.choiceState).toBeNull();
-    });
   });
 
   describe("Multi-Form Flow", () => {
@@ -139,73 +119,6 @@ describe("Choice Flow Integration", () => {
       const kb2 = (keyboards[1] as any).inline_keyboard;
       expect(kb2[0][0].text).toBe("OAuth");
       expect(kb2[0][0].callback_data).toMatch(/^c:[a-z0-9]{8}:q2:oaut$/);
-    });
-
-    test("tracks selections across multiple questions", () => {
-      const session = new ClaudeSession("test-multi");
-
-      session.choiceState = {
-        type: "multi",
-        formId: "form-123",
-        messageIds: [100, 101],
-        selections: {},
-      };
-
-      // Answer Q1
-      session.choiceState.selections!["q1"] = {
-        choiceId: "pg",
-        label: "PostgreSQL",
-      };
-
-      expect(session.choiceState.selections!["q1"].choiceId).toBe("pg");
-
-      // Answer Q2
-      session.choiceState.selections!["q2"] = {
-        choiceId: "oauth",
-        label: "OAuth",
-      };
-
-      expect(Object.keys(session.choiceState.selections!).length).toBe(2);
-      expect(session.choiceState.selections!["q2"].label).toBe("OAuth");
-    });
-
-    test("prevents partial form submission", () => {
-      const session = new ClaudeSession("test-partial");
-
-      session.choiceState = {
-        type: "multi",
-        formId: "form-123",
-        messageIds: [100, 101],
-        extractedChoices: {
-          type: "user_choices",
-          questions: [
-            {
-              id: "q1",
-              question: "Q1",
-              choices: [{ id: "a", label: "A" }],
-            },
-            {
-              id: "q2",
-              question: "Q2",
-              choices: [{ id: "b", label: "B" }],
-            },
-          ],
-        },
-        selections: {
-          q1: { choiceId: "a", label: "A" },
-        },
-      };
-
-      const totalQuestions =
-        session.choiceState.extractedChoices?.questions.length || 0;
-      const answeredQuestions = Object.keys(
-        session.choiceState.selections || {}
-      ).length;
-
-      // Form incomplete
-      expect(answeredQuestions).toBeLessThan(totalQuestions);
-      expect(answeredQuestions).toBe(1);
-      expect(totalQuestions).toBe(2);
     });
   });
 

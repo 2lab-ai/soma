@@ -93,28 +93,7 @@ describe("SessionManager", () => {
     });
   });
 
-  describe("key derivation", () => {
-    test("deriveKey returns consistent key for same input", () => {
-      const manager = createTestManager();
-      const k1 = manager.deriveKey(1001);
-      const k2 = manager.deriveKey(1001);
-      expect(k1).toBe(k2);
-    });
-
-    test("deriveKey produces different keys for different threads", () => {
-      const manager = createTestManager();
-      const k1 = manager.deriveKey(1001);
-      const k2 = manager.deriveKey(1001, 42);
-      expect(k1).not.toBe(k2);
-    });
-
-    test("deriveKey format includes tenant:channel:thread", () => {
-      const manager = createTestManager();
-      const key = manager.deriveKey(1001, 42);
-      expect(key).toContain("1001");
-      expect(key).toContain("42");
-    });
-  });
+  // deriveKey: exact canonical strings are pinned in src/session-manager.contract.test.ts.
 
   describe("hasSession", () => {
     test("returns false for non-existent session", () => {
