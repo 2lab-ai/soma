@@ -13,6 +13,7 @@ import {
   extractBashFilePaths,
 } from "./query-runtime";
 import { isAbortError } from "../../utils/error-classification";
+import { WORKING_DIR } from "../../config";
 import { __testResetCatalog, __testSeedCatalog } from "../../config/model-catalog";
 import { ClaudeProviderAdapter } from "../../providers/claude-adapter";
 import { createProviderOrchestrator } from "../../providers/create-orchestrator";
@@ -342,7 +343,10 @@ describe("checkToolInputSafety", () => {
   // case: a regular sibling stays allowed, proving the block is driven by
   // realpath and not by the parent directory.
   describe("symlink target follows realpath (existing paths)", () => {
-    const scratchDir = join(import.meta.dir, ".query-runtime-symlink-test");
+    // Under WORKING_DIR (always an allowed root; test/preload.ts pins it to a
+    // scratch dir) rather than the source tree: the checkout itself is only
+    // allowed when the operator's .env happens to list it in ALLOWED_PATHS.
+    const scratchDir = join(WORKING_DIR, ".query-runtime-symlink-test");
     let outsideDir = "";
     let outsideTarget = "";
     const symlinkPath = join(scratchDir, "link-to-outside.txt");
@@ -393,8 +397,9 @@ describe("checkToolInputSafety", () => {
       `soma-agi2ry-alias-${process.pid}-${Date.now()}`
     );
     const aliasDir = join(aliasParent, "tenant__channel__thread");
-    // process.cwd() is under HOME → ALLOWED_PATHS by default.
-    const allowedRootTarget = process.cwd();
+    // WORKING_DIR is always in the default ALLOWED_PATHS (process.cwd() is
+    // not — it only passed where the operator's .env listed the checkout).
+    const allowedRootTarget = WORKING_DIR;
     const notYetCreatedThroughAlias = join(aliasDir, "agi-2ry-new-file.md");
     let escapeOutsideDir = "";
     let escapeOutsideTarget = "";

@@ -105,8 +105,14 @@ describe("handleDocument image regression", () => {
   });
 
   test("BUG soma-es0c: handleDocument accepts png image documents", async () => {
+    // downloadTelegramFile rejects non-ok responses (#34), so the stub must
+    // look like a successful fetch Response, not just an arrayBuffer holder.
     globalThis.fetch = mock(async () => ({
-      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      // PNG magic bytes — image documents are sniffed (#38) and unknown bytes rejected.
+      arrayBuffer: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).buffer,
     })) as unknown as typeof fetch;
 
     let queue: Promise<void> = Promise.resolve();

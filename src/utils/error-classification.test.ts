@@ -450,9 +450,14 @@ describe("formatErrorForUser", () => {
   });
 
   test("truncates long messages", () => {
-    const longMsg = "x".repeat(1500);
+    // The user-facing message portion is capped at 2000 chars since #14
+    // (b211610 raised it from 800; see the S5 contract test below). This test
+    // still asserted the old cap with a 1500-char input, which #14 made legal.
+    const longMsg = "x".repeat(5000);
     const msg = formatErrorForUser(new Error(longMsg));
-    expect(msg.length).toBeLessThan(1500);
+    expect(msg).toContain("x".repeat(2000));
+    expect(msg).not.toContain("x".repeat(2001));
+    expect(msg.length).toBeLessThan(longMsg.length);
   });
 });
 

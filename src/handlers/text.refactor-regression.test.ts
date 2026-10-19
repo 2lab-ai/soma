@@ -168,6 +168,9 @@ describe("handleText refactor regression", () => {
       clearStopRequested: mock(() => {}),
       endInterrupt: mock(() => {}),
       extractSteeringMessages: mock(() => []),
+      // interrupt-flow reads the steering buffer size after stop() (2830d7f:
+      // queued messages stay buffered for auto-continue instead of being lost).
+      getSteeringCount: mock(() => 0),
       hasPendingRecovery: mock(() => false),
     } as unknown as ReturnType<typeof sessionManager.getSession>;
 

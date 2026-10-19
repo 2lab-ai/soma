@@ -10,7 +10,9 @@ import { join } from "path";
 import { readdir, rename } from "fs/promises";
 import { existsSync, mkdirSync, rmSync } from "fs";
 
-const HOME = homedir();
+// $HOME first: Bun caches os.homedir() at process start, so test/preload.ts can
+// only redirect the home directory through the env var. Same value in production.
+const HOME = process.env.HOME || homedir();
 const CLAUDE_DIR = join(HOME, ".claude");
 const SKILLS_DIR = join(CLAUDE_DIR, "skills");
 const REGISTRY_PATH = join(CLAUDE_DIR, "skills-registry.json");

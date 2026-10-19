@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { buildSafetyPrompt } from "./safety-prompt";
-import { SAFETY_PROMPT } from "./index";
+import { ALLOWED_PATHS, SAFETY_PROMPT, TEMP_DIR } from "./index";
+import { resolveTempDir } from "./env";
 
 // Regression: agi-2ry
 //
@@ -68,18 +69,42 @@ describe("buildSafetyPrompt (agi-2ry telegram temp-policy)", () => {
 describe("SAFETY_PROMPT (exported wiring)", () => {
   test("BUG agi-2ry: advertises /tmp/soma as the sole attachment root, hides runtime-compat roots", () => {
     // Bot-generated attachment root that the Telegram handlers stage under
-    // must appear (trailing-slash tolerant).
-    expect(SAFETY_PROMPT).toMatch(/\/tmp\/soma\/?/);
+    // must appear. (test/preload.ts points TEMP_DIR at scratch; production is
+    // /tmp/soma — pinned by the resolveTempDir test below.)
+    expect(SAFETY_PROMPT).toContain(TEMP_DIR);
 
     // Runtime-compat siblings (executable-layer only) MUST NOT leak into the
-    // model-facing prompt.
-    expect(SAFETY_PROMPT).not.toContain("/private/tmp");
-    expect(SAFETY_PROMPT).not.toContain("/var/folders");
+    // model-facing prompt. The user-access roots themselves may legitimately
+    // live under those prefixes (test/preload.ts realpaths WORKING_DIR, so a
+    // checkout under /tmp yields /private/tmp/...), so mask them first.
+    const compatPrefixed = [...ALLOWED_PATHS, TEMP_DIR].filter(
+      (root) => root.startsWith("/private/tmp/") || root.startsWith("/var/folders/")
+    );
+    const withoutAllowedRoots = compatPrefixed.reduce(
+      (prompt, root) => prompt.split(root).join("<ALLOWED_ROOT>"),
+      SAFETY_PROMPT
+    );
+    expect(withoutAllowedRoots).not.toContain("/private/tmp");
+    expect(withoutAllowedRoots).not.toContain("/var/folders");
 
     // Attachment policy must explicitly narrow reads to attachments called
     // out in the current message and mark them read-only. Without both, the
     // carve-out drifts back into "general working directory" territory.
     expect(SAFETY_PROMPT).toContain("referenced in the current message");
     expect(SAFETY_PROMPT).toContain("read-only");
+  });
+});
+
+describe("resolveTempDir (attachment staging root)", () => {
+  test("is /tmp/soma in production, whatever SOMA_TEMP_DIR says", () => {
+    expect(resolveTempDir({})).toBe("/tmp/soma");
+    expect(resolveTempDir({ NODE_ENV: "production", SOMA_TEMP_DIR: "/elsewhere" })).toBe("/tmp/soma");
+  });
+
+  test("honours SOMA_TEMP_DIR only under bun test (NODE_ENV=test)", () => {
+    expect(resolveTempDir({ NODE_ENV: "test", SOMA_TEMP_DIR: "/scratch/attachments" })).toBe(
+      "/scratch/attachments"
+    );
+    expect(resolveTempDir({ NODE_ENV: "test", SOMA_TEMP_DIR: "  " })).toBe("/tmp/soma");
   });
 });

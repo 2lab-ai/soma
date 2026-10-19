@@ -39,17 +39,20 @@ export class SteeringManager {
     messageId: number,
     receivedDuringTool?: string
   ): SteeringAddResult {
+    // Validate first: an invalid message must not evict a valid one from a
+    // full buffer before throwing.
+    const steeringMessage = createSteeringMessage(
+      message,
+      messageId,
+      receivedDuringTool
+    );
+
     let evictedMessage: SteeringMessage | null = null;
     if (this.steeringBuffer.length >= this.maxSteeringMessages) {
       evictedMessage = this.steeringBuffer.shift() ?? null;
       this._evictionCount++;
     }
 
-    const steeringMessage = createSteeringMessage(
-      message,
-      messageId,
-      receivedDuringTool
-    );
     this.steeringBuffer.push(steeringMessage);
     return { evicted: evictedMessage !== null, evictedMessage };
   }

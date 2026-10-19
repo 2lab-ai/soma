@@ -1,9 +1,21 @@
 import { existsSync } from "fs";
 import { homedir } from "os";
 
-const HOME = homedir();
+// $HOME first: Bun caches os.homedir() at process start, so test/preload.ts can
+// only redirect the home directory through the env var. Same value in production.
+const HOME = process.env.HOME || homedir();
 
 export const HOME_DIR = HOME;
+
+/**
+ * Attachment staging root. Always /tmp/soma in production; under `bun test`
+ * (NODE_ENV=test) test/preload.ts points SOMA_TEMP_DIR at a scratch dir so
+ * handler tests never write into a live bot's staging dir.
+ */
+export function resolveTempDir(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.NODE_ENV === "test" ? env.SOMA_TEMP_DIR?.trim() : undefined;
+  return override || "/tmp/soma";
+}
 
 export function parseEnvList(key: string): string[] {
   return (process.env[key] || "")

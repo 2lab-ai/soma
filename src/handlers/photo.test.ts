@@ -83,8 +83,14 @@ afterEach(() => {
 
 describe("handlePhoto concurrency regression", () => {
   test("BUG soma-qivc: handlePhoto serializes concurrent single-photo requests", async () => {
+    // downloadTelegramFile rejects non-ok responses (#34), so the stub must
+    // look like a successful fetch Response, not just an arrayBuffer holder.
     globalThis.fetch = mock(async () => ({
-      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      // JPEG magic bytes — handlePhoto sniffs the format (#38) and rejects unknown bytes.
+      arrayBuffer: async () => new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]).buffer,
     })) as unknown as typeof fetch;
 
     let queue: Promise<void> = Promise.resolve();
