@@ -273,7 +273,8 @@ uninstall-service:
 logs:
 	@echo "📋 Service logs:"
 	@if [ "$(UNAME_S)" = "Darwin" ] && [ -f $(MACOS_PLIST) ]; then \
-		tail -f $$HOME/Library/Logs/ai.2lab.$(SERVICE_NAME).out.log; \
+		f=$$(plutil -extract StandardOutPath raw -o - $(MACOS_PLIST) 2>/dev/null); \
+		tail -f "$${f:-$(LOGFILE)}"; \
 	else \
 		tail -f $(LOGFILE); \
 	fi
@@ -282,7 +283,8 @@ logs:
 errors:
 	@echo "❌ Error logs:"
 	@if [ "$(UNAME_S)" = "Darwin" ] && [ -f $(MACOS_PLIST) ]; then \
-		tail -f $$HOME/Library/Logs/ai.2lab.$(SERVICE_NAME).err.log; \
+		f=$$(plutil -extract StandardErrorPath raw -o - $(MACOS_PLIST) 2>/dev/null); \
+		tail -f "$${f:-$(ERRFILE)}"; \
 	else \
 		tail -f $(ERRFILE); \
 	fi

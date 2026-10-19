@@ -5,8 +5,13 @@
  * (launchagent/install-macos-service.sh), the same file `make start` reads.
  * So on macOS both targets tailed files that nothing writes.
  *
- * Runs the real Makefile targets against a scratch HOME that holds a fake
- * plist and fake LaunchAgent logs, then kills the `tail -f`.
+ * The targets read the log paths from the installed plist (StandardOutPath /
+ * StandardErrorPath), because the two supported install paths write different
+ * files: `make install-service` → ~/Library/Logs/…, the manual plist template
+ * → /tmp/soma.{log,err}.
+ *
+ * Runs the real Makefile targets against a scratch HOME that holds a plist and
+ * fake logs, then kills the `tail -f`.
  */
 import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
@@ -17,14 +22,48 @@ const REPO = resolve(import.meta.dir, "..");
 const SERVICE = "soma-makefile-logs-test";
 const LABEL = `ai.2lab.${SERVICE}`;
 
-function makeScratchHome(): string {
+function plist(outPath: string, errPath: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${LABEL}</string>
+  <key>StandardOutPath</key><string>${outPath}</string>
+  <key>StandardErrorPath</key><string>${errPath}</string>
+</dict></plist>
+`;
+}
+
+/**
+ * Scratch HOME with an installed plist. `layout` picks where that plist sends
+ * the logs: "install-service" (~/Library/Logs/<label>.{out,err}.log, what
+ * launchagent/install-macos-service.sh writes) or "template" (a custom path,
+ * like the manual plist template's /tmp/soma.{log,err}).
+ */
+function makeScratchHome(
+  layout: "install-service" | "template" = "install-service"
+): string {
   // test/preload.ts already points $HOME at a per-run scratch dir.
   const home = mkdtempSync(join(process.env.HOME ?? REPO, "makefile-logs-"));
   mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
-  mkdirSync(join(home, "Library", "Logs"), { recursive: true });
-  writeFileSync(join(home, "Library", "LaunchAgents", `${LABEL}.plist`), "");
-  writeFileSync(join(home, "Library", "Logs", `${LABEL}.out.log`), "SENTINEL-OUT\n");
-  writeFileSync(join(home, "Library", "Logs", `${LABEL}.err.log`), "SENTINEL-ERR\n");
+  const logDir =
+    layout === "install-service"
+      ? join(home, "Library", "Logs")
+      : join(home, "custom-logs");
+  mkdirSync(logDir, { recursive: true });
+  const outPath = join(
+    logDir,
+    layout === "install-service" ? `${LABEL}.out.log` : "soma.log"
+  );
+  const errPath = join(
+    logDir,
+    layout === "install-service" ? `${LABEL}.err.log` : "soma.err"
+  );
+  writeFileSync(
+    join(home, "Library", "LaunchAgents", `${LABEL}.plist`),
+    plist(outPath, errPath)
+  );
+  writeFileSync(outPath, "SENTINEL-OUT\n");
+  writeFileSync(errPath, "SENTINEL-ERR\n");
   return home;
 }
 
@@ -65,6 +104,16 @@ function runUntil(target: string, home: string, sentinel: string): Promise<strin
 }
 
 describe("Makefile log targets on macOS", () => {
+  test.skipIf(process.platform !== "darwin")(
+    "make logs / make errors follow a plist that logs elsewhere (manual template)",
+    async () => {
+      const home = makeScratchHome("template");
+      expect(await runUntil("logs", home, "SENTINEL-OUT")).toContain("SENTINEL-OUT");
+      expect(await runUntil("errors", home, "SENTINEL-ERR")).toContain("SENTINEL-ERR");
+    },
+    25_000
+  );
+
   test.skipIf(process.platform !== "darwin")(
     "make logs tails the LaunchAgent stdout log",
     async () => {

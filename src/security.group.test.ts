@@ -48,7 +48,15 @@ function cleanupTestFile(): void {
 let registry: GroupRegistry;
 let restoreSpies: Array<() => void> = [];
 
+// Snapshot and restore the shared config arrays exactly: a caller may already
+// list these ids (e.g. TELEGRAM_ALLOWED_USERS=12345), and removing them on the
+// way out would empty the allowlist for every later test file.
+let savedAllowedUsers: number[] = [];
+let savedAllowedGroups: number[] = [];
+
 beforeAll(() => {
+  savedAllowedUsers = [...ALLOWED_USERS];
+  savedAllowedGroups = [...ALLOWED_GROUPS];
   for (const id of [OWNER_ID, OTHER_ALLOWED_USER]) {
     if (!ALLOWED_USERS.includes(id)) ALLOWED_USERS.push(id);
   }
@@ -56,12 +64,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  for (const id of [OWNER_ID, OTHER_ALLOWED_USER]) {
-    const idx = ALLOWED_USERS.indexOf(id);
-    if (idx !== -1) ALLOWED_USERS.splice(idx, 1);
-  }
-  const gIdx = ALLOWED_GROUPS.indexOf(STATIC_GROUP);
-  if (gIdx !== -1) ALLOWED_GROUPS.splice(gIdx, 1);
+  ALLOWED_USERS.splice(0, ALLOWED_USERS.length, ...savedAllowedUsers);
+  ALLOWED_GROUPS.splice(0, ALLOWED_GROUPS.length, ...savedAllowedGroups);
 });
 
 beforeEach(() => {
