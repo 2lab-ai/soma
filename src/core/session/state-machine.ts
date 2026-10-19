@@ -17,7 +17,6 @@ export type {
 export {
   beginInterruptTransition,
   clearStopRequestedTransition,
-  completeQueryTransition,
   consumeInterruptFlagTransition,
   createInitialSessionRuntimeState,
   endInterruptTransition,

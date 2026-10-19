@@ -38,7 +38,7 @@ describe("sendMessageStreaming re-entrancy guard (soma-fkx2)", () => {
   test("rejects for active runtime query states", async () => {
     const session = new ClaudeSession("test:reentrant:states");
 
-    for (const state of ["running", "aborting", "completing"] as const) {
+    for (const state of ["running", "aborting"] as const) {
       (session as any)._queryState = state;
       expect(session.isRunning).toBe(true);
 

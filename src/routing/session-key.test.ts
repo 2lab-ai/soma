@@ -2,12 +2,13 @@ import { describe, expect, test } from "bun:test";
 import {
   SessionIdentityInvariantError,
   buildSessionKeyFromInput,
-  buildStoragePartitionKeyFromInput,
+  buildStoragePartitionKey,
   createSessionIdentity,
 } from "./session-key";
 import {
   buildSessionKeyFromInput as buildSessionKeyFromInputCore,
-  buildStoragePartitionKeyFromInput as buildStoragePartitionKeyFromInputCore,
+  buildStoragePartitionKey as buildStoragePartitionKeyCore,
+  createSessionIdentity as createSessionIdentityCore,
 } from "../core/routing/session-key";
 
 function expectInvariantError(fn: () => unknown): SessionIdentityInvariantError {
@@ -47,8 +48,8 @@ describe("session key contract", () => {
     };
 
     expect(buildSessionKeyFromInput(input)).toBe(buildSessionKeyFromInputCore(input));
-    expect(buildStoragePartitionKeyFromInput(input)).toBe(
-      buildStoragePartitionKeyFromInputCore(input)
+    expect(buildStoragePartitionKey(createSessionIdentity(input))).toBe(
+      buildStoragePartitionKeyCore(createSessionIdentityCore(input))
     );
   });
 });
