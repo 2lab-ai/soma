@@ -115,7 +115,7 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 ### Handlers (`src/handlers/`)
 
 Each message type has a dedicated async handler:
-- **`commands.ts`** - `/start`, `/help`, `/new`, `/stop`, `/status`, `/stats`, `/resume`, `/cron`, `/restart`, `/retry`
+- **`commands/`** - `/start`, `/help`, `/new`, `/stop`, `/status`, `/stats`, `/resume`, `/cron`, `/restart`, `/retry`, `/sessions`, `/context`, `/skills`, `/model` (`session-commands.ts`, `system-commands.ts`, `usage-commands.ts`, re-exported by `commands/index.ts`)
 - **`text.ts`** - Text messages with intent filtering
 - **`voice.ts`** - Voice→text via OpenAI, then same flow as text
 - **`photo.ts`** - Image analysis with media group buffering (1s timeout for albums)
@@ -159,7 +159,7 @@ MCP servers defined in `mcp-config.ts`.
 
 **Testing discipline**: PR review will expose missing tests. Write tests BEFORE deployment, not after. Critical gaps: state machine transitions, integration scenarios, edge cases (concurrent callbacks, messageId validation).
 
-**Adding a command**: Create handler in `commands.ts`, register in `index.ts` with `bot.command("name", handler)`
+**Adding a command**: Create the handler in `src/handlers/commands/*.ts`, export it from `commands/index.ts` and `handlers/index.ts`, and register it in `src/app/telegram-bot.ts` with `bot.command("name", handler)`
 
 **Adding a message handler**: Create in `handlers/`, export from `index.ts`, register in `index.ts` with appropriate filter
 
