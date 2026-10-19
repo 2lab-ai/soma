@@ -8,6 +8,7 @@ import {
   parseEnvList,
   parseEnvNumbers,
   resolveWorkingDir,
+  resolveTempDir,
 } from "./env";
 import { buildSafetyPrompt } from "./safety-prompt";
 
@@ -74,7 +75,7 @@ export const ALLOWED_PATHS = allowedPathsEnv.length
 //     macOS /private/tmp/ and /var/folders/). They are NOT surfaced to the
 //     model — advertising them would over-broaden the prompt's read carve-out
 //     relative to what the bot actually creates.
-export const TEMP_DIR = "/tmp/soma";
+export const TEMP_DIR = resolveTempDir();
 export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
 export const SAFETY_PROMPT = buildSafetyPrompt(ALLOWED_PATHS, [TEMP_DIR]);

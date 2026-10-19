@@ -12,6 +12,9 @@ import os from "os";
 import path from "path";
 import type { AllUsage, ClaudeUsage, CodexUsage, GeminiUsage } from "./types/provider";
 import { getLlmuxSettings } from "./config/llmux";
+// HOME_DIR reads $HOME first (Bun caches os.homedir()), so test/preload.ts keeps
+// these credential reads off the operator's real ~/.claude, ~/.codex, ~/.gemini.
+import { HOME_DIR } from "./config/env";
 
 const API_TIMEOUT_MS = 5000;
 const DEFAULT_CACHE_TTL_SECONDS = 60;
@@ -53,7 +56,7 @@ async function getClaudeCredentials(): Promise<string | null> {
       }
     }
 
-    const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
+    const credPath = path.join(HOME_DIR, ".claude", ".credentials.json");
     const content = await readFile(credPath, "utf-8");
     const creds = JSON.parse(content);
     return creds?.claudeAiOauth?.accessToken ?? null;
@@ -130,7 +133,7 @@ interface CodexAuth {
 
 async function getCodexAuth(): Promise<CodexAuth | null> {
   try {
-    const authPath = path.join(os.homedir(), ".codex", "auth.json");
+    const authPath = path.join(HOME_DIR, ".codex", "auth.json");
     const raw = await readFile(authPath, "utf-8");
     const json = JSON.parse(raw);
 
@@ -146,7 +149,7 @@ async function getCodexAuth(): Promise<CodexAuth | null> {
 
 async function getCodexModel(): Promise<string | null> {
   try {
-    const configPath = path.join(os.homedir(), ".codex", "config.toml");
+    const configPath = path.join(HOME_DIR, ".codex", "config.toml");
     const raw = await readFile(configPath, "utf-8");
     const match = raw.match(/^model\s*=\s*["']([^"']+)["']\s*(?:#.*)?$/m);
     return match ? (match[1] ?? null) : null;
@@ -271,7 +274,7 @@ async function getGeminiCredentials(): Promise<GeminiCredentials | null> {
       }
     }
 
-    const oauthPath = path.join(os.homedir(), ".gemini", "oauth_creds.json");
+    const oauthPath = path.join(HOME_DIR, ".gemini", "oauth_creds.json");
     const raw = await readFile(oauthPath, "utf-8");
     const json = JSON.parse(raw);
     if (!json?.access_token) return null;
@@ -336,7 +339,7 @@ async function getGeminiSettings(): Promise<{
   selectedModel?: string;
 } | null> {
   try {
-    const settingsPath = path.join(os.homedir(), ".gemini", "settings.json");
+    const settingsPath = path.join(HOME_DIR, ".gemini", "settings.json");
     const raw = await readFile(settingsPath, "utf-8");
     const json = JSON.parse(raw);
     return {
@@ -544,7 +547,7 @@ async function getLlmuxAdminKey(): Promise<string | null> {
   if (fromEnv) return fromEnv;
   try {
     const configDir =
-      process.env.XDG_CONFIG_HOME?.trim() || path.join(os.homedir(), ".config");
+      process.env.XDG_CONFIG_HOME?.trim() || path.join(HOME_DIR, ".config");
     const raw = await readFile(path.join(configDir, "llmux.json"), "utf-8");
     const json = JSON.parse(raw);
     const key = json?.proxy?.api_key;

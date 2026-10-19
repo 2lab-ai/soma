@@ -148,3 +148,19 @@ describe("SteeringManager.reset", () => {
     expect(mgr.evictionCount).toBe(0);
   });
 });
+
+describe("SteeringManager.addSteering validation order", () => {
+  test("an invalid message on a full buffer throws without evicting a valid one", () => {
+    const mgr = makeManager();
+    for (let i = 1; i <= MAX_STEERING; i++) mgr.addSteering(`msg${i}`, i);
+
+    expect(() => mgr.addSteering("   ", 99)).toThrow("content cannot be empty");
+    expect(() => mgr.addSteering("no id", 0)).toThrow("positive integer");
+
+    expect(mgr.getSteeringCount()).toBe(MAX_STEERING);
+    expect(mgr.evictionCount).toBe(0);
+    expect(mgr.extractSteeringMessages().map((m) => m.messageId)).toEqual(
+      Array.from({ length: MAX_STEERING }, (_, i) => i + 1)
+    );
+  });
+});
