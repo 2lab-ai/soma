@@ -19,7 +19,6 @@ export const ALLOWED_GROUPS = parseEnvNumbers("TELEGRAM_ALLOWED_GROUPS");
 export const RESPOND_WITHOUT_MENTION = parseEnvBool("RESPOND_WITHOUT_MENTION", false);
 
 export const WORKING_DIR = resolveWorkingDir();
-export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 export const STT_URL =
   process.env.STT_URL || "http://localhost:8787/v1/audio/transcriptions";
 export const CLAUDE_CLI_PATH = findClaudeCli();

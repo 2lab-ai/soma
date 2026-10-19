@@ -2,8 +2,10 @@
  * Session runtime state machine — re-exported from the shared `soma-lib`
  * package (src/domain/session-state) as of the convergence roadmap Step 4a.
  * The transition algebra moved verbatim; every existing import path keeps
- * working through this file, and this repo's state-machine.test.ts now
- * exercises the shared implementation.
+ * working through this file. The transitions are tested in soma-lib's own
+ * suite (src/domain/session-state/session-state.test.ts); the wiring is
+ * exercised through ClaudeSession (src/session.test.ts,
+ * src/handlers/commands/stop-command.contract.test.ts).
  */
 export type {
   ActivityState,
@@ -15,7 +17,6 @@ export type {
 export {
   beginInterruptTransition,
   clearStopRequestedTransition,
-  completeQueryTransition,
   consumeInterruptFlagTransition,
   createInitialSessionRuntimeState,
   endInterruptTransition,

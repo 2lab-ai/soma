@@ -93,7 +93,7 @@ make status        # Check status
 
 ## Architecture
 
-This is a Telegram bot (~3,300 lines TypeScript) that lets you control Claude Code from your phone via text, voice, photos, and documents. Built with Bun and grammY.
+This is a Telegram bot (TypeScript) that lets you control Claude Code from your phone via text, voice, photos, and documents. Built with Bun and grammY; shared domain logic comes from the `soma-lib` package.
 
 ### Message Flow
 
@@ -103,21 +103,22 @@ Telegram message → Handler → Auth check → Rate limit → Claude session �
 
 ### Key Modules
 
-- **`src/index.ts`** - Entry point, registers handlers, starts polling
-- **`src/config.ts`** - Environment parsing, MCP loading, safety prompts
-- **`src/session.ts`** - `ClaudeSession` class wrapping Agent SDK V1 with streaming, session persistence, cumulative token tracking (input/output/cache), and defense-in-depth safety checks
-- **`src/security.ts`** - `RateLimiter` (token bucket), path validation, command safety checks
+- **`src/index.ts`** - Entry point: process signal hooks, then `bootstrapApplication()`
+- **`src/app/`** - Runtime wiring: `bootstrap.ts` (startup, polling), `telegram-bot.ts` (grammY bot, throttling, command/handler registration), `scheduler-runner.ts`
+- **`src/config/`** - `index.ts` (environment parsing, MCP loading), `safety-prompt.ts`, `model.ts` / `model-catalog.ts` (model roster, effort levels)
+- **`src/core/session/`** - `session.ts` (`ClaudeSession`: Agent SDK streaming, session persistence, token tracking, safety checks), `session-manager.ts` (one session per chat/thread), `query-runtime.ts`
+- **`src/security.ts`** - `RateLimiter` (token bucket), path validation, command safety checks, group authorization
 - **`src/formatting.ts`** - Markdown→HTML conversion for Telegram, tool status emoji formatting
-- **`src/utils.ts`** - Audit logging, voice transcription (OpenAI), typing indicators
-- **`src/types.ts`** - Shared TypeScript types
-- **`src/scheduler.ts`** - Cron scheduler for scheduled prompts (loads `cron.yaml`, auto-reloads on file changes)
+- **`src/utils/`** - `audit.ts` (audit log), `voice.ts` (voice transcription), `typing.ts` (typing indicator) and other helpers
+- **`src/types.ts`, `src/types/`** - Shared TypeScript types
+- **`src/scheduler/`** - Cron scheduler for scheduled prompts (`service.ts` loads `cron.yaml`, auto-reloads on file changes)
 
 ### Handlers (`src/handlers/`)
 
 Each message type has a dedicated async handler:
-- **`commands.ts`** - `/start`, `/help`, `/new`, `/stop`, `/status`, `/stats`, `/resume`, `/cron`, `/restart`, `/retry`
+- **`commands/`** - `/start`, `/help`, `/new`, `/stop`, `/status`, `/stats`, `/resume`, `/cron`, `/restart`, `/retry`, `/sessions`, `/context`, `/skills`, `/model` (`session-commands.ts`, `system-commands.ts`, `usage-commands.ts`, re-exported by `commands/index.ts`)
 - **`text.ts`** - Text messages with intent filtering
-- **`voice.ts`** - Voice→text via OpenAI, then same flow as text
+- **`voice.ts`** - Voice→text via the local STT server (`STT_URL`, `src/utils/voice.ts`), then same flow as text
 - **`photo.ts`** - Image analysis with media group buffering (1s timeout for albums)
 - **`document.ts`** - PDF extraction (pdftotext CLI) and text file processing
 - **`callback.ts`** - Inline keyboard button handling for UIAskUserQuestion choice system
@@ -138,13 +139,14 @@ All config via `.env` (copy from `.env.example`). Key variables:
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS` (required)
 - `CLAUDE_WORKING_DIR` - Working directory for Claude
 - `ALLOWED_PATHS` - Directories Claude can access
-- `OPENAI_API_KEY` - For voice transcription
+- `STT_URL` - Local speech-to-text server for voice messages (needs `ffmpeg`)
+- `CLAUDE_CODE_PATH` - Claude Code executable the Agent SDK runs (optional; default is the SDK's bundled one). `CLAUDE_CLI_PATH` does not affect the bot.
 
 MCP servers defined in `mcp-config.ts`.
 
 ### Runtime Files
 
-- `/tmp/soma-session.json` - Session persistence for `/resume`
+- `/tmp/soma-sessions/<SERVICE_NAME>/` - Session persistence for `/resume`
 - `/tmp/soma/` - Downloaded photos/documents
 - `/tmp/soma-audit.log` - Audit log
 - `cron.yaml` - Cron scheduler config (in working directory)
@@ -159,9 +161,9 @@ MCP servers defined in `mcp-config.ts`.
 
 **Testing discipline**: PR review will expose missing tests. Write tests BEFORE deployment, not after. Critical gaps: state machine transitions, integration scenarios, edge cases (concurrent callbacks, messageId validation).
 
-**Adding a command**: Create handler in `commands.ts`, register in `index.ts` with `bot.command("name", handler)`
+**Adding a command**: Create the handler in `src/handlers/commands/*.ts`, export it from `commands/index.ts` and `handlers/index.ts`, and register it in `src/app/telegram-bot.ts` with `bot.command("name", handler)`
 
-**Adding a message handler**: Create in `handlers/`, export from `index.ts`, register in `index.ts` with appropriate filter
+**Adding a message handler**: Create in `src/handlers/`, export from `handlers/index.ts`, register in `src/app/telegram-bot.ts` with the appropriate filter
 
 **Streaming pattern**: All handlers use `createStatusCallback()` from `streaming.ts` and `session.sendMessageStreaming()` for live updates.
 

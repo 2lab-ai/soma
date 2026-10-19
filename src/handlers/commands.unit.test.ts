@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import type { Context } from "grammy";
 import { ALLOWED_USERS } from "../config";
-import { handleNew, handleResume } from "./commands";
+import { handleNew, handleResume } from "./commands/index";
 import { handleContext } from "./commands/usage-commands";
 import { formatDuration, formatTimeRemaining } from "./commands/formatters";
 import { ClaudeSession } from "../core/session/session";

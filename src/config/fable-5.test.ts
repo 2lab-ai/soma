@@ -15,14 +15,14 @@
  *    `usesAdaptiveThinking()`; `isOpusFamily()` stays the literal opus check.
  *  - The whole fable line reports a 1M window from `lookupContextWindowSize`
  *    with no `context-1m-2025-08-07` beta header.
- *  - DEFAULT_MODEL is unchanged (Fable is opt-in, not the default).
+ *  - DEFAULT_MODEL is unchanged (Fable is opt-in, not the default) — pinned
+ *    in opus-4-8-1m.test.ts.
  */
 import { describe, expect, test } from "bun:test";
 import { applyModelSpecificOverrides } from "../providers/claude-options";
 import { lookupContextWindowSize } from "../core/session/session-helpers";
 import {
   AVAILABLE_MODELS,
-  DEFAULT_MODEL,
   isOpusFamily,
   MODEL_DISPLAY_NAMES,
   type ModelConfig,
@@ -44,11 +44,6 @@ describe("fable-5-1 — release wiring", () => {
 
   test("MODEL_DISPLAY_NAMES carries a Fable 5.1 (1M) label", () => {
     expect(MODEL_DISPLAY_NAMES[FABLE]).toBe("Fable 5.1 (1M)");
-  });
-
-  test("DEFAULT_MODEL is unchanged — Fable is opt-in, not the default", () => {
-    expect(DEFAULT_MODEL).toBe("claude-opus-4-8[1m]");
-    expect(isOpusFamily(DEFAULT_MODEL)).toBe(true);
   });
 });
 

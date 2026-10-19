@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { describe, test, expect, beforeEach, jest } from "bun:test";
 import { ClaudeSession } from "./core/session/session";
 import { createSteeringMessage } from "./types/session";
 import type { SessionData } from "./types/session";
@@ -997,12 +997,42 @@ describe("startProcessing / stopProcessing - stuck state prevention", () => {
     expect(session.isProcessing).toBe(false);
   });
 
-  test("timeout guard auto-releases stuck state", async () => {
-    session = new ClaudeSession("test-processing");
-    session.startProcessing();
-    expect(session.isProcessing).toBe(true);
-    await session.kill();
-    expect(session.isProcessing).toBe(false);
+  // The 60 s guard in ClaudeSession.startProcessing() (soma-vig7): a handler
+  // that never calls the release callback must not leave isProcessing stuck.
+  test("timeout guard auto-releases stuck state after 60 s", () => {
+    jest.useFakeTimers();
+    try {
+      session = new ClaudeSession("test-processing");
+      session.startProcessing(); // release callback deliberately never called
+      expect(session.isProcessing).toBe(true);
+
+      jest.advanceTimersByTime(59_999);
+      expect(session.isProcessing).toBe(true);
+
+      jest.advanceTimersByTime(1);
+      expect(session.isProcessing).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("releasing cancels the timeout guard, so it cannot cut a later processing window short", () => {
+    jest.useFakeTimers();
+    try {
+      session = new ClaudeSession("test-processing");
+      const releaseFirst = session.startProcessing();
+      jest.advanceTimersByTime(30_000);
+      releaseFirst();
+
+      session.startProcessing();
+      jest.advanceTimersByTime(30_000); // the first guard's 60 s deadline passes
+      expect(session.isProcessing).toBe(true);
+
+      jest.advanceTimersByTime(30_000); // the second guard's own 60 s deadline
+      expect(session.isProcessing).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test("steering buffer preserved after stopProcessing", () => {

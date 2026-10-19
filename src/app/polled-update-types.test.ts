@@ -9,10 +9,8 @@ import { POLLED_UPDATE_TYPES } from "./bootstrap";
  * handlers rely on instead of inheriting per-token server state.
  */
 describe("POLLED_UPDATE_TYPES", () => {
-  test("asks for callback_query — inline keyboards (/model, /skills) are dead without it", () => {
-    expect(POLLED_UPDATE_TYPES).toContain("callback_query");
-  });
-
+  // callback_query is the one that regressed: inline keyboards (/model,
+  // /skills) are dead without it.
   test("covers every update type registerBotHandlers listens for", () => {
     expect([...POLLED_UPDATE_TYPES].sort()).toEqual([
       "callback_query",

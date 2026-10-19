@@ -50,13 +50,9 @@ describe("opus-4.8 — release wiring", () => {
   });
 });
 
-describe("opus-4.8 — isOpusFamily covers 4.7 and 4.8", () => {
+describe("opus-4.8 — isOpusFamily covers 4.7 (4.8 ids: opus-5.test.ts)", () => {
   test("4.7 is opus family", () => {
     expect(isOpusFamily("claude-opus-4-7")).toBe(true);
-  });
-
-  test("4.8 is opus family", () => {
-    expect(isOpusFamily("claude-opus-4-8")).toBe(true);
   });
 
   test("sonnet / haiku / unrelated ids are not opus family", () => {

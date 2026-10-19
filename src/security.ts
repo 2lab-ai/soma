@@ -204,8 +204,9 @@ export type ChatType = "private" | "group" | "supergroup" | "channel";
  *
  * Rules:
  * - Private chat: user must be in ALLOWED_USERS
- * - Group/Supergroup: group must be in ALLOWED_GROUPS (static) OR GroupRegistry (dynamic),
- *   AND user must be in ALLOWED_USERS
+ * - Group/Supergroup in ALLOWED_GROUPS (static): user must be in ALLOWED_USERS
+ * - Group/Supergroup in GroupRegistry (dynamic): user must be the group's owner
+ *   (since #3; see docs/group-owner-confirm/trace.md)
  * - Channel: not supported
  *
  * Trace: docs/telegram-group-session/trace.md, Scenario 4, Section 3a
