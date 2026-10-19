@@ -269,14 +269,23 @@ uninstall-service:
 	fi
 
 # View logs
+# Darwin: the LaunchAgent (install-macos-service.sh) logs to ~/Library/Logs, like start: reads.
 logs:
 	@echo "📋 Service logs:"
-	@tail -f $(LOGFILE)
+	@if [ "$(UNAME_S)" = "Darwin" ] && [ -f $(MACOS_PLIST) ]; then \
+		tail -f $$HOME/Library/Logs/ai.2lab.$(SERVICE_NAME).out.log; \
+	else \
+		tail -f $(LOGFILE); \
+	fi
 
 # View error logs
 errors:
 	@echo "❌ Error logs:"
-	@tail -f $(ERRFILE)
+	@if [ "$(UNAME_S)" = "Darwin" ] && [ -f $(MACOS_PLIST) ]; then \
+		tail -f $$HOME/Library/Logs/ai.2lab.$(SERVICE_NAME).err.log; \
+	else \
+		tail -f $(ERRFILE); \
+	fi
 
 # Service/process status
 status:
