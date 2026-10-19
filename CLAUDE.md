@@ -139,6 +139,7 @@ All config via `.env` (copy from `.env.example`). Key variables:
 - `CLAUDE_WORKING_DIR` - Working directory for Claude
 - `ALLOWED_PATHS` - Directories Claude can access
 - `STT_URL` - Local speech-to-text server for voice messages (needs `ffmpeg`)
+- `CLAUDE_CODE_PATH` - Claude Code executable the Agent SDK runs (optional; default is the SDK's bundled one). `CLAUDE_CLI_PATH` does not affect the bot.
 
 MCP servers defined in `mcp-config.ts`.
 
