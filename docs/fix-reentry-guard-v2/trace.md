@@ -5,6 +5,9 @@
 
 ## Scenario 1 — PID lock prevents duplicate instances
 
+> **Reverted.** The PID lock was removed from `bootstrap.ts` in `9cc137e`, and the unused
+> `src/app/pid-lock.ts` was deleted in the 2026-10 dead-code audit. Kept for history only.
+
 ### 1. Entry Point
 - Function: `acquirePidLock()` called from bootstrap
 - File: `src/app/bootstrap.ts`

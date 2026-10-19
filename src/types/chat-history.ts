@@ -73,23 +73,3 @@ export interface ISummaryStorage {
   getLatest(granularity: SummaryGranularity, count: number): Promise<Summary[]>;
   getSummary(granularity: SummaryGranularity, date: Date): Promise<Summary | null>;
 }
-
-export interface ChatHistoryConfig {
-  dataDir: string;
-  retentionDays: {
-    chats: number | null;
-    summaries: number | null;
-  };
-  summaryModel: string;
-  enabled: boolean;
-}
-
-export const DEFAULT_CHAT_HISTORY_CONFIG: ChatHistoryConfig = {
-  dataDir: "data",
-  retentionDays: {
-    chats: null,
-    summaries: null,
-  },
-  summaryModel: "claude-haiku-4-20250514",
-  enabled: true,
-};
