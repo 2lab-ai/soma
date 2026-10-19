@@ -9,14 +9,13 @@
  *
  * ── Design notes ──
  *
- * The model-switch guard lives INSIDE sendMessageStreaming at session.ts:769.
- * Driving it end-to-end would require booting the Claude SDK, which is way
- * too heavy for a regression test and not the point. Instead, we replicate
- * the EXACT guard predicate from session.ts:769 via public getters/setters
- * (`getLastUsedModel`, `setLastUsedModel`, the public `sessionId` field).
- *
- * No private field reads — only public API. If the guard moves or changes,
- * tests must follow.
+ * The model-switch guard runs inside sendMessageStreaming. Driving it
+ * end-to-end would require booting the Claude SDK, which is too heavy for a
+ * regression test and not the point. Instead, applyModelSwitchGuard below
+ * calls the production predicate (`shouldResetSessionForModelSwitch`, the
+ * function sendMessageStreaming uses) with the session's public state
+ * (`getLastUsedModel`, the public `sessionId` field) and applies the same
+ * reset. No private field reads — only public API.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, writeFileSync } from "fs";
@@ -24,6 +23,7 @@ import { mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { ClaudeSession } from "./session";
+import { shouldResetSessionForModelSwitch } from "./session-helpers";
 import {
   FileSessionStore,
   getSessionFilePath,
@@ -48,16 +48,20 @@ afterEach(async () => {
 });
 
 /**
- * Mirror of session.ts:769 model-switch guard. Public-API only.
- * Returns true if the guard would reset sessionId for this (session, model)
- * combination, false otherwise. Side-effect identical to the real path.
+ * Applies the production model-switch predicate to a session the way
+ * sendMessageStreaming does. Returns true if sessionId was reset.
  */
 function applyModelSwitchGuard(
   session: ClaudeSession,
   effectiveModel: ModelId
 ): boolean {
-  const lastUsedModel = session.getLastUsedModel();
-  if (session.sessionId && lastUsedModel && effectiveModel !== lastUsedModel) {
+  if (
+    shouldResetSessionForModelSwitch(
+      session.sessionId,
+      session.getLastUsedModel(),
+      effectiveModel
+    )
+  ) {
     session.sessionId = null;
     return true;
   }

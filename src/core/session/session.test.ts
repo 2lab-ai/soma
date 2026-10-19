@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ClaudeSession } from "./session";
+import { shouldResetSessionForModelSwitch } from "./session-helpers";
 import type { ModelId } from "../../config/model";
 
 describe("core/session/session", () => {
@@ -93,81 +94,25 @@ describe("sendMessageStreaming re-entrancy guard (soma-fkx2)", () => {
   });
 });
 
+// The guard predicate used by ClaudeSession.sendMessageStreaming. These tests
+// used to copy the predicate into each test body and assert on the copy.
 describe("model switch forces new session (model-switch-session-reset)", () => {
-  test("sessionId is cleared when model changes between queries", () => {
-    const session = new ClaudeSession("test:model-switch");
+  const OPUS: ModelId = "claude-opus-4-7";
+  const SONNET: ModelId = "claude-sonnet-4-5-20250929";
 
-    // Simulate a completed query with Opus
-    (session as any).sessionId = "fake-opus-session-id";
-    (session as any).lastUsedModel = "claude-opus-4-7" as ModelId;
-    (session as any)._isActive = true;
-
-    // Access the private field to verify initial state
-    expect((session as any).sessionId).toBe("fake-opus-session-id");
-    expect((session as any).lastUsedModel).toBe("claude-opus-4-7");
-
-    // Simulate what sendMessageStreaming does when model changes:
-    // effectiveModel would be Sonnet (from /model command)
-    const effectiveModel: ModelId = "claude-sonnet-4-5-20250929";
-    const lastUsedModel = (session as any).lastUsedModel as ModelId | null;
-
-    if ((session as any).sessionId && lastUsedModel && effectiveModel !== lastUsedModel) {
-      (session as any).sessionId = null;
-    }
-
-    // Session should be reset
-    expect((session as any).sessionId).toBeNull();
+  test("resets when the model changes between queries", () => {
+    expect(shouldResetSessionForModelSwitch("fake-opus-session-id", OPUS, SONNET)).toBe(true);
   });
 
-  test("sessionId is preserved when model stays the same", () => {
-    const session = new ClaudeSession("test:model-same");
-
-    (session as any).sessionId = "fake-opus-session-id";
-    (session as any).lastUsedModel = "claude-opus-4-7" as ModelId;
-
-    const effectiveModel: ModelId = "claude-opus-4-7";
-    const lastUsedModel = (session as any).lastUsedModel as ModelId | null;
-
-    if ((session as any).sessionId && lastUsedModel && effectiveModel !== lastUsedModel) {
-      (session as any).sessionId = null;
-    }
-
-    // Session should NOT be reset
-    expect((session as any).sessionId).toBe("fake-opus-session-id");
+  test("keeps the session when the model stays the same", () => {
+    expect(shouldResetSessionForModelSwitch("fake-opus-session-id", OPUS, OPUS)).toBe(false);
   });
 
-  test("sessionId is preserved when lastUsedModel is null (first query)", () => {
-    const session = new ClaudeSession("test:model-first");
-
-    (session as any).sessionId = "fake-session-id";
-    // lastUsedModel defaults to null
-
-    const effectiveModel: ModelId = "claude-sonnet-4-5-20250929";
-    const lastUsedModel = (session as any).lastUsedModel as ModelId | null;
-
-    if ((session as any).sessionId && lastUsedModel && effectiveModel !== lastUsedModel) {
-      (session as any).sessionId = null;
-    }
-
-    // Should NOT reset — first query, no previous model to compare
-    expect((session as any).sessionId).toBe("fake-session-id");
+  test("keeps the session when no model was recorded yet (first query, legacy file)", () => {
+    expect(shouldResetSessionForModelSwitch("fake-session-id", null, SONNET)).toBe(false);
   });
 
-  test("temporaryModelOverride triggers session reset", () => {
-    const session = new ClaudeSession("test:model-override");
-
-    (session as any).sessionId = "fake-opus-session-id";
-    (session as any).lastUsedModel = "claude-opus-4-7" as ModelId;
-
-    // Simulate rate limit fallback setting temporaryModelOverride
-    session.temporaryModelOverride = "claude-sonnet-4-5-20250929";
-    const effectiveModel: ModelId = session.temporaryModelOverride ?? "claude-opus-4-7";
-    const lastUsedModel = (session as any).lastUsedModel as ModelId | null;
-
-    if ((session as any).sessionId && lastUsedModel && effectiveModel !== lastUsedModel) {
-      (session as any).sessionId = null;
-    }
-
-    expect((session as any).sessionId).toBeNull();
+  test("nothing to reset when there is no stored session", () => {
+    expect(shouldResetSessionForModelSwitch(null, OPUS, SONNET)).toBe(false);
   });
 });

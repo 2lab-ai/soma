@@ -65,6 +65,7 @@ import {
   findLatestMainAssistantContextUsageFromTranscript,
   getContextWindowUsedTokens,
   getThinkingLevel,
+  shouldResetSessionForModelSwitch,
 } from "./session-helpers";
 import {
   createSessionIdentity,
@@ -786,12 +787,10 @@ export class ClaudeSession {
       );
     }
 
-    // Force new session when model changes — SDK sessions are bound to
-    // the model they were created with; resuming with a different model
-    // silently ignores the model parameter.
-    if (this.sessionId && this.lastUsedModel && effectiveModel !== this.lastUsedModel) {
+    // Force new session when model changes (see shouldResetSessionForModelSwitch).
+    if (shouldResetSessionForModelSwitch(this.sessionId, this.lastUsedModel, effectiveModel)) {
       console.log(
-        `[MODEL-SWITCH] Model changed: ${getDisplayName(this.lastUsedModel)} → ${getDisplayName(effectiveModel)}. Resetting session.`
+        `[MODEL-SWITCH] Model changed: ${getDisplayName(this.lastUsedModel as ModelId)} → ${getDisplayName(effectiveModel)}. Resetting session.`
       );
       this.sessionId = null;
     }

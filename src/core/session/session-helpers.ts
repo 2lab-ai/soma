@@ -313,6 +313,21 @@ export function findLatestMainAssistantContextUsageFromTranscript(
   return null;
 }
 
+/**
+ * Model-switch guard. SDK sessions are bound to the model they were created
+ * with; resuming one with a different model silently ignores the model
+ * parameter. So a stored session is dropped when the model for this query
+ * differs from the model that last ran in it. With no stored session, or no
+ * recorded model (first query, legacy session file), there is nothing to reset.
+ */
+export function shouldResetSessionForModelSwitch(
+  sessionId: string | null,
+  lastUsedModel: string | null,
+  effectiveModel: string
+): boolean {
+  return Boolean(sessionId && lastUsedModel && effectiveModel !== lastUsedModel);
+}
+
 export function formatSteeringMessages(messages: SteeringMessage[]): string {
   return messages
     .map((msg) => {
