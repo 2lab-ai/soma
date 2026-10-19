@@ -49,3 +49,8 @@ test("test mode is pinned (TEMP_DIR redirect depends on it) and XDG_CONFIG_HOME 
   expect(process.env.NODE_ENV).toBe("test");
   expect(process.env.XDG_CONFIG_HOME).toBeUndefined();
 });
+
+test("usage snapshots cannot reach the Keychain, Anthropic or a live llmux", () => {
+  expect(process.env.AUTH_MODE).toBeUndefined();
+  expect(process.env.LLMUX_BASE_URL).toBe("http://127.0.0.1:9");
+});

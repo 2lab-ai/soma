@@ -48,6 +48,12 @@ for (const name of [".env", `.env.${process.env.NODE_ENV ?? "test"}`, ".env.loca
 process.env.NODE_ENV = "test";
 // usage.ts resolves llmux.json under $XDG_CONFIG_HOME before $HOME/.config.
 delete process.env.XDG_CONFIG_HOME;
+// Provider usage snapshots: tests that drive the real sendMessageStreaming call
+// captureUsageSnapshot. An inherited AUTH_MODE=oauth reads the macOS Keychain
+// and calls Anthropic; the default llmux mode calls the local llmux daemon.
+// Default mode + an unroutable llmux URL makes both a fast, local null.
+delete process.env.AUTH_MODE;
+process.env.LLMUX_BASE_URL = "http://127.0.0.1:9";
 // config/index.ts exits without these; tests mock the Telegram API anyway.
 process.env.TELEGRAM_BOT_TOKEN ||= "test-telegram-token";
 process.env.TELEGRAM_ALLOWED_USERS ||= "1";
