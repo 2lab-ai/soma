@@ -22,30 +22,19 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "fs";
 import { join, resolve } from "path";
+import { parseDotenv } from "./parse-dotenv";
 
 const repoRoot = resolve(import.meta.dir, "..");
 const scratchRoot = join(repoRoot, ".test-tmp");
 mkdirSync(scratchRoot, { recursive: true });
-const scratch = (prefix: string) => realpathSync(mkdtempSync(join(scratchRoot, prefix)));
+const scratch = (prefix: string) =>
+  realpathSync(mkdtempSync(join(scratchRoot, prefix)));
 
 // 1. Undo Bun's .env auto-load. It runs before this preload and would hand the
 //    suite the operator's bot token, ALLOWED_PATHS, AUDIT_LOG_PATH, provider
 //    keys… A variable is dropped only when its value is exactly what the file
 //    says, so anything the caller exported explicitly (e.g. `make test`'s
 //    TELEGRAM_* placeholders) survives.
-function parseDotenv(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const raw of text.split(/\r?\n/)) {
-    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(raw);
-    if (!m) continue;
-    let value = m[2] ?? "";
-    const q = value[0];
-    if ((q === '"' || q === "'") && value.endsWith(q) && value.length >= 2) value = value.slice(1, -1);
-    else value = value.replace(/\s+#.*$/, "");
-    out[m[1] as string] = value;
-  }
-  return out;
-}
 for (const name of [".env", `.env.${process.env.NODE_ENV ?? "test"}`, ".env.local"]) {
   const file = join(repoRoot, name);
   if (!existsSync(file)) continue;
@@ -53,6 +42,12 @@ for (const name of [".env", `.env.${process.env.NODE_ENV ?? "test"}`, ".env.loca
     if (process.env[key] === value) delete process.env[key];
   }
 }
+// Pin test mode after the undo: Bun keeps an inherited NODE_ENV (e.g.
+// production), and the undo above deletes a NODE_ENV=test that came from .env.
+// config/env.ts resolveTempDir honours SOMA_TEMP_DIR only in test mode.
+process.env.NODE_ENV = "test";
+// usage.ts resolves llmux.json under $XDG_CONFIG_HOME before $HOME/.config.
+delete process.env.XDG_CONFIG_HOME;
 // config/index.ts exits without these; tests mock the Telegram API anyway.
 process.env.TELEGRAM_BOT_TOKEN ||= "test-telegram-token";
 process.env.TELEGRAM_ALLOWED_USERS ||= "1";

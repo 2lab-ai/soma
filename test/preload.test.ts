@@ -44,3 +44,8 @@ test("attachment staging dir and audit log are scratch paths", () => {
 test("the operator's ALLOWED_PATHS never reaches the suite", () => {
   expect(process.env.ALLOWED_PATHS).toBeUndefined();
 });
+
+test("test mode is pinned (TEMP_DIR redirect depends on it) and XDG_CONFIG_HOME is cleared", () => {
+  expect(process.env.NODE_ENV).toBe("test");
+  expect(process.env.XDG_CONFIG_HOME).toBeUndefined();
+});
