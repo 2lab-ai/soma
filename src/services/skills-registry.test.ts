@@ -8,9 +8,12 @@ import { join } from "path";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 
-const TEST_REGISTRY_PATH = join(homedir(), ".claude", "skills-registry.json");
+// Same resolution as skills-registry.ts ($HOME first; test/preload.ts points it
+// at a scratch dir so this suite never touches the operator's ~/.claude).
+const HOME = process.env.HOME || homedir();
+const TEST_REGISTRY_PATH = join(HOME, ".claude", "skills-registry.json");
 const TEST_BACKUP_PATH = `${TEST_REGISTRY_PATH}.backup`;
-const TEST_SKILLS_DIR = join(homedir(), ".claude", "skills");
+const TEST_SKILLS_DIR = join(HOME, ".claude", "skills");
 const REQUIRED_TEST_SKILLS = ["do-work", "new-task"];
 
 let createdSkillDirs: string[] = [];

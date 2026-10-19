@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { buildSafetyPrompt } from "./safety-prompt";
-import { SAFETY_PROMPT } from "./index";
+import { ALLOWED_PATHS, SAFETY_PROMPT } from "./index";
 
 // Regression: agi-2ry
 //
@@ -72,9 +72,15 @@ describe("SAFETY_PROMPT (exported wiring)", () => {
     expect(SAFETY_PROMPT).toMatch(/\/tmp\/soma\/?/);
 
     // Runtime-compat siblings (executable-layer only) MUST NOT leak into the
-    // model-facing prompt.
-    expect(SAFETY_PROMPT).not.toContain("/private/tmp");
-    expect(SAFETY_PROMPT).not.toContain("/var/folders");
+    // model-facing prompt. The user-access roots themselves may legitimately
+    // live under those prefixes (test/preload.ts realpaths WORKING_DIR, so a
+    // checkout under /tmp yields /private/tmp/...), so mask them first.
+    const withoutAllowedRoots = ALLOWED_PATHS.reduce(
+      (prompt, root) => prompt.split(root).join("<ALLOWED_ROOT>"),
+      SAFETY_PROMPT
+    );
+    expect(withoutAllowedRoots).not.toContain("/private/tmp");
+    expect(withoutAllowedRoots).not.toContain("/var/folders");
 
     // Attachment policy must explicitly narrow reads to attachments called
     // out in the current message and mark them read-only. Without both, the

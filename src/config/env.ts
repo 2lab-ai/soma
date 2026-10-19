@@ -1,7 +1,9 @@
 import { existsSync } from "fs";
 import { homedir } from "os";
 
-const HOME = homedir();
+// $HOME first: Bun caches os.homedir() at process start, so test/preload.ts can
+// only redirect the home directory through the env var. Same value in production.
+const HOME = process.env.HOME || homedir();
 
 export const HOME_DIR = HOME;
 

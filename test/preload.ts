@@ -19,13 +19,22 @@
  * `process.on("exit")` handlers, and wiping the shared root at startup would
  * delete the directory of another `bun test` still running in this checkout.
  * Leftovers are gitignored; remove `.test-tmp/` by hand when it bothers you.
+ * HOME is redirected to a scratch dir as well (see below).
  */
 import { mkdirSync, mkdtempSync, realpathSync } from "fs";
 import { join, resolve } from "path";
 
+const scratchRoot = resolve(import.meta.dir, "..", ".test-tmp");
+mkdirSync(scratchRoot, { recursive: true });
+
 if (process.env.SOMA_TEST_KEEP_WORKING_DIR !== "1") {
-  const scratchRoot = resolve(import.meta.dir, "..", ".test-tmp");
-  mkdirSync(scratchRoot, { recursive: true });
   // realpath so ALLOWED_PATHS containment (canonical-vs-canonical) matches.
   process.env.CLAUDE_WORKING_DIR = realpathSync(mkdtempSync(join(scratchRoot, "run-")));
 }
+
+// HOME too, unconditionally: modules capture homedir() at import (e.g.
+// services/skills-registry.ts → ~/.claude/skills-registry.json), and
+// skills-registry.test.ts deletes/corrupts that file on purpose. Against the
+// real home it left "{ invalid json ]" in the operator's ~/.claude whenever no
+// registry existed to back up. No test needs the operator's real home.
+process.env.HOME = realpathSync(mkdtempSync(join(scratchRoot, "home-")));

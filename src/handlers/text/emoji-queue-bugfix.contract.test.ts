@@ -128,18 +128,21 @@ describe("Scenario 3 — STEERING_DELIVERED Reaction on Consume", () => {
     expect(result).toBeNull();
   });
 
-  test("consumeSteeringWithIds filters out undefined messageIds", () => {
-    // addSteering with messageId=undefined should be filtered
-    session.addSteering("no-id-msg", undefined as any);
+  test("consumeSteeringWithIds returns every buffered messageId; a missing id is rejected on add", () => {
+    // createSteeringMessage validates messageId as a positive integer (9d0936a),
+    // so an id-less message never reaches the buffer. This test used to assert
+    // the opposite (accept + filter) and was red from the commit that added it
+    // (47fcd2d) — the behavior it described never existed.
+    expect(() => session.addSteering("no-id-msg", undefined as any)).toThrow("positive integer");
     session.addSteering("has-id-msg", 201);
+    session.addSteering("second-msg", 202);
 
     const result = session.consumeSteeringWithIds();
     expect(result).not.toBeNull();
-    // Only the valid messageId should be in the array
-    expect(result!.messageIds).toEqual([201]);
-    // But formatted text should include both messages
-    expect(result!.formatted).toContain("no-id-msg");
+    expect(result!.messageIds).toEqual([201, 202]);
     expect(result!.formatted).toContain("has-id-msg");
+    expect(result!.formatted).toContain("second-msg");
+    expect(result!.formatted).not.toContain("no-id-msg");
   });
 });
 
