@@ -70,7 +70,8 @@ describe("Makefile log targets on macOS", () => {
     async () => {
       const output = await runUntil("logs", makeScratchHome(), "SENTINEL-OUT");
       expect(output).toContain("SENTINEL-OUT");
-    }
+    },
+    15_000 // above runUntil's own 5 s cutoff, so a slow make fails on the assertion
   );
 
   test.skipIf(process.platform !== "darwin")(
@@ -78,6 +79,7 @@ describe("Makefile log targets on macOS", () => {
     async () => {
       const output = await runUntil("errors", makeScratchHome(), "SENTINEL-ERR");
       expect(output).toContain("SENTINEL-ERR");
-    }
+    },
+    15_000
   );
 });

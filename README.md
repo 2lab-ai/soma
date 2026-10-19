@@ -153,9 +153,11 @@ The bot will start automatically on login and restart if it crashes.
 **Logs:**
 
 ```bash
-tail -f /tmp/soma.log   # stdout
-tail -f /tmp/soma.err   # stderr
+make logs     # stdout
+make errors   # stderr
 ```
+
+`make install-service` writes them to `~/Library/Logs/ai.2lab.<SERVICE_NAME>.{out,err}.log`; the manual plist template writes `/tmp/soma.{log,err}`.
 
 **Shell aliases:** If running as a service, these aliases make it easy to manage the bot (add to `~/.zshrc` or `~/.bashrc`):
 
@@ -201,7 +203,7 @@ Multiple layers protect against misuse:
 
 - Verify your user ID is in `TELEGRAM_ALLOWED_USERS`
 - Check the bot token is correct
-- Look at logs: `tail -f /tmp/soma.err`
+- Look at logs: `make errors`
 - Ensure the bot process is running
 
 **Claude authentication issues**
