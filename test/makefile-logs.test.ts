@@ -31,11 +31,15 @@ function makeScratchHome(): string {
 /** Run a make target until `sentinel` is printed (or 5 s pass), then kill it. */
 function runUntil(target: string, home: string, sentinel: string): Promise<string> {
   return new Promise((done) => {
-    const child = spawn("make", ["-s", target, `SERVICE_NAME=${SERVICE}`, "ENV=/dev/null"], {
-      cwd: REPO,
-      env: { ...process.env, HOME: home },
-      detached: true, // own process group, so the kill below also stops `tail -f`
-    });
+    const child = spawn(
+      "make",
+      ["-s", target, `SERVICE_NAME=${SERVICE}`, "ENV=/dev/null"],
+      {
+        cwd: REPO,
+        env: { ...process.env, HOME: home },
+        detached: true, // own process group, so the kill below also stops `tail -f`
+      }
+    );
     let output = "";
     let finished = false;
     const finish = () => {
