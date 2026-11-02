@@ -1,4 +1,5 @@
 import { resolve } from "path";
+import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import type { McpServerConfig } from "../types";
 import {
   findClaudeCli,
@@ -7,6 +8,8 @@ import {
   parseEnvInt,
   parseEnvList,
   parseEnvNumbers,
+  parseSettingSources,
+  parseTrustMode,
   resolveWorkingDir,
   resolveTempDir,
 } from "./env";
@@ -77,7 +80,18 @@ export const ALLOWED_PATHS = allowedPathsEnv.length
 export const TEMP_DIR = resolveTempDir();
 export const TEMP_PATHS = ["/tmp/", "/private/tmp/", "/var/folders/"];
 
-export const SAFETY_PROMPT = buildSafetyPrompt(ALLOWED_PATHS, [TEMP_DIR]);
+// SOMA_TRUST_MODE: `standard` (default) or `owner` for a single-owner bot.
+// Picks the safety prompt (config/safety-prompt.ts) and whether the Bash
+// file-argument check runs (core/session/query-runtime.ts
+// checkToolInputSafety). Parsed once, so an unknown value warns once.
+export const TRUST_MODE = parseTrustMode();
+export const SAFETY_PROMPT = buildSafetyPrompt(ALLOWED_PATHS, [TEMP_DIR], TRUST_MODE);
+
+// SOMA_SETTING_SOURCES: filesystem settings the spawned CLI loads. Default
+// `[]` keeps the operator's ~/.claude settings and hooks out of the bot;
+// `user` makes ~/.claude/skills visible; with `project` the CLI loads
+// CLAUDE.md itself and the session stops injecting its own copy.
+export const SETTING_SOURCES: readonly SettingSource[] = parseSettingSources();
 
 export const UI_ASKUSER_INSTRUCTIONS = `
 # UIAskUserQuestion - Interactive Choice System

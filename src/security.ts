@@ -116,6 +116,49 @@ export function isPathAllowed(path: string): boolean {
   }
 }
 
+// The /dev stream pseudo-files, e.g. the target of `> /dev/null`. Bash file
+// arguments (core/session/query-runtime.ts) skip them; the rm check below
+// skips them only as redirection targets, never as rm operands. Exact matches
+// only — a prefix test would wave "/dev/fd/../../etc/passwd" through before
+// the path is resolved.
+const SHELL_PSEUDO_FILES = new Set([
+  "/dev/null",
+  "/dev/stdin",
+  "/dev/stdout",
+  "/dev/stderr",
+]);
+const DEV_FD_RE = /^\/dev\/fd\/\d+$/;
+
+export function isShellPseudoFile(path: string): boolean {
+  return SHELL_PSEUDO_FILES.has(path) || DEV_FD_RE.test(path);
+}
+
+// Redirection syntax in an rm command line: an operator word (`>`, `>>`,
+// `>|`, `<`, `2>`, `2>>`, `&>`, `&>>`) or an operator-prefixed target
+// (`>/dev/null`, `2>&1`). `>|` is tried before `>`, or `>|/dev/null` would
+// read as `>` with the target `|/dev/null`.
+const REDIRECT_OPERATOR_RE = /^(?:\d+|&)?(?:>\||>>?|<)$/;
+const REDIRECT_PREFIXED_RE = /^(?:\d+|&)?(?:>\||>>?|<)(.+)$/;
+const FD_DUPLICATE_RE = /^&(?:\d+|-)$/;
+
+/**
+ * True when an rm argument is redirection syntax that names no file: an
+ * operator, or an operator's target that is a /dev stream pseudo-file or an
+ * fd duplicate. A pseudo-file that is an rm OPERAND (`rm /dev/null` unlinks
+ * the device entry) is not redirection and stays path-checked, and so does a
+ * redirection to a real file (`> /etc/rm.log`).
+ */
+function isHarmlessRedirection(arg: string, previous: string | undefined): boolean {
+  if (REDIRECT_OPERATOR_RE.test(arg)) return true;
+  const prefixed = REDIRECT_PREFIXED_RE.exec(arg);
+  const target = prefixed
+    ? prefixed[1]!
+    : previous !== undefined && REDIRECT_OPERATOR_RE.test(previous)
+      ? arg
+      : null;
+  return target !== null && (isShellPseudoFile(target) || FD_DUPLICATE_RE.test(target));
+}
+
 // ============== Command Safety ==============
 
 /**
@@ -178,9 +221,11 @@ export function checkCommandSafety(command: string): [safe: boolean, reason: str
       const rmMatch = command.match(/rm\s+(.+)/i);
       if (rmMatch) {
         const args = rmMatch[1]!.split(/\s+/);
-        for (const arg of args) {
+        for (const [index, arg] of args.entries()) {
           // Skip flags
           if (arg.startsWith("-") || arg.length <= 1) continue;
+          // Skip redirections like the `> /dev/null` of `rm x > /dev/null`
+          if (isHarmlessRedirection(arg, args[index - 1])) continue;
 
           // Check if path is allowed
           if (!isPathAllowed(arg)) {

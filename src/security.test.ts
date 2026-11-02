@@ -89,6 +89,73 @@ describe("checkCommandSafety", () => {
     expect(safe).toBe(true);
   });
 
+  // Regression: choa bot log "rm target outside allowed paths: /dev/null".
+  // The rm branch reads every word after `rm ` as a target, so the redirect
+  // target of `rm x > /dev/null` was checked as a file to delete.
+  test("BUG choa-bash-guard: rm with output redirected to /dev pseudo-files is allowed", () => {
+    const target = `${ALLOWED_PATHS[0]}/stale.txt`;
+    expect(checkCommandSafety(`rm ${target} > /dev/null`)).toEqual([true, ""]);
+    expect(checkCommandSafety(`rm -f ${target} > /dev/stderr`)).toEqual([true, ""]);
+    expect(checkCommandSafety(`rm ${target} > /dev/fd/2`)).toEqual([true, ""]);
+  });
+
+  test("BUG choa-bash-guard: rm outside allowed paths is still blocked", () => {
+    expect(checkCommandSafety("rm /etc/x")).toEqual([
+      false,
+      "rm target outside allowed paths: /etc/x",
+    ]);
+    expect(checkCommandSafety("rm /etc/x > /dev/null")).toEqual([
+      false,
+      "rm target outside allowed paths: /etc/x",
+    ]);
+    // Exact-match skip: a /dev/fd prefix does not hide a traversal.
+    expect(checkCommandSafety("rm /dev/fd/../../etc/x")[0]).toBe(false);
+  });
+
+  // Review REJECT A3: the pseudo-file skip exempted rm OPERANDS too, and
+  // `rm /dev/null` unlinks the device entry. Only a redirection target is
+  // skipped; an operand is path-checked like any other.
+  test("BUG choa-bash-guard: rm of a /dev pseudo-file operand is blocked", () => {
+    expect(checkCommandSafety("rm /dev/null")).toEqual([
+      false,
+      "rm target outside allowed paths: /dev/null",
+    ]);
+    expect(checkCommandSafety("rm /dev/stdout")).toEqual([
+      false,
+      "rm target outside allowed paths: /dev/stdout",
+    ]);
+    expect(checkCommandSafety("rm -f /dev/null > /dev/null")).toEqual([
+      false,
+      "rm target outside allowed paths: /dev/null",
+    ]);
+  });
+
+  test("BUG choa-bash-guard: every redirection form to a pseudo-file is skipped", () => {
+    const target = `${ALLOWED_PATHS[0]}/stale.txt`;
+    for (const redirect of [
+      "> /dev/null",
+      ">> /dev/null",
+      "2> /dev/null",
+      "2>> /dev/null",
+      "&> /dev/null",
+      "&>> /dev/null",
+      "< /dev/stdin",
+      ">/dev/null",
+      "2>/dev/null",
+      "&>/dev/null",
+      ">| /dev/null",
+      ">|/dev/null",
+      "2>&1",
+    ]) {
+      expect(checkCommandSafety(`rm -f ${target} ${redirect}`)).toEqual([true, ""]);
+    }
+    // A redirection to a real file outside the roots is still checked.
+    expect(checkCommandSafety(`rm -f ${target} > /etc/rm.log`)).toEqual([
+      false,
+      "rm target outside allowed paths: /etc/rm.log",
+    ]);
+  });
+
   test("is case-insensitive for blocked patterns", () => {
     // If there are blocked patterns configured, they should work case-insensitively
     const [safe1] = checkCommandSafety("rm -rf /");

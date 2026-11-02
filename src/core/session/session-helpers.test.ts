@@ -8,8 +8,12 @@
  * behaviour is unchanged when the catalog is empty.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { __testResetCatalog, __testSeedCatalog } from "../../config/model-catalog";
 import {
+  buildClaudeMdSection,
   CONTEXT_1M_BETA,
   DEFAULT_CONTEXT_WINDOW_SIZE,
   resolveContextWindowSize,
@@ -55,5 +59,42 @@ describe("resolveContextWindowSize", () => {
     expect(resolveContextWindowSize({ model: "claude-sonnet-4-5-20250929" })).toBe(
       DEFAULT_CONTEXT_WINDOW_SIZE
     );
+  });
+});
+
+/**
+ * CLAUDE.md injection vs. SOMA_SETTING_SOURCES. The bot reads the working
+ * directory's CLAUDE.md into its own systemPrompt because `settingSources: []`
+ * keeps the CLI from loading it. Once `project` is a setting source the CLI
+ * loads CLAUDE.md itself, so the bot's copy would send it twice.
+ */
+describe("buildClaudeMdSection", () => {
+  let dir = "";
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "soma-claude-md-"));
+    writeFileSync(join(dir, "CLAUDE.md"), "# Project rules\nbe nice\n");
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("injects CLAUDE.md when no setting source loads it", () => {
+    const expected =
+      "\n\n# Project Instructions (CLAUDE.md)\n# Project rules\nbe nice\n\n";
+    expect(buildClaudeMdSection(dir, [])).toBe(expected);
+    // Only `project` makes the CLI load CLAUDE.md (sdk.d.ts settingSources).
+    expect(buildClaudeMdSection(dir, ["user", "local"])).toBe(expected);
+  });
+
+  test("skips the injection when project settings are loaded", () => {
+    expect(buildClaudeMdSection(dir, ["project"])).toBe("");
+    expect(buildClaudeMdSection(dir, ["user", "project"])).toBe("");
+  });
+
+  test("is empty when the working directory has no CLAUDE.md", () => {
+    rmSync(join(dir, "CLAUDE.md"));
+    expect(buildClaudeMdSection(dir, [])).toBe("");
   });
 });

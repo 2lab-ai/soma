@@ -3,6 +3,7 @@ import {
   type CanUseTool,
   type Options,
   type SDKMessage,
+  type SettingSource,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ProviderOrchestrator } from "../../providers/orchestrator";
 import type { ProviderEvent, ProviderQueryInput } from "../../providers/types.models";
@@ -10,9 +11,15 @@ import { applyModelSpecificOverrides } from "../../providers/claude-options";
 import { buildProviderEnv } from "../../config/llmux";
 import { resolve, dirname, basename, join } from "path";
 import { realpathSync } from "fs";
-import { ALLOWED_PATHS, STREAMING_THROTTLE_MS, TEMP_PATHS } from "../../config";
+import {
+  ALLOWED_PATHS,
+  STREAMING_THROTTLE_MS,
+  TEMP_PATHS,
+  TRUST_MODE,
+} from "../../config";
+import type { TrustMode } from "../../config/safety-prompt";
 import { escapeHtml, formatToolStatus } from "../../formatting";
-import { checkCommandSafety, isPathAllowed } from "../../security";
+import { checkCommandSafety, isPathAllowed, isShellPseudoFile } from "../../security";
 import type { QueryMetadata, StatusCallback, UsageSnapshot } from "../../types/runtime";
 import type { Provider } from "../../types/provider";
 import type { TokenUsage } from "../../types/session";
@@ -147,6 +154,11 @@ export interface BuildQueryRuntimeOptionsInput {
    * Without one, those prompts have no user round-trip and the turn stalls.
    */
   canUseTool?: CanUseTool;
+  /**
+   * Filesystem settings the spawned CLI loads (SOMA_SETTING_SOURCES,
+   * config/index.ts SETTING_SOURCES). Omitted = `[]`, SDK isolation.
+   */
+  settingSources?: readonly SettingSource[];
 }
 
 export function buildQueryRuntimeOptions(
@@ -155,11 +167,14 @@ export function buildQueryRuntimeOptions(
   const options: Options & { abortController: AbortController } = {
     model: input.model,
     cwd: input.cwd,
-    // SDK isolation: the bot is its own permission domain. Loading the
-    // operator's ~/.claude/settings.json (or a project one) would import their
-    // defaultMode and PermissionRequest/PreToolUse command hooks into every
-    // Telegram query. CLAUDE.md already reaches the model via systemPrompt.
-    settingSources: [],
+    // SDK isolation by default: the bot is its own permission domain. Loading
+    // the operator's ~/.claude/settings.json (or a project one) would import
+    // their defaultMode and PermissionRequest/PreToolUse command hooks into
+    // every Telegram query. CLAUDE.md already reaches the model via
+    // systemPrompt. SOMA_SETTING_SOURCES opts a bot into named sources (e.g.
+    // `user` for ~/.claude/skills); the explicit allow from preToolUseHook
+    // still keeps loaded permission defaults from prompting on Telegram.
+    settingSources: input.settingSources ? [...input.settingSources] : [],
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
@@ -426,7 +441,8 @@ function isPathInAllowedRoots(resolvedPath: string): boolean {
 
 export function checkToolInputSafety(
   toolName: string,
-  toolInput: Record<string, unknown>
+  toolInput: Record<string, unknown>,
+  trustMode: TrustMode = TRUST_MODE
 ): ToolInputValidation {
   if (toolName === "Bash") {
     const command = String(toolInput.command || "");
@@ -438,7 +454,18 @@ export function checkToolInputSafety(
     // Validate ALL absolute paths found in file-accessing commands.
     // Bash file commands enumerate/mutate content, so TEMP_PATHS does NOT
     // count as "allowed" here — only explicit ALLOWED_PATHS roots do.
-    const filePaths = extractBashFilePaths(command);
+    //
+    // The extraction is a heuristic (quoted paths, `python3 -c` and the like
+    // pass it), not the security boundary. SOMA_TRUST_MODE=owner skips it and
+    // so deliberately accepts outside-root Bash file access, in exchange for
+    // no false blocks on quoted sed/awk programs. checkCommandSafety above and the Read/Write/Edit/Grep/Glob
+    // root checks below apply in every mode. The /dev stream pseudo-files
+    // (`> /dev/null`) are dropped from the result: an exact match on them
+    // cannot hide an outside path.
+    const filePaths =
+      trustMode === "owner"
+        ? []
+        : extractBashFilePaths(command).filter((path) => !isShellPseudoFile(path));
     for (const extractedPath of filePaths) {
       const resolvedPath = resolve(extractedPath);
       if (!isPathInAllowedRoots(resolvedPath)) {

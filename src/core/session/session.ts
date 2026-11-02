@@ -4,6 +4,7 @@ import {
   CHAT_HISTORY_ACCESS_INFO,
   MCP_SERVERS,
   SAFETY_PROMPT,
+  SETTING_SOURCES,
   UI_ASKUSER_INSTRUCTIONS,
   WORKING_DIR,
   USE_NATIVE_STREAMING,
@@ -61,6 +62,7 @@ import type {
 import { isAbortError } from "../../utils/error-classification";
 import type { ChatCaptureService } from "../../services/chat-capture-service";
 import {
+  buildClaudeMdSection,
   captureUsageSnapshot,
   findLatestMainAssistantContextUsageFromTranscript,
   getContextWindowUsedTokens,
@@ -812,26 +814,9 @@ export class ClaudeSession {
 
     this.abortController = new AbortController();
 
-    // Explicitly load CLAUDE.md from working directory (resolving symlinks)
-    let claudeMdContent = "";
-    try {
-      const { realpathSync } = require("fs");
-      const resolvedCwd = realpathSync(this.workingDir);
-      const claudeMdPath = `${resolvedCwd}/CLAUDE.md`;
-      if (existsSync(claudeMdPath)) {
-        claudeMdContent = readFileSync(claudeMdPath, "utf-8");
-        console.log(
-          `[SESSION] Loaded CLAUDE.md from ${claudeMdPath} (${claudeMdContent.length} chars)`
-        );
-      } else {
-        console.warn(`[SESSION] No CLAUDE.md found at ${claudeMdPath}`);
-      }
-    } catch (err) {
-      console.error(`[SESSION] Failed to load CLAUDE.md:`, err);
-    }
-    const claudeMdSection = claudeMdContent
-      ? `\n\n# Project Instructions (CLAUDE.md)\n${claudeMdContent}\n`
-      : "";
+    // Explicitly load CLAUDE.md from working directory (resolving symlinks),
+    // unless the `project` setting source makes the CLI load it itself.
+    const claudeMdSection = buildClaudeMdSection(this.workingDir, SETTING_SOURCES);
 
     // Inject TELEGRAM_CHAT_ID into the send-file MCP server dynamically per query.
     //
@@ -880,6 +865,7 @@ export class ClaudeSession {
       pathToClaudeCodeExecutable: process.env.CLAUDE_CODE_PATH,
       abortController: this.abortController,
       hooks: this.queryRuntimeHooks,
+      settingSources: SETTING_SOURCES,
       // Exceptional SDK permission prompts (explicit ask rules, org-ask
       // connectors, critical-path rm/rmdir, requiresUserInteraction) get a
       // Telegram approve/deny round trip bound to THIS chat/user — never a
