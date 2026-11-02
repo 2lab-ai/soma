@@ -66,7 +66,9 @@ const TIMEOUT_MESSAGE =
   "Permission denied: the approval request timed out with no answer in Telegram.";
 const ABORTED_MESSAGE =
   "Permission denied: the query was stopped while waiting for approval.";
-const USER_DENIED_MESSAGE = "The user denied this tool use in Telegram.";
+// Exported for the owner-mode safety prompt test (config/safety-prompt.ts
+// names this text as a real refusal).
+export const USER_DENIED_MESSAGE = "The user denied this tool use in Telegram.";
 
 // Telegram caps a message at 4096 chars; stay well under it and bound every
 // untrusted component *before* HTML-escaping (escaping after truncation can

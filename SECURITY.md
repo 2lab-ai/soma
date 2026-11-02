@@ -21,7 +21,9 @@ This is intentional. The bot is designed for personal use from mobile, where con
 
 **This is not configurable** - the bot always runs in bypass mode. If you need permission prompts, use Claude Code directly instead.
 
-Ordinary tool calls are allowed by the bot's own `PreToolUse` hook once its safety check passes, and run without a round trip; inputs the hook hard-denies are still blocked there. If the SDK nonetheless routes a call to `canUseTool` while in bypass mode, that call becomes a Telegram approve/deny keyboard — the bot does not try to second-guess why the SDK asked. Critical-path `rm`/`rmdir` and similar destructive commands are blocked by the bot's own command safety check, not by an SDK prompt. The bot also loads no filesystem settings (`settingSources: []`), so the operator's own `~/.claude/settings.json` permission defaults and hooks never apply inside it.
+Ordinary tool calls are allowed by the bot's own `PreToolUse` hook once its safety check passes, and run without a round trip; inputs the hook hard-denies are still blocked there. If the SDK nonetheless routes a call to `canUseTool` while in bypass mode, that call becomes a Telegram approve/deny keyboard — the bot does not try to second-guess why the SDK asked. Critical-path `rm`/`rmdir` and similar destructive commands are blocked by the bot's own command safety check, not by an SDK prompt. By default the bot also loads no filesystem settings (`settingSources: []`), so the operator's own `~/.claude/settings.json` permission defaults and hooks never apply inside it.
+
+`SOMA_SETTING_SOURCES` (comma-separated `user`, `project`, `local`; default empty) opts a bot into those sources, for example `user` so a single-owner bot can use the skills in `~/.claude/skills`. Each loaded source brings its whole `settings.json`, hooks included: those hooks then run inside every bot query. Loaded permission defaults do not bring back Telegram prompts, because the `PreToolUse` hook answers every call it passes with an explicit allow. With `project` the CLI loads `CLAUDE.md` itself and the bot skips its own copy in the system prompt. Invalid entries are logged and dropped.
 
 ## Threat Model
 
@@ -116,6 +118,10 @@ rm -r /tmp/mydir         # Allowed - /tmp is always permitted
 
 Each path argument is checked against `ALLOWED_PATHS` before execution.
 
+#### Bash File-Argument Check
+
+For `cat`, `head`, `tail`, `less`, `more`, `cp`, `mv`, `tee`, `wc`, `sort`, `sed` and `awk`, absolute-path arguments are also checked against `ALLOWED_PATHS` (the `/dev` stream pseudo-files such as `/dev/null` excepted). This check is a heuristic with known bypasses — a quoted path, `python3 -c`, any program not on that list — and was never the security boundary. In standard mode it is unchanged. `SOMA_TRUST_MODE=owner` disables it, deliberately accepting outside-root Bash file access from the owner's bot in exchange for no false blocks on fragments of quoted `sed`/`awk` programs and the like. Owner mode is a trusted-owner policy, not filesystem confinement. The blocked patterns, the `rm` path check and the Read/Write/Edit/Grep/Glob root checks apply in both modes.
+
 ### Layer 5: System Prompt
 
 Claude receives a safety prompt that instructs it to:
@@ -126,6 +132,8 @@ Claude receives a safety prompt that instructs it to:
 4. **Ask for confirmation on destructive actions**
 
 This is the primary protection layer. The other layers are defense-in-depth.
+
+`SOMA_TRUST_MODE=owner` (default `standard`, which is the prompt above) is for a bot used only by its owner. It keeps rules 1 and 3 — no file deletion without the owner's explicit confirmation, no `rm -rf` — and replaces rules 2 and 4: `ALLOWED_PATHS` is described as what the `PreToolUse` guard checks Read/Write/Edit/Grep/Glob paths and `rm` targets against, the model runs installed programs and reports a guard block instead of refusing in advance, and irreversible actions follow the working directory's `CLAUDE.md`. It also separates refusals from cancellations: a new owner message in the chat, a Telegram denial ("The user denied this tool use in Telegram.") or a "Permission denied: …" result is a real refusal and always wins; only the generic CLI text "The user doesn't want to take this action right now…" with none of those is an automatic cancellation, and the model checks whether a cancelled call already took effect before re-running only what did not complete. The guard layers (3 and 4) are the same in both modes, except that owner mode disables the Bash file-argument check (see Layer 4). An unknown value is logged and treated as `standard`.
 
 ### Layer 6: Audit Logging
 

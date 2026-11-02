@@ -1,5 +1,7 @@
 import { existsSync } from "fs";
 import { homedir } from "os";
+import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import type { TrustMode } from "./safety-prompt";
 
 // $HOME first: Bun caches os.homedir() at process start, so test/preload.ts can
 // only redirect the home directory through the env var. Same value in production.
@@ -41,6 +43,57 @@ export function parseEnvInt(key: string, defaultValue: number): number {
   if (!value) return defaultValue;
   const parsed = parseInt(value, 10);
   return isNaN(parsed) ? defaultValue : parsed;
+}
+
+const TRUST_MODES: readonly TrustMode[] = ["standard", "owner"];
+
+/**
+ * SOMA_TRUST_MODE: which model-facing safety prompt the bot sends
+ * (config/safety-prompt.ts). Unset = `standard`; `owner` is for a
+ * single-owner bot. An unknown value warns and falls back to `standard`.
+ */
+export function parseTrustMode(
+  env: NodeJS.ProcessEnv = process.env,
+  warn: (message: string) => void = console.warn
+): TrustMode {
+  const raw = env.SOMA_TRUST_MODE?.trim().toLowerCase();
+  if (!raw) return "standard";
+  if ((TRUST_MODES as readonly string[]).includes(raw)) return raw as TrustMode;
+  warn(
+    `[CONFIG] SOMA_TRUST_MODE="${env.SOMA_TRUST_MODE}" is not one of ${TRUST_MODES.join("|")}. Using standard.`
+  );
+  return "standard";
+}
+
+const SETTING_SOURCE_NAMES: readonly SettingSource[] = ["user", "project", "local"];
+
+/**
+ * SOMA_SETTING_SOURCES: comma list of the filesystem settings the spawned CLI
+ * loads (`user` = ~/.claude, `project` = <cwd>/.claude and CLAUDE.md,
+ * `local` = <cwd>/.claude/settings.local.json). Unset = `[]`, the SDK
+ * isolation the bot always ran with. Invalid entries warn and are dropped.
+ */
+export function parseSettingSources(
+  env: NodeJS.ProcessEnv = process.env,
+  warn: (message: string) => void = console.warn
+): SettingSource[] {
+  const sources: SettingSource[] = [];
+  const invalid: string[] = [];
+  for (const entry of (env.SOMA_SETTING_SOURCES || "").split(",")) {
+    const name = entry.trim().toLowerCase();
+    if (!name) continue;
+    if (!(SETTING_SOURCE_NAMES as readonly string[]).includes(name)) {
+      invalid.push(entry.trim());
+    } else if (!sources.includes(name as SettingSource)) {
+      sources.push(name as SettingSource);
+    }
+  }
+  if (invalid.length) {
+    warn(
+      `[CONFIG] SOMA_SETTING_SOURCES: ignoring ${invalid.join(", ")} (valid: ${SETTING_SOURCE_NAMES.join(", ")}).`
+    );
+  }
+  return sources;
 }
 
 const EXTRA_PATHS = [

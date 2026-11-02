@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { CanUseTool, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createSessionIdentity } from "../routing/session-key";
@@ -505,6 +512,160 @@ describe("extractBashFilePaths", () => {
   });
 });
 
+// Bash commands the owner bot ("choa") was blocked on — synthetic
+// reproductions of the block shapes seen in the bot's logs: `blocked` is the
+// value of "Bash command accesses blocked path: X", `originMain` the reason
+// origin/main's checkToolInputSafety gives for the command under this suite's
+// ALLOWED_PATHS (null = allowed).
+interface ChoaFixture {
+  blocked: string;
+  originMain: string | null;
+  command: string;
+}
+const CHOA_FIXTURES: ChoaFixture[] = JSON.parse(
+  readFileSync(join(import.meta.dir, "query-runtime.choa-fixtures.json"), "utf8")
+);
+
+function reasonOf(result: ReturnType<typeof checkToolInputSafety>): string | null {
+  return result.allowed ? null : result.reason;
+}
+
+const PSEUDO_FILES = new Set(["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr"]);
+
+describe("BUG choa-bash-guard: SOMA_TRUST_MODE and the Bash file-argument check", () => {
+  test("the 19 fixtures still extract the value each was blocked on", () => {
+    expect(CHOA_FIXTURES).toHaveLength(19);
+    for (const { blocked, command } of CHOA_FIXTURES) {
+      expect(extractBashFilePaths(command)).toContain(blocked);
+    }
+  });
+
+  test("standard mode blocks every fixture exactly as origin/main did, unless it was a /dev pseudo-file", () => {
+    for (const { blocked, originMain, command } of CHOA_FIXTURES) {
+      const reason = reasonOf(checkToolInputSafety("Bash", { command }, "standard"));
+      if (PSEUDO_FILES.has(blocked)) {
+        // The pseudo-file is dropped; anything else the command touches is
+        // still checked.
+        expect(reason ?? "").not.toContain(`blocked path: ${blocked} —`);
+      } else {
+        expect(reason).toBe(originMain);
+      }
+    }
+  });
+
+  test("owner mode allows every fixture the Bash file-argument check blocked", () => {
+    for (const { originMain, command } of CHOA_FIXTURES) {
+      const reason = reasonOf(checkToolInputSafety("Bash", { command }, "owner"));
+      if (originMain?.startsWith("Unsafe command blocked:")) {
+        // checkCommandSafety runs in every mode.
+        expect(reason).toBe(originMain);
+      } else {
+        expect(reason).toBeNull();
+      }
+    }
+  });
+
+  test("standard mode: a /dev pseudo-file argument no longer blocks, real paths still do", () => {
+    expect(
+      checkToolInputSafety("Bash", { command: "cat x > /dev/null" }, "standard")
+    ).toEqual({ allowed: true });
+    expect(
+      checkToolInputSafety(
+        "Bash",
+        { command: "tee /dev/stdout /dev/fd/2 < /dev/stdin" },
+        "standard"
+      )
+    ).toEqual({ allowed: true });
+    expect(
+      checkToolInputSafety(
+        "Bash",
+        { command: "cat x > /dev/null /etc/passwd" },
+        "standard"
+      )
+    ).toEqual({
+      allowed: false,
+      reason:
+        "Bash command accesses blocked path: /etc/passwd — outside allowed directories.",
+    });
+    // Exact match only: a pseudo-file prefix does not hide a traversal.
+    expect(
+      checkToolInputSafety(
+        "Bash",
+        { command: "cat /dev/fd/../../etc/passwd" },
+        "standard"
+      )
+    ).toEqual({
+      allowed: false,
+      reason:
+        "Bash command accesses blocked path: /dev/fd/../../etc/passwd — outside allowed directories.",
+    });
+  });
+
+  test("the default mode is TRUST_MODE (standard under test) — the broker's call site", () => {
+    expect(checkToolInputSafety("Bash", { command: "cat /etc/passwd" })).toEqual({
+      allowed: false,
+      reason:
+        "Bash command accesses blocked path: /etc/passwd — outside allowed directories.",
+    });
+    expect(
+      checkToolInputSafety("Bash", { command: "cat /etc/passwd" }, "owner")
+    ).toEqual({
+      allowed: true,
+    });
+  });
+
+  test("owner is not off: command safety and the file-tool roots still apply", () => {
+    expect(checkToolInputSafety("Bash", { command: "rm /etc/x" }, "owner")).toEqual({
+      allowed: false,
+      reason: "Unsafe command blocked: rm target outside allowed paths: /etc/x",
+    });
+    expect(checkToolInputSafety("Bash", { command: "rm /dev/null" }, "owner")).toEqual({
+      allowed: false,
+      reason: "Unsafe command blocked: rm target outside allowed paths: /dev/null",
+    });
+    expect(checkToolInputSafety("Bash", { command: "rm -rf /" }, "owner").allowed).toBe(
+      false
+    );
+    expect(
+      checkToolInputSafety("Write", { file_path: "/etc/soma-owner.txt" }, "owner")
+    ).toEqual({
+      allowed: false,
+      reason:
+        "File access blocked: /etc/soma-owner.txt — path is outside allowed directories. Try an alternative approach or ask the user to share the file content directly.",
+    });
+    expect(checkToolInputSafety("Grep", { path: "/etc" }, "owner")).toEqual({
+      allowed: false,
+      reason: "Grep path blocked: /etc — outside allowed directories.",
+    });
+  });
+
+  test("A3 at the guard: rm of a pseudo-file is blocked, a redirect to one is not", () => {
+    for (const mode of ["standard", "owner"] as const) {
+      expect(checkToolInputSafety("Bash", { command: "rm /dev/stdout" }, mode)).toEqual(
+        {
+          allowed: false,
+          reason:
+            "Unsafe command blocked: rm target outside allowed paths: /dev/stdout",
+        }
+      );
+      expect(
+        checkToolInputSafety(
+          "Bash",
+          { command: `rm -f ${WORKING_DIR}/x 2>/dev/null` },
+          mode
+        )
+      ).toEqual({ allowed: true });
+      expect(
+        checkToolInputSafety(
+          "Bash",
+          { command: `rm -f ${WORKING_DIR}/x >|/dev/null` },
+          mode
+        )
+      ).toEqual({ allowed: true });
+    }
+  });
+});
+
 describe("query-runtime hooks", () => {
   test("pre hook blocks tool execution when stop was requested", async () => {
     const hooks = createQueryRuntimeHooks({
@@ -714,6 +875,34 @@ describe("query-runtime options", () => {
     });
 
     expect(options.settingSources).toEqual([]);
+  });
+
+  // SOMA_SETTING_SOURCES opt-in: an owner bot that needs ~/.claude/skills
+  // passes the sources through; the default above stays isolated.
+  test("passes configured setting sources through (SOMA_SETTING_SOURCES)", () => {
+    const sources = ["user", "project"] as const;
+    const options = buildQueryRuntimeOptions({
+      model: "claude-sonnet-4-5-20250929",
+      cwd: "/tmp",
+      systemPrompt: "system",
+      mcpServers: {},
+      maxThinkingTokens: 10000,
+      additionalDirectories: [],
+      resumeSessionId: null,
+      abortController: new AbortController(),
+      hooks: createQueryRuntimeHooks({
+        getStopRequested: () => false,
+        getSteeringCount: () => 0,
+        trackBufferedMessagesForInjection: () => 0,
+        consumeSteering: () => null,
+        getInjectedCount: () => 0,
+      }),
+      settingSources: sources,
+    });
+
+    expect(options.settingSources).toEqual(["user", "project"]);
+    // A copy: the SDK option is a mutable array, the config constant is not.
+    expect(options.settingSources).not.toBe(sources as unknown as string[]);
   });
 
   test("Opus 4.7 strips maxThinkingTokens and applies adaptive + xhigh", () => {
@@ -1476,5 +1665,80 @@ describe("effort survives the production provider hop", () => {
     expect(opts.effort).toBeUndefined();
     expect(opts.maxThinkingTokens).toBe(50000);
     expect(opts.env?.[EXTRA_BODY_ENV]).toBeUndefined();
+  });
+});
+
+// SOMA_SETTING_SOURCES has to reach the SDK through the provider adapter, the
+// path every production query takes; the default stays `[]` across it.
+describe("setting sources survive the production provider hop", () => {
+  async function settingSourcesAtSdk(settingSources?: readonly ("user" | "project")[]) {
+    const recorded: Array<{ options: Record<string, unknown> }> = [];
+    const adapter = new ClaudeProviderAdapter(((payload: {
+      options: Record<string, unknown>;
+    }) => {
+      recorded.push(payload);
+      return toAsyncGenerator([
+        {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "ok",
+          duration_ms: 1,
+          duration_api_ms: 1,
+          num_turns: 1,
+          total_cost_usd: 0,
+          usage: { input_tokens: 0, output_tokens: 0 },
+          modelUsage: {},
+          permission_denials: [],
+          session_id: "s-sources",
+        } as unknown as SDKMessage,
+      ]);
+    }) as unknown as ConstructorParameters<typeof ClaudeProviderAdapter>[0]);
+
+    const options = buildQueryRuntimeOptions({
+      model: "claude-sonnet-4-5-20250929",
+      cwd: "/tmp",
+      systemPrompt: "sys",
+      mcpServers: {},
+      maxThinkingTokens: 0,
+      additionalDirectories: [],
+      resumeSessionId: null,
+      abortController: new AbortController(),
+      hooks: { preToolUseHook: async () => ({}), postToolUseHook: async () => ({}) },
+      settingSources,
+    });
+
+    await executeQueryRuntime({
+      prompt: "hello",
+      options,
+      statusCallback: async () => {},
+      queryGeneration: 1,
+      getCurrentGeneration: () => 1,
+      shouldStop: () => false,
+      onSessionId: () => {},
+      onToolDisplay: () => {},
+      onRefreshContextWindowUsageFromTranscript: async () => null,
+      queryStartedMs: Date.now(),
+      providerExecution: {
+        orchestrator: createProviderOrchestrator({ providers: [adapter] }),
+        identity: createSessionIdentity({
+          tenantId: "default",
+          channelId: "chat-sources",
+          threadId: "main",
+        }),
+        primaryProviderId: "anthropic",
+      },
+    });
+
+    expect(recorded.length).toBe(1);
+    return recorded[0]!.options.settingSources;
+  }
+
+  test("default is [] at the SDK", async () => {
+    expect(await settingSourcesAtSdk()).toEqual([]);
+  });
+
+  test("configured sources reach the SDK", async () => {
+    expect(await settingSourcesAtSdk(["user", "project"])).toEqual(["user", "project"]);
   });
 });

@@ -1,0 +1,97 @@
+[
+  {
+    "blocked": "/opt/x/logs/loop.launchd.log",
+    "originMain": "Bash command accesses blocked path: /opt/x/logs/loop.launchd.log — outside allowed directories.",
+    "command": "for r in alpha beta; do echo \"== $r\"; tool view \"$r\" --json state --jq '{state,checks:([.rollup[]?|(.conclusion//.status)]|group_by(.)|map({(.[0]):length})|add)}' 2>&1 | head -3; done\necho \"=== loop log\"; tail -n 8 /opt/x/logs/loop.launchd.log | cut -c1-300\nls -la /opt/x/logs/loop.launchd.log 2>&1 | cut -c1-200"
+  },
+  {
+    "blocked": "/-/",
+    "originMain": "Bash command accesses blocked path: /-/ — outside allowed directories.",
+    "command": "ps -axo pid,etime,command | grep -E \"[w]orker\" | awk '$2 !~ /-/ && $2 ~ /^[0-9][0-9]:[0-9][0-9]$/' | cut -c1-220 | head -20"
+  },
+  {
+    "blocked": "/dev/null",
+    "originMain": "Bash command accesses blocked path: /dev/null — outside allowed directories.",
+    "command": "cat > /dev/null <<'X'\nX\nS=/tmp/x/scratch; node \"$S/wait.mjs\" \"$S/none.log\" 0 300 | grep -v '^agents:'; echo \"--- threads:\"; cat \"$S/result.txt\" 2>/dev/null || echo \"(not yet)\""
+  },
+  {
+    "blocked": "/tmp/thread.json",
+    "originMain": "Bash command accesses blocked path: /tmp/thread.json — outside allowed directories.",
+    "command": "curl -sL -A \"Mozilla/5.0\" \"https://example.com/r/thread.json?limit=500\" -o /tmp/thread.json -w \"%{http_code} %{size_download}\\n\"; head -c 600 /tmp/thread.json"
+  },
+  {
+    "blocked": "/",
+    "originMain": "Bash command accesses blocked path: / — outside allowed directories.",
+    "command": "cat >> notes/addenda.md <<'EOF'\n\nExtra rule 3: one row per change, owner / budget / approval / final say.\n1. Mark each gap as missing record / checked absence / counter-evidence.\nEOF"
+  },
+  {
+    "blocked": "/tmp/x/tasks/job.output",
+    "originMain": "Bash command accesses blocked path: /tmp/x/tasks/job.output — outside allowed directories.",
+    "command": "tail -3 /tmp/x/tasks/job.output | sed -E 's/r[12345]-[a-z.]+=[0-9]+k ?//g'; ls -la notes/ | grep -e ledger -e OUTLINE; date '+%H:%M:%S'"
+  },
+  {
+    "blocked": "/,/§L2/p'",
+    "originMain": "Bash command accesses blocked path: /,/§L2/p' — outside allowed directories.",
+    "command": "cd /work/notes && wc -c ledger.md && grep -n \"^## \\|^### \" ledger.md | head -40 && sed -n '/§L1 /,/§L2/p' ledger.md | head -20"
+  },
+  {
+    "blocked": "/dev/null",
+    "originMain": "Bash command accesses blocked path: /dev/null — outside allowed directories.",
+    "command": "cat > /dev/null <<'EOF'\nEOF\npython3 - <<'EOF'\ns='''---\ntitle: plan review consensus (r2.1)\ntype: review\n---\n\n# consensus: plan r1 → r2.1\n\n- result: agreed. three reviewers APPROVE.\n- r1: 3/3 REVISE. Four findings.\n'''\nopen('reviews/consensus.md','w',encoding='utf-8').write(s)\nEOF\ncd /work/repo && git add reviews && git commit -q -m \"review: plan r2.1 consensus\n\nCo-Authored-By: Example Bot <bot@example.com>\" -- reviews && git log -1 --oneline"
+  },
+  {
+    "blocked": "/'",
+    "originMain": "Bash command accesses blocked path: /' — outside allowed directories.",
+    "command": "cd /work/book && for f in chapters/*.md; do python3 tools/lint.py $f 2>&1 | tail -1; done | sed 's/^/  /'; python3 /work/book/tools/gate.py --strict chapters/0[0-9]-*.md 2>&1 | tail -2"
+  },
+  {
+    "blocked": "/opt/x/logs/launchd.err.log",
+    "originMain": "Bash command accesses blocked path: /opt/x/logs/launchd.err.log — outside allowed directories.",
+    "command": "cd /work/repo; for p in \"alpha:1\" \"beta:2\"; do r=${p%%:*}; n=${p##*:}; echo \"== $r#$n\"; tool view $n --jq '\"\\(.state) checks=\" + ([.rollup[]?|(.conclusion//.state)]|group_by(.)|map(\"\\(.[0])x\\(length)\")|join(\",\"))' 2>&1 | head -3; done\necho ---; curl -s -o /dev/null -w \"session %{http_code}\\n\" https://example.com/api/session\necho ---; tail -5 /opt/x/logs/launchd.err.log 2>&1 | cut -c1-200\necho ---; tail -c 1500 ~/logs/loop.log | cut -c1-300"
+  },
+  {
+    "blocked": "/",
+    "originMain": "Bash command accesses blocked path: / — outside allowed directories.",
+    "command": "cd /work/book && cat > research/claims.md <<'EOF'\n---\ntitle: claims ledger\ntype: research\n---\n\n# claims ledger\n\n> Grades: [F] primary / [T] tradition / [H] hypothesis.\n\n| ID | claim | grade | source |\n|---|---|---|---|\n| L-1 | launch post, 139,190 views | [F] | https://example.com/status/1 |\nEOF"
+  },
+  {
+    "blocked": "/^##",
+    "originMain": "Bash command accesses blocked path: /^## — outside allowed directories.",
+    "command": "cd /work/book/research && ls -la atoms-*.md | awk '{print $5, $9}'; for f in atoms-s0[1-9].md; do [ -f $f ] && echo \"=== $f\" && awk '/^## 3\\./{p=1} /^## 4\\./{p=0} p' $f | grep \"^|\" | head -16; done 2>/dev/null | cut -c1-400"
+  },
+  {
+    "blocked": "/^\\[\\^/{p=0}",
+    "originMain": "Bash command accesses blocked path: /^\\[\\^/{p=0} — outside allowed directories.",
+    "command": "awk '/^## Table one/{p=1} /^\\[\\^/{p=0} p' chapters/04-promise.md"
+  },
+  {
+    "blocked": "/^\\",
+    "originMain": "Bash command accesses blocked path: /^\\ — outside allowed directories.",
+    "command": "cd /work/book/chapters && echo \"=== 02 end\"; grep -v \"^\\[\\^\" 02-letter.md | awk '/^## Already running/{f=1} f' | cut -c1-1200; grep -v \"^\\[\\^\" 03-twice.md | awk '/^## Ten thousand/{f=1} /^\\| Outage/{f=0} f' | cut -c1-1500"
+  },
+  {
+    "blocked": "/",
+    "originMain": "Bash command accesses blocked path: / — outside allowed directories.",
+    "command": "W=/work/link/item; S=item\ncd \"$W\" && ls -l \"$S.html\" transcript.tsv 2>&1 | awk '{print $5, $9}'\necho \"== transcript lines ==\"; wc -l < transcript.tsv\necho \"== live? ==\"; curl -sS --max-time 20 \"https://example.com/$S/\" | grep -o -E \".{60}fix.{60}\" | head -2\necho \"== log entry / status ==\"; git -C /work/repo status --short | head -8"
+  },
+  {
+    "blocked": "/'",
+    "originMain": "Bash command accesses blocked path: /' — outside allowed directories.",
+    "command": "cd /work/notes/memory && cat a.md b.md c.md 2>/dev/null | sed 's/^/  /' | head -200"
+  },
+  {
+    "blocked": "/",
+    "originMain": "Bash command accesses blocked path: / — outside allowed directories.",
+    "command": "B=/work/book; cd $B && cat > research/ledger.md <<'EOF'\n---\ntitle: ledger\n---\n\n> Row format: id / claim / grade / source / checked / chapter\nEOF\ncat > research/counter.md <<'EOF'\n---\ntitle: counter-evidence\n---\nEOF"
+  },
+  {
+    "blocked": "/^---$/{n++",
+    "originMain": "Bash command accesses blocked path: /^---$/{n++ — outside allowed directories.",
+    "command": "cd /work/agents && wc -c a.md b.md && head -12 a.md && awk 'BEGIN{n=0} /^---$/{n++; next} n>=2{print}' a.md > /work/tmp/sys-a.md && wc -c /work/tmp/sys-*.md"
+  },
+  {
+    "blocked": "/",
+    "originMain": "Unsafe command blocked: rm target outside allowed paths: calm",
+    "command": "mkdir -p assets && cat > assets/prompt.txt <<'EOF'\nPlease perform a calm review of the cover, size 1024x1536.\nStyle: two inks / warm paper / generous space.\nEOF"
+  }
+]

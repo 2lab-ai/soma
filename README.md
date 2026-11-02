@@ -116,6 +116,15 @@ To customize, set `ALLOWED_PATHS` in `.env` (comma-separated). Note: this **over
 ALLOWED_PATHS=/your/project,/other/path,~/.claude
 ```
 
+**Trust mode:** `SOMA_TRUST_MODE` picks the safety prompt Claude reads. `standard` (default) asks before deleting, overwriting or any irreversible action and refuses file operations outside `ALLOWED_PATHS`. `owner` is for a bot only its owner uses: it still asks before deleting files, but instead of refusing in advance it treats `ALLOWED_PATHS` as what the bot's tool guard enforces, runs installed programs, and follows the working directory's `CLAUDE.md` for irreversible actions. Owner mode also disables the Bash file-argument check, which only checks the absolute paths given to `cat`, `cp`, `sed` and similar commands: it is a heuristic with known bypasses (a quoted path, `python3 -c`) and was never the security boundary, so owner mode deliberately accepts outside-root Bash file access to avoid its false blocks; standard mode keeps it unchanged. An unknown value logs a warning and uses `standard`.
+
+**Setting sources:** `SOMA_SETTING_SOURCES` (comma-separated `user`, `project`, `local`) chooses which filesystem settings the Claude Code CLI loads. Default: none, so your own `~/.claude/settings.json` never applies inside the bot. `user` makes your `~/.claude/skills` available — and also runs the hooks in `~/.claude/settings.json` on every bot query. With `project` the CLI loads `CLAUDE.md` itself, so the bot stops adding its own copy. Invalid entries log a warning and are ignored.
+
+```bash
+SOMA_TRUST_MODE=owner
+SOMA_SETTING_SOURCES=user,project
+```
+
 ### 3. Configure MCP Servers (Optional)
 
 Copy and edit the MCP config:

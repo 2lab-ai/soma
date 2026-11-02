@@ -1,4 +1,13 @@
-import { closeSync, openSync, readSync, statSync } from "fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "fs";
+import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import {
   DEFAULT_THINKING_TOKENS,
   THINKING_DEEP_KEYWORDS,
@@ -326,6 +335,41 @@ export function shouldResetSessionForModelSwitch(
   effectiveModel: string
 ): boolean {
   return Boolean(sessionId && lastUsedModel && effectiveModel !== lastUsedModel);
+}
+
+/**
+ * The working directory's CLAUDE.md as a systemPrompt section (resolving
+ * symlinks), or "" when there is none. With `project` among the setting
+ * sources the CLI loads CLAUDE.md itself, so injecting it here would send it
+ * twice — skip it then.
+ */
+export function buildClaudeMdSection(
+  workingDir: string,
+  settingSources: readonly SettingSource[]
+): string {
+  if (settingSources.includes("project")) {
+    console.log("[SESSION] CLAUDE.md loaded by the CLI (setting source: project)");
+    return "";
+  }
+
+  let claudeMdContent = "";
+  try {
+    const resolvedCwd = realpathSync(workingDir);
+    const claudeMdPath = `${resolvedCwd}/CLAUDE.md`;
+    if (existsSync(claudeMdPath)) {
+      claudeMdContent = readFileSync(claudeMdPath, "utf-8");
+      console.log(
+        `[SESSION] Loaded CLAUDE.md from ${claudeMdPath} (${claudeMdContent.length} chars)`
+      );
+    } else {
+      console.warn(`[SESSION] No CLAUDE.md found at ${claudeMdPath}`);
+    }
+  } catch (err) {
+    console.error(`[SESSION] Failed to load CLAUDE.md:`, err);
+  }
+  return claudeMdContent
+    ? `\n\n# Project Instructions (CLAUDE.md)\n${claudeMdContent}\n`
+    : "";
 }
 
 export function formatSteeringMessages(messages: SteeringMessage[]): string {
